@@ -655,7 +655,7 @@ function vConf(){
   const logs=S.audit||[];
   if(cap('pos')&&!posConf.loaded&&!posConf.loading){posConf.loading=true;
     Promise.all([api('GET','/api/pos/links'),api('GET','/api/pos/unmatched')])
-      .then(([a,b2])=>{posConf={loaded:true,links:a.links,unmatched:b2.items};render();})
+      .then(([a,b2])=>{posConf={loaded:true,links:a.links,events:a.events||[],unmatched:b2.items};render();})
       .catch(()=>{posConf={loaded:true,links:[],unmatched:[]};render();});}
   return `
   <div class="head"><div><h1>설정 — ${esc(S.me.deptLabel)}</h1><p>부서 권한에 해당하는 항목만 표시됩니다 (서버 검증)</p></div></div>
@@ -692,7 +692,12 @@ function vConf(){
       <td><button class="btn ghost sm" data-regen="${s.id}">재발급</button></td></tr>`).join('')}
     </tbody></table></div>`:''}
 
-  ${cap('pos')?(posConf.loaded?`<div class="panel"><div class="panel-h"><h2>POS 연동 — 토스플레이스</h2><span class="meta">키는 AES-256-GCM 암호화 저장 · 30분마다 오늘·어제 자동 동기화 · 재동기화 시 전량 재계산(취소 반영)</span></div>
+  ${cap('pos')?(posConf.loaded?`<div class="panel"><div class="panel-h"><h2>POS 연동 — 토스플레이스</h2>${''}</div>
+    ${(posConf.events&&posConf.events.length)?`<div class="reveal" style="background:var(--infosoft);border-color:var(--info)">
+      <b style="font-size:13px;letter-spacing:0">토스 웹훅 감지 — 앱이 설치된 매장 ID</b>
+      ${posConf.events.map(e=>`<div style="margin-top:4px">merchantId <b>${esc(e.merchantId)}</b> <span style="font-size:10.5px;color:var(--dim)">${new Date(e.ts).toISOString().slice(5,16).replace('T',' ')}Z · ${esc(e.type)}</span></div>`).join('')}
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">이 값이 입력한 merchantId와 다르면, 아래 해당 매장 행의 merchantId를 이 값으로 교체 후 저장하십시오.</div></div>`:''}
+    <div class="panel-h" style="margin-top:-4px"><span></span><span class="meta">키는 AES-256-GCM 암호화 저장 · 30분마다 오늘·어제 자동 동기화 · 재동기화 시 전량 재계산(취소 반영)</span></div>
     <table><thead><tr><th>매장</th><th>제공자</th><th>merchantId</th><th>Access Key</th><th>Secret Key</th><th>활성</th><th></th></tr></thead><tbody>
     ${S.stores.map(st=>{const L=(posConf.links||[]).find(x2=>x2.storeId===st.id)||{};
       return `<tr><td style="font-weight:700">${esc(st.name)}<div style="font-size:10px;font-weight:400;color:${(L.lastResult||'').indexOf('ERR')===0?'var(--risk)':'var(--dimmer)'}">${esc(L.lastResult||'미연동')}</div></td>

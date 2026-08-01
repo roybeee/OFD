@@ -347,6 +347,18 @@ async function main() {
   chk = await call('op2', 'GET', '/api/pos/links');
   log('V4 저장 시 공백 제거(merchantId)', chk.data.links.find(L => L.storeId === 's3').merchantId === '9942');
 
+  /* ===== W. 토스플레이스 웹훅 수신 (매장 ID 자동 감지) ===== */
+  {
+    const wr = await fetch(BASE + '/api/webhooks/tossplace', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'evt-1', type: 'app.installation.created.v1', merchantId: 7777001, app: 'ofd-workstation' }) });
+    log('W1 웹훅: X-OFD 없이 수신 200', wr.status === 200);
+  }
+  r = await call('op2', 'GET', '/api/pos/links');
+  log('W2 설치 이벤트 merchantId 노출', Array.isArray(r.data.events) && r.data.events.some(e => e.merchantId === '7777001'));
+  chk = await call('m', 'GET', '/api/bootstrap');
+  log('W3 설치 이벤트 감사 기록', chk.data.audit.some(a2 => a2.who === '토스플레이스 웹훅' && a2.act.includes('7777001')));
+
   /* ===== R. UI ===== */
   const ui = await fetch(BASE + '/');
   const uiText = await ui.text();

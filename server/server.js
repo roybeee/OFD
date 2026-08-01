@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS pos_sales(id TEXT PRIMARY KEY, store_id TEXT, date TE
 CREATE UNIQUE INDEX IF NOT EXISTS ux_pos ON pos_sales(store_id, date, hour, raw_name);
 CREATE INDEX IF NOT EXISTS idx_pos_sd ON pos_sales(store_id, date);
 CREATE TABLE IF NOT EXISTS sku_aliases(alias TEXT PRIMARY KEY, sku_id TEXT, mt INTEGER);
+CREATE TABLE IF NOT EXISTS pos_events(id TEXT PRIMARY KEY, ts INTEGER, type TEXT, merchant_id TEXT, app TEXT, raw TEXT);
 `);
 
 /* ---------------- utils ---------------- */
@@ -472,7 +473,7 @@ const server = http.createServer(async (req, res) => {
 
     const sess = getSession(req);
     const mut = req.method !== 'GET';
-    if (mut && req.headers['x-ofd'] !== '1') return err(res, 403, 'CSRF');
+    if (mut && req.headers['x-ofd'] !== '1' && p !== '/api/webhooks/tossplace') return err(res, 403, 'CSRF');
     const body = mut ? await readBody(req) : {};
     const ip = req.socket.remoteAddress || '?';
 
@@ -521,6 +522,19 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/auth/logout' && req.method === 'POST') {
       if (sess) { db.prepare('DELETE FROM sessions WHERE th=?').run(sess.th); audit(actorOf(sess), '세션 종료', ''); }
       return send(res, 200, { ok: true }, { 'Set-Cookie': clearCookie() });
+    }
+
+    /* ---- 토스플레이스 웹훅 수신 (공개 — 토스 서버가 호출) ---- */
+    if (p === '/api/webhooks/tossplace' && req.method === 'POST') {
+      const ev = body || {};
+      const mid = ev.merchantId !== undefined && ev.merchantId !== null ? String(ev.merchantId) : '';
+      db.prepare('INSERT OR REPLACE INTO pos_events(id,ts,type,merchant_id,app,raw) VALUES(?,?,?,?,?,?)')
+        .run(String(ev.id || uid('w')), now(), String(ev.type || ''), mid, String(ev.app || ''),
+          JSON.stringify(ev).slice(0, 2000));
+      db.exec("DELETE FROM pos_events WHERE id NOT IN (SELECT id FROM pos_events ORDER BY ts DESC LIMIT 200)");
+      if (String(ev.type || '').startsWith('app.installation'))
+        audit('토스플레이스 웹훅', '앱 설치 이벤트', 'merchantId ' + mid + ' (' + String(ev.type) + ')');
+      return send(res, 200, { ok: true });
     }
 
     /* ---- 인증 필수 ---- */
@@ -808,7 +822,9 @@ const server = http.createServer(async (req, res) => {
         storeId: L.store_id, provider: L.provider, merchantId: L.merchant_id || '',
         active: !!L.active, hasKeys: !!(L.access_key_enc && L.secret_key_enc),
         lastSync: L.last_sync || null, lastResult: L.last_result || '' }));
-      return send(res, 200, { links: rows });
+      const events = db.prepare("SELECT ts, type, merchant_id FROM pos_events WHERE type LIKE 'app.installation%' ORDER BY ts DESC LIMIT 5").all()
+        .map(e => ({ ts: e.ts, type: e.type, merchantId: e.merchant_id }));
+      return send(res, 200, { links: rows, events });
     }
     if ((m = p.match(/^\/api\/pos\/links\/([\w-]+)$/)) && req.method === 'PUT') {
       if (deny('pos')) return;
