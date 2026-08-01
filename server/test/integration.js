@@ -454,6 +454,42 @@ async function main() {
   log('AA8 마감 원복·폐기 유지', !chk.data.sales.find(c => c.date === satD).items.find(i => i.skuId === proId)
     && chk.data.sales.find(c => c.date === satD).items.find(i => i.skuId === 'k1').waste === 4);
 
+  /* ===== AB. 상품 관리 — 카테고리·매장 전용·가격 편차 ===== */
+  r = await call('op2', 'PATCH', '/api/skus/k1', { category: '도넛' });
+  log('AB1 운영: SKU 수정 403(need skus)', r.status === 403);
+  r = await call('ad', 'PATCH', '/api/skus/k1', { category: '도넛' });
+  chk = await call('ad', 'GET', '/api/bootstrap');
+  log('AB2 카테고리 지정 저장', r.status === 200 && chk.data.skus.find(k => k.id === 'k1').category === '도넛');
+  r = await call('ad', 'POST', '/api/skus', { name: '수제쿠키', price: 3000, category: '기타', storeId: 's77' });
+  log('AB3 매장 전용 SKU 생성', r.status === 200);
+  chk = await call('own2', 'GET', '/api/bootstrap');
+  log('AB4 타 매장에 전용 SKU 미노출', !chk.data.skus.some(k => k.name === '수제쿠키') && chk.data.skus.some(k => k.id === 'k1'));
+  r = await call('ad', 'POST', '/api/skus/promote', { rawName: '신메뉴딸기', price: 4500, category: '도넛', storeId: 's2' });
+  const proId2 = r.data.skuId;
+  log('AB5 매장 전용 승격+소급', r.status === 200 && r.data.rebuilt === berryDates.length);
+  chk = await call('own2', 'GET', '/api/bootstrap');
+  log('AB6 전용 SKU: 자기 매장 노출·마감 반영', chk.data.skus.some(k => k.id === proId2 && k.storeId === 's2')
+    && chk.data.sales.find(c => c.date === satD).items.find(i => i.skuId === proId2).sold === 10);
+  r = await call('ad', 'GET', '/api/pos/unmatched');
+  log('AB7 관리 권한 미매칭 접근(pos|skus)·소거 확인', r.status === 200 && !r.data.items.some(x => x.name === '신메뉴딸기'));
+  await call('ad', 'PATCH', '/api/skus/' + proId2, { price: 5000 });
+  r = await call('ad', 'GET', '/api/products/prices?days=400');
+  {
+    const it = r.data.items.find(x => x.skuId === proId2);
+    const st2 = it && it.stores.find(s3 => s3.storeId === 's2');
+    log('AB8 가격 편차: 실측 4,500 vs 기준 5,000 = -10% low',
+      !!st2 && st2.avg === 4500 && Math.round(st2.diffPct) === -10 && it.flag === 'low');
+  }
+  r = await call('sa', 'GET', '/api/products/prices');
+  log('AB9 영업: 가격 편차 403', r.status === 403);
+  await call('ad', 'DELETE', '/api/skus/' + proId2);
+  r = await call('ad', 'GET', '/api/pos/unmatched');
+  {
+    const um4 = r.data.items.find(x => x.name === '신메뉴딸기');
+    log('AB10 전용 SKU 연쇄 삭제: 원복+매장 내역', !!um4 && um4.qty === berryQty
+      && um4.stores.some(st3 => st3.storeId === 's2' && st3.qty === berryQty));
+  }
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

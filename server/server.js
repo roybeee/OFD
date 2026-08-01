@@ -55,6 +55,8 @@ CREATE INDEX IF NOT EXISTS idx_pos_sd ON pos_sales(store_id, date);
 CREATE TABLE IF NOT EXISTS sku_aliases(alias TEXT PRIMARY KEY, sku_id TEXT, mt INTEGER);
 CREATE TABLE IF NOT EXISTS pos_events(id TEXT PRIMARY KEY, ts INTEGER, type TEXT, merchant_id TEXT, app TEXT, raw TEXT);
 `);
+try { db.exec('ALTER TABLE skus ADD COLUMN category TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE skus ADD COLUMN store_id TEXT'); } catch (e) {}
 
 /* ---------------- utils ---------------- */
 const uid = p => p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
@@ -109,6 +111,7 @@ function audit(actor, action, detail) {
 
 /* ---------------- 부서 권한 (서버 강제) ---------------- */
 const DEPTS = { master: '마스터', admin: '관리', ops: '운영', sales: '영업' };
+const CATS = ['도넛', '음료', '굿즈', '서비스', '세트', '기타'];
 const CAP = {
   leads:   ['master', 'sales'],            // 가맹 영업 파이프라인
   orders:  ['master', 'ops'],              // 발주 상태 전이·반려·대리 발주
@@ -140,7 +143,7 @@ const hasCap = (user, cap) => !!(user && CAP[cap] && CAP[cap].includes(user.dept
 const J = s => { try { return JSON.parse(s || '[]'); } catch (e) { return []; } };
 const mStore = r => r && ({ id: r.id, name: r.name, type: r.type, region: r.region, addr: r.addr, phone: r.phone, openDate: r.open_date, hasCode: !!r.code_hash, mt: r.mt });
 const mLead = r => r && ({ id: r.id, name: r.name, phone: r.phone, area: r.area, storeName: r.store_name, stage: r.stage, docDate: r.doc_date || '', advisor: !!r.advisor, openTarget: r.open_target || '', memo: r.memo || '', flag: !!r.flag, created: r.created, mt: r.mt });
-const mSku = r => r && ({ id: r.id, name: r.name, price: r.price, supply: r.supply, mt: r.mt });
+const mSku = r => r && ({ id: r.id, name: r.name, price: r.price, supply: r.supply, category: r.category || '기타', storeId: r.store_id || null, mt: r.mt });
 const mOrder = r => r && ({ id: r.id, storeId: r.store_id, date: r.date, status: r.status, memo: r.memo || '', items: J(r.items), mt: r.mt });
 const mClosing = r => r && ({ id: r.id, storeId: r.store_id, date: r.date, items: J(r.items), mt: r.mt });
 const mNotice = r => r && ({ id: r.id, date: r.date, title: r.title, body: r.body || '', pinned: !!r.pinned, mt: r.mt });
@@ -332,10 +335,15 @@ const providers = {
     }
   }
 };
-function resolveSku(rawName) {
+function resolveSku(rawName, storeId) {
   const n = normName(rawName);
-  const bySku = allSkus().find(k => normName(k.name) === n);
-  if (bySku) return bySku.id;
+  const pool = allSkus();
+  if (storeId) {
+    const own = pool.find(k => k.storeId === storeId && normName(k.name) === n);
+    if (own) return own.id;
+  }
+  const glob = pool.find(k => !k.storeId && normName(k.name) === n);
+  if (glob) return glob.id;
   const al = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=?').get(n);
   return al ? al.sku_id : null;
 }
@@ -357,7 +365,7 @@ async function syncStoreDay(storeId, date, actorName, quiet) {
     const ins = db.prepare('INSERT INTO pos_sales(id,store_id,date,hour,sku_id,raw_name,qty,amount,mt) VALUES(?,?,?,?,?,?,?,?,?)');
     let matched = 0; const missSet = new Set();
     for (const L of lines) {
-      const kid = resolveSku(L.name);
+      const kid = resolveSku(L.name, storeId);
       if (kid) matched += L.qty; else missSet.add(L.name);
       ins.run(uid('x'), storeId, date, L.hour | 0, kid, L.name, L.qty | 0, L.amount | 0, M);
     }
@@ -512,7 +520,7 @@ function seed(demo) {
    ['오리지널', 3000, 1440], ['시나몬슈가', 3400, 1632], ['보스턴크림', 4900, 2352],
    ['티라미수', 5800, 2784], ['피넛버터', 5800, 2784], ['초코크런치', 3800, 1824],
    ['메이플피칸', 5000, 2400]].forEach((x, i) =>
-    db.prepare('INSERT INTO skus(id,name,price,supply,mt) VALUES(?,?,?,?,?)').run('k' + (i + 1), x[0], x[1], x[2], M));
+    db.prepare("INSERT INTO skus(id,name,price,supply,category,mt) VALUES(?,?,?,?,'도넛',?)").run('k' + (i + 1), x[0], x[1], x[2], M));
   const st = [['s1', '가로수길점', '직영', '서울', '강남구 강남대로160길 35-5', '0507-1339-2589', '2018-05-01'],
     ['s2', '정자점', '가맹', '경기', '성남시 분당구 정자일로 135', '031-607-4137', '2021-03-01'],
     ['s3', '사당점', '가맹', '서울', '서초구 동작대로 36', '0507-1406-5061', '2022-06-01']];
@@ -639,6 +647,7 @@ const server = http.createServer(async (req, res) => {
     const HU = sess.user; // HQ user row or null(점주)
     const actor = actorOf(sess);
     const deny = cap => { if (sess.role !== 'hq' || !hasCap(HU, cap)) { err(res, 403, 'FORBIDDEN', { need: cap }); return true; } return false; };
+    const denyAny = caps => { if (sess.role !== 'hq' || !caps.some(c => hasCap(HU, c))) { err(res, 403, 'FORBIDDEN', { need: caps.join('|') }); return true; } return false; };
 
     if (p === '/api/bootstrap' && req.method === 'GET') {
       const base = { skus: allSkus(), notices: allNotices(), today: kstToday() };
@@ -656,6 +665,7 @@ const server = http.createServer(async (req, res) => {
       const me = db.prepare('SELECT * FROM stores WHERE id=? AND del=0').get(sess.storeId);
       if (!me) return err(res, 403, 'STORE_GONE');
       base.me = { role: 'store', storeId: me.id, storeName: me.name };
+      base.skus = allSkus().filter(k => !k.storeId || k.storeId === sess.storeId); /* 매장 전용 SKU 격리 */
       base.stores = [mStore(me)];
       base.orders = ordersOf(sess.storeId);
       base.sales = closingsOf(sess.storeId);
@@ -878,9 +888,32 @@ const server = http.createServer(async (req, res) => {
       if (deny('skus')) return;
       const name = String(body.name || '').trim(); const price = Math.max(0, body.price | 0);
       if (!name || !price) return err(res, 400, 'NAME_PRICE_REQUIRED');
+      const category = CATS.includes(body.category) ? body.category : '기타';
+      let storeId = null;
+      if (body.storeId) {
+        const stR = db.prepare('SELECT name FROM stores WHERE id=? AND del=0').get(String(body.storeId));
+        if (!stR) return err(res, 404, 'STORE_NOT_FOUND');
+        storeId = String(body.storeId);
+      }
       const supply = body.supply ? Math.max(0, body.supply | 0) : Math.round(price * 0.48);
-      db.prepare('INSERT INTO skus(id,name,price,supply,mt) VALUES(?,?,?,?,?)').run(uid('k'), name, price, supply, now());
-      audit(actor, 'SKU 추가', name);
+      const kid = uid('k');
+      db.prepare('INSERT INTO skus(id,name,price,supply,category,store_id,mt) VALUES(?,?,?,?,?,?,?)')
+        .run(kid, name, price, supply, category, storeId, now());
+      audit(actor, 'SKU 추가', name + ' [' + category + ']' + (storeId ? ' · ' + ((db.prepare('SELECT name FROM stores WHERE id=?').get(storeId) || {}).name || storeId) + ' 전용' : ''));
+      return send(res, 200, { ok: true, skuId: kid });
+    }
+    if ((m = p.match(/^\/api\/skus\/([\w-]+)$/)) && req.method === 'PATCH') {
+      if (deny('skus')) return;
+      const r0 = db.prepare('SELECT * FROM skus WHERE id=? AND del=0').get(m[1]);
+      if (!r0) return err(res, 404, 'NOT_FOUND');
+      if (body.category !== undefined && !CATS.includes(body.category)) return err(res, 400, 'BAD_CATEGORY');
+      const nm2 = body.name !== undefined ? String(body.name).trim() : r0.name;
+      const pr2 = body.price !== undefined ? Math.max(1, body.price | 0) : r0.price;
+      const sp2 = body.supply !== undefined ? Math.max(0, body.supply | 0) : r0.supply;
+      if (!nm2) return err(res, 400, 'NAME_PRICE_REQUIRED');
+      db.prepare('UPDATE skus SET name=?, price=?, supply=?, category=?, mt=? WHERE id=?')
+        .run(nm2, pr2, sp2, body.category !== undefined ? body.category : (r0.category || '기타'), now(), m[1]);
+      audit(actor, 'SKU 수정', nm2 + (body.category !== undefined ? ' [' + body.category + ']' : ''));
       return send(res, 200, { ok: true });
     }
     if (p === '/api/skus/promote' && req.method === 'POST') { /* 미매칭 → SKU 원클릭 승격+매핑 */
@@ -889,16 +922,42 @@ const server = http.createServer(async (req, res) => {
       const name = rawName.replace(/\s*\([^)]*\)\s*$/, '').trim();
       const price = Math.max(0, body.price | 0);
       if (!name || !price) return err(res, 400, 'NAME_PRICE_REQUIRED');
-      const dup = allSkus().find(k => normKey(k.name) === normKey(name));
+      const category = CATS.includes(body.category) ? body.category : '기타';
+      let storeId = null;
+      if (body.storeId) {
+        if (!db.prepare('SELECT 1 FROM stores WHERE id=? AND del=0').get(String(body.storeId))) return err(res, 404, 'STORE_NOT_FOUND');
+        storeId = String(body.storeId);
+      }
+      const dup = allSkus().find(k => normKey(k.name) === normKey(name) && (k.storeId || null) === storeId);
       if (dup) return err(res, 409, 'SKU_EXISTS', { skuId: dup.id, name: dup.name });
       const supply = body.supply ? Math.max(0, body.supply | 0) : Math.round(price * 0.48);
       const kid = uid('k');
-      db.prepare('INSERT INTO skus(id,name,price,supply,mt) VALUES(?,?,?,?,?)').run(kid, name, price, supply, now());
+      db.prepare('INSERT INTO skus(id,name,price,supply,category,store_id,mt) VALUES(?,?,?,?,?,?,?)')
+        .run(kid, name, price, supply, category, storeId, now());
       db.prepare('INSERT INTO sku_aliases(alias,sku_id,mt) VALUES(?,?,?) ON CONFLICT(alias) DO UPDATE SET sku_id=excluded.sku_id, mt=excluded.mt')
         .run(normName(rawName), kid, now());
       const n = reapplyAlias(normName(rawName), kid);
       audit(actor, 'SKU 승격', rawName + ' → ' + name + ' ' + price.toLocaleString('ko-KR') + '원 (' + n + '개 매장일 소급)');
       return send(res, 200, { ok: true, skuId: kid, name, price, supply, rebuilt: n });
+    }
+    if (p === '/api/products/prices' && req.method === 'GET') { /* 매장별 실판매가 vs 기준가 편차 */
+      if (denyAny(['skus', 'settle'])) return;
+      const days = Math.min(366, Math.max(1, parseInt(u.searchParams.get('days') || '30', 10) || 30));
+      const to = kstToday(), from = addDays(to, -(days - 1));
+      const agg = db.prepare('SELECT sku_id, store_id, SUM(qty) q, SUM(amount) a FROM pos_sales WHERE sku_id IS NOT NULL AND date>=? AND date<=? GROUP BY sku_id, store_id').all(from, to);
+      const stMap = {}; allStores().forEach(s2 => { stMap[s2.id] = s2.name; });
+      const items = allSkus().map(k => {
+        const rows = agg.filter(x => x.sku_id === k.id && x.q > 0).map(x => {
+          const avg = Math.round(x.a / x.q);
+          return { storeId: x.store_id, name: stMap[x.store_id] || x.store_id, qty: x.q, amount: x.a, avg,
+            diffPct: k.price > 0 ? (avg - k.price) / k.price * 100 : 0 };
+        });
+        const up = rows.some(r2 => r2.diffPct >= 2), dn = rows.some(r2 => r2.diffPct <= -2);
+        return { skuId: k.id, name: k.name, category: k.category, storeId: k.storeId, base: k.price,
+          stores: rows, maxAbs: rows.reduce((a2, r2) => Math.max(a2, Math.abs(r2.diffPct)), 0),
+          flag: up && dn ? 'mixed' : up ? 'high' : dn ? 'low' : null };
+      });
+      return send(res, 200, { days, from, to, items });
     }
     if ((m = p.match(/^\/api\/skus\/([\w-]+)$/)) && req.method === 'DELETE') {
       if (deny('skus')) return;
@@ -1027,12 +1086,15 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { days, revenue, errors, results });
     }
     if (p === '/api/pos/unmatched' && req.method === 'GET') {
-      if (deny('pos')) return;
+      if (denyAny(['pos', 'skus'])) return;
       const rows = db.prepare('SELECT raw_name, SUM(qty) q, SUM(amount) amt FROM pos_sales WHERE sku_id IS NULL GROUP BY raw_name ORDER BY amt DESC').all();
-      return send(res, 200, { items: rows.map(r => ({ name: r.raw_name, qty: r.q, amount: r.amt, suggest: suggestSku(r.raw_name) })) });
+      const per = db.prepare('SELECT raw_name, store_id, SUM(qty) q, SUM(amount) a FROM pos_sales WHERE sku_id IS NULL GROUP BY raw_name, store_id').all();
+      const stMap = {}; allStores().forEach(s2 => { stMap[s2.id] = s2.name; });
+      return send(res, 200, { items: rows.map(r => ({ name: r.raw_name, qty: r.q, amount: r.amt, suggest: suggestSku(r.raw_name),
+        stores: per.filter(x => x.raw_name === r.raw_name).map(x => ({ storeId: x.store_id, name: stMap[x.store_id] || x.store_id, qty: x.q, amount: x.a })) })) });
     }
     if (p === '/api/pos/alias' && req.method === 'POST') {
-      if (deny('pos')) return;
+      if (denyAny(['pos', 'skus'])) return;
       const alias = normName(body.alias || '');
       const skuId = String(body.skuId || '');
       const kRow = db.prepare('SELECT name FROM skus WHERE id=? AND del=0').get(skuId);
@@ -1044,7 +1106,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, rebuilt: n });
     }
     if (p === '/api/pos/aliases' && req.method === 'GET') {
-      if (deny('pos')) return;
+      if (denyAny(['pos', 'skus'])) return;
       const skuMap = {}; allSkus().forEach(k => { skuMap[k.id] = k.name; });
       const list = db.prepare('SELECT alias, sku_id FROM sku_aliases ORDER BY rowid DESC').all().map(a => {
         const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
@@ -1056,7 +1118,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { aliases: list });
     }
     if ((m = p.match(/^\/api\/pos\/alias\/(.+)$/)) && req.method === 'DELETE') {
-      if (deny('pos')) return;
+      if (denyAny(['pos', 'skus'])) return;
       const alias = normName(decodeURIComponent(m[1]));
       const ex = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=?').get(alias);
       if (!ex) return err(res, 404, 'NOT_FOUND');
@@ -1155,8 +1217,8 @@ const server = http.createServer(async (req, res) => {
         return { nIns, nUpd };
       };
       const g = (x, a, b) => x[a] !== undefined ? x[a] : x[b];
-      const r1 = mergeTable(d.skus, 'skus', ['id', 'name', 'price', 'supply', 'mt', 'del'],
-        x => [x.id, x.name, x.price | 0, x.supply | 0, x.mt || now(), x.del ? 1 : 0]);
+      const r1 = mergeTable(d.skus, 'skus', ['id', 'name', 'price', 'supply', 'category', 'store_id', 'mt', 'del'],
+        x => [x.id, x.name, x.price | 0, x.supply | 0, CATS.includes(x.category) ? x.category : '기타', g(x, 'storeId', 'store_id') || null, x.mt || now(), x.del ? 1 : 0]);
       const r2 = mergeTable(d.stores, 'stores', ['id', 'name', 'type', 'region', 'addr', 'phone', 'open_date', 'mt', 'del'],
         x => [x.id, x.name, x.type || '가맹', x.region || '', x.addr || '', x.phone || '', g(x, 'openDate', 'open_date') || '', x.mt || now(), x.del ? 1 : 0]);
       const r3 = mergeTable(d.leads, 'leads', ['id', 'name', 'phone', 'area', 'store_name', 'stage', 'doc_date', 'advisor', 'open_target', 'memo', 'flag', 'created', 'mt', 'del'],

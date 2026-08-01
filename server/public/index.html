@@ -180,6 +180,8 @@ let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoa
 let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
 let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
 let anOpen=new Set();
+let prodConf={loaded:false},prodCat='전체',prodScope='전체',prodPriceOpen=new Set(),prodPromo=-1,prodStoreSel=null;
+const CATS=['도넛','음료','굿즈','서비스','세트','기타'];
 let csv={raw:'',rows:null,head:null,map:null,preview:null};
 let reveal=null; /* {name, code} 1회 노출 */
 let setupCodes=null;
@@ -222,6 +224,7 @@ function tabsFor(){
   if(cap('orders'))T.push(['orders','발주']);
   if(cap('closings'))T.push(['sales','매출']);
   if(cap('settle'))T.push(['settle','정산'],['an','분석'],['rep','매출현황']);
+  if(cap('skus'))T.push(['prod','상품 관리']);
   T.push(['notice','공지'],['stores','매장'],['conf','설정']);
   return T;}
 function render(){
@@ -241,7 +244,7 @@ function render(){
     </div>
   </div>
   <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</div>
-  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
+  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
   bind();
 }
 
@@ -665,6 +668,110 @@ function vRep(){
     </table></div></div>`;
 }
 
+function priceInfoOf(skuId){return (prodConf.prices&&prodConf.prices.items||[]).find(x=>x.skuId===skuId)||null;}
+function vProd(){
+  if(!prodConf.loaded){
+    if(!prodConf.loading){prodConf.loading=true;
+      Promise.all([api('GET','/api/pos/unmatched'),api('GET','/api/pos/aliases'),api('GET','/api/products/prices?days=30')])
+        .then(([a,b2,c2])=>{prodConf={loaded:true,unmatched:a.items,aliases:b2.aliases||[],prices:c2};render();})
+        .catch(()=>{prodConf={loaded:true,unmatched:[],aliases:[],prices:{items:[]}};render();});}
+    return '<div class="head"><div><h1>상품 관리</h1></div></div><div class="empty">상품 데이터 불러오는 중…</div>';}
+  if(!prodStoreSel&&S.stores.length)prodStoreSel=S.stores[0].id;
+  const stName=id=>{const st=store(id);return st?st.name:id;};
+  let list=S.skus.slice();
+  if(prodCat!=='전체')list=list.filter(k=>(k.category||'기타')===prodCat);
+  if(prodScope==='본사')list=list.filter(k=>!k.storeId);
+  else if(prodScope!=='전체')list=list.filter(k=>k.storeId===prodScope);
+  const flagPill=pi=>{
+    if(!pi||!pi.flag)return '';
+    const t=pi.flag==='high'?'↑ 매장가 높음':pi.flag==='low'?'↓ 매장가 낮음':'± 매장가 상이';
+    const c=pi.flag==='high'?'var(--risk)':pi.flag==='low'?'var(--info)':'var(--warn)';
+    return `<span class="pill" style="background:transparent;border:1px solid ${c};color:${c}">${t} ${pi.maxAbs.toFixed(1)}%</span>`;};
+  return `
+  <div class="head"><div><h1>상품 관리</h1><p>판매 SKU · 카테고리 · 매장 전용 상품 · 실판매가 편차(최근 ${prodConf.prices.days||30}일 POS 실측 vs 기준가, ±2% 이상 표기)</p></div></div>
+
+  <div class="panel"><div class="panel-h"><h2>판매 SKU 목록</h2><span class="meta">행 클릭 = 매장별 실판매가 상세 · 카테고리는 선택 즉시 저장</span></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-size:11px;font-weight:800;color:var(--dim);align-self:center">카테고리</span>
+      ${['전체',...CATS].map(c=>`<button class="btn ${prodCat===c?'':'ghost '}sm" data-pcat="${c}">${c}</button>`).join('')}
+      <span style="font-size:11px;font-weight:800;color:var(--dim);align-self:center;margin-left:10px">범위</span>
+      <button class="btn ${prodScope==='전체'?'':'ghost '}sm" data-pscope="전체">전체</button>
+      <button class="btn ${prodScope==='본사'?'':'ghost '}sm" data-pscope="본사">본사 공통</button>
+      ${S.stores.map(st=>`<button class="btn ${prodScope===st.id?'':'ghost '}sm" data-pscope="${st.id}">${esc(st.name)} 전용</button>`).join('')}
+    </div>
+    <table><thead><tr><th>품목</th><th>카테고리</th><th class="num">소비자가</th><th class="num">공급가</th><th class="num">공급율</th><th>실판매가 편차</th><th></th></tr></thead><tbody>
+    ${list.length?list.map(k=>{
+      const pi=priceInfoOf(k.id);const open=prodPriceOpen.has(k.id);const clickable=!!(pi&&pi.stores.length>0);
+      return `<tr ${clickable?`data-prow="${k.id}" style="cursor:pointer"`:''}>
+        <td style="font-weight:700">${clickable?`<span style="color:var(--dim);font-size:10px">${open?'▾':'▸'}</span> `:''}${esc(k.name)}${k.storeId?` <span class="pill pl-dim">${esc(stName(k.storeId))} 전용</span>`:''}</td>
+        <td><select data-kcat="${k.id}" style="width:84px;padding:4px 6px;font-size:12px">${CATS.map(c=>`<option ${(k.category||'기타')===c?'selected':''}>${c}</option>`).join('')}</select></td>
+        <td class="num">${won(k.price)}</td><td class="num">${won(k.supply)}</td>
+        <td class="num" style="color:var(--dim)">${k.price?(k.supply/k.price*100).toFixed(1):'-'}%</td>
+        <td>${flagPill(pi)}</td>
+        <td><button class="btn danger sm" data-kdel="${k.id}">삭제</button></td></tr>`
+      +(open&&clickable?pi.stores.map(sr=>`<tr style="background:#FAF7F1"><td style="padding-left:26px;font-size:12px;color:var(--dim)">└ ${esc(sr.name)}</td>
+        <td style="font-size:11px;color:var(--dimmer)">실측 ${won(sr.qty)}개</td>
+        <td class="num" style="font-size:12px">${won(sr.avg)}원</td>
+        <td class="num" style="font-size:12px;color:${sr.diffPct>=2?'var(--risk)':sr.diffPct<=-2?'var(--info)':'var(--dim)'}">${sr.diffPct>=0?'+':''}${sr.diffPct.toFixed(1)}%</td>
+        <td colspan="3" style="font-size:11px;color:var(--dimmer)">기준가 ${won(pi.base)}원 대비</td></tr>`).join(''):'');
+    }).join(''):`<tr><td colspan="7" style="text-align:center;color:var(--dimmer);padding:18px">조건에 맞는 SKU가 없습니다</td></tr>`}
+    </tbody></table></div>
+
+  <div class="panel"><div class="panel-h"><h2>SKU 추가</h2><span class="meta">공급가 비우면 소비자가 × 48% · 범위를 매장으로 지정하면 그 매장 전용</span></div>
+    <div class="row">
+      <div><label>품목명</label><input id="k_name"></div>
+      <div style="flex:0 0 100px"><label>카테고리</label><select id="k_cat">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+      <div style="flex:0 0 160px"><label>범위</label><select id="k_scope"><option value="">본사 공통</option>${S.stores.map(st=>`<option value="${st.id}">${esc(st.name)} 전용</option>`).join('')}</select></div>
+      <div style="flex:0 0 120px"><label>소비자가</label><input id="k_price" type="number" min="0" step="100"></div>
+      <div style="flex:0 0 120px"><label>공급가</label><input id="k_supply" type="number" min="0" step="1"></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn" id="addsku">추가</button></div>
+    </div></div>
+
+  <div class="panel"><div class="panel-h"><h2>매장별 상품 리스트</h2><span class="meta">해당 매장 판매 품목 · 최근 ${prodConf.prices.days||30}일 실측 평균가</span></div>
+    <div style="margin-bottom:8px;max-width:240px"><select id="prod_store">${S.stores.map(st=>`<option value="${st.id}" ${st.id===prodStoreSel?'selected':''}>${esc(st.name)}</option>`).join('')}</select></div>
+    <table><thead><tr><th>품목</th><th>카테고리</th><th class="num">기준가</th><th class="num">실판매 평균</th><th class="num">수량</th><th class="num">편차</th></tr></thead><tbody>
+    ${(()=>{const sid=prodStoreSel;const rows=[];
+      S.skus.forEach(k=>{
+        if(k.storeId&&k.storeId!==sid)return;
+        const pi=priceInfoOf(k.id);const sr=pi?pi.stores.find(x=>x.storeId===sid):null;
+        if(!sr&&!k.storeId)return;
+        rows.push({k,sr});});
+      return rows.length?rows.sort((a,b)=>(b.sr?b.sr.amount:0)-(a.sr?a.sr.amount:0)).map(({k,sr})=>`<tr>
+        <td style="font-weight:700">${esc(k.name)}${k.storeId?' <span class="pill pl-dim">전용</span>':''}</td>
+        <td style="font-size:12px;color:var(--dim)">${esc(k.category||'기타')}</td>
+        <td class="num">${won(k.price)}</td>
+        <td class="num">${sr?won(sr.avg):'<span style="color:var(--dimmer)">실측 없음</span>'}</td>
+        <td class="num">${sr?won(sr.qty):'-'}</td>
+        <td class="num" style="color:${sr?(sr.diffPct>=2?'var(--risk)':sr.diffPct<=-2?'var(--info)':'var(--dim)'):'var(--dimmer)'}">${sr?(sr.diffPct>=0?'+':'')+sr.diffPct.toFixed(1)+'%':'-'}</td></tr>`).join('')
+      :`<tr><td colspan="6" style="text-align:center;color:var(--dimmer);padding:18px">이 매장의 판매 실측이 아직 없습니다</td></tr>`;})()}
+    </tbody></table></div>
+
+  <div class="panel"><div class="panel-h"><h2>미매칭 POS 품목</h2><span class="meta">매핑·승격 시 과거분 소급 재계산 · 음료 등 비공급 품목은 미매칭 유지 권장</span></div>
+    ${prodConf.unmatched.length?`<table><thead><tr><th>POS 품목명</th><th>판매 매장</th><th class="num">수량</th><th class="num">금액</th><th>SKU 매핑</th><th></th></tr></thead><tbody>
+    ${prodConf.unmatched.map((u2,i)=>{
+      const inferred=u2.qty>0?Math.round(u2.amount/u2.qty/100)*100:0;
+      return `<tr><td style="font-weight:700">${esc(u2.name)}
+        ${u2.suggest?`<div style="font-size:10px;font-weight:400;color:var(--ok)">제안: ${esc(u2.suggest.name)} (유사도 ${u2.suggest.score}%)</div>`:`<div style="font-size:10px;font-weight:400;color:var(--dimmer)">유사 SKU 없음</div>`}</td>
+      <td style="font-size:11px;color:var(--dim)">${(u2.stores||[]).map(st=>esc(st.name)).join(', ')||'-'}</td>
+      <td class="num">${won(u2.qty)}</td><td class="num">${won(u2.amount)}원</td>
+      <td><select id="al_i${i}"><option value="">— SKU 선택 —</option>${S.skus.filter(k=>!k.storeId).map(k=>`<option value="${k.id}" ${u2.suggest&&u2.suggest.skuId===k.id?'selected':''}>${esc(k.name)}</option>`).join('')}</select></td>
+      <td style="white-space:nowrap"><button class="btn sm" data-pmap="${i}">매핑</button> <button class="btn ghost sm" data-ppro="${i}">${prodPromo===i?'닫기':'SKU로 추가'}</button></td></tr>`
+      +(prodPromo===i?`<tr style="background:#FAF7F1"><td colspan="6"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding:4px 0">
+        <div><label>SKU명</label><input id="pp_name" value="${esc(u2.name.replace(/\s*\([^)]*\)\s*$/,''))}" style="width:150px"></div>
+        <div><label>카테고리</label><select id="pp_cat">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+        <div><label>범위</label><select id="pp_scope"><option value="">본사 공통</option>${(u2.stores||[]).map(st=>`<option value="${st.storeId}">${esc(st.name)} 전용</option>`).join('')}</select></div>
+        <div><label>소비자가 (실판매 추론)</label><input id="pp_price" type="number" value="${inferred}" style="width:110px"></div>
+        <button class="btn sm" data-pgo="${i}">등록·매핑</button></div></td></tr>`:'');}).join('')}
+    </tbody></table>`:`<div style="font-size:11px;color:var(--ok);font-weight:700">미매칭 품목 없음</div>`}
+    ${prodConf.aliases&&prodConf.aliases.length?`<div style="margin-top:12px"><b style="font-size:12px">매핑된 별칭 (통합 내역 — 해제 시 소급 원복)</b>
+      <table><thead><tr><th>POS 품목명(원본)</th><th>→ SKU</th><th class="num">누적 수량</th><th class="num">누적 금액</th><th></th></tr></thead><tbody>
+      ${prodConf.aliases.map((a2,i)=>`<tr><td style="font-weight:700">${a2.names&&a2.names.length?esc(a2.names.join(', ')):esc(a2.alias)}</td>
+        <td>${esc(a2.skuName)}</td><td class="num">${won(a2.qty)}</td><td class="num">${won(a2.amount)}원</td>
+        <td><button class="btn danger sm" data-adel="${i}">해제</button></td></tr>`).join('')}
+      </tbody></table></div>`:''}
+  </div>`;
+}
+
 function noticeList(limit){
   const ns=S.notices;
   const arr=limit?ns.slice(0,limit):ns;
@@ -721,9 +828,9 @@ function vStores(){
 function vConf(){
   const logs=S.audit||[];
   if(cap('pos')&&!posConf.loaded&&!posConf.loading){posConf.loading=true;
-    Promise.all([api('GET','/api/pos/links'),api('GET','/api/pos/unmatched'),api('GET','/api/pos/aliases')])
-      .then(([a,b2,c2])=>{posConf={loaded:true,links:a.links,events:a.events||[],unmatched:b2.items,aliases:c2.aliases||[]};render();})
-      .catch(()=>{posConf={loaded:true,links:[],unmatched:[],aliases:[]};render();});}
+    api('GET','/api/pos/links')
+      .then(a=>{posConf={loaded:true,links:a.links,events:a.events||[]};render();})
+      .catch(()=>{posConf={loaded:true,links:[],events:[]};render();});}
   return `
   <div class="head"><div><h1>설정 — ${esc(S.me.deptLabel)}</h1><p>부서 권한에 해당하는 항목만 표시됩니다 (서버 검증)</p></div></div>
   ${reveal?`<div class="reveal"><b style="font-size:13px;letter-spacing:0">${esc(reveal.name)}</b> 접속코드: <b>${esc(reveal.code)}</b>
@@ -775,37 +882,12 @@ function vConf(){
       <td><input type="checkbox" id="px_${st.id}" ${(L.storeId?L.active:true)?'checked':''}></td>
       <td style="white-space:nowrap"><button class="btn ghost sm" data-psave="${st.id}">저장</button> ${L.storeId?`<button class="btn ghost sm" data-ptest="${st.id}">진단</button> <button class="btn sm" data-psync="${st.id}">동기화</button> <button class="btn ghost sm" data-pbf="${st.id}">30일 백필</button>`:''}</td></tr>`;}).join('')}
     </tbody></table>
-    ${posConf.unmatched&&posConf.unmatched.length?`<div style="margin-top:12px"><b style="font-size:12px;color:var(--warn)">미매칭 POS 품목 — 매핑 시 과거분 소급 재계산</b>
-      <table><thead><tr><th>POS 품목명</th><th class="num">수량</th><th class="num">금액</th><th>SKU 매핑</th><th></th></tr></thead><tbody>
-      ${posConf.unmatched.map((u2,i)=>`<tr><td style="font-weight:700">${esc(u2.name)}
-          ${u2.suggest?`<div style="font-size:10px;font-weight:400;color:var(--ok)">제안: ${esc(u2.suggest.name)} (유사도 ${u2.suggest.score}%)</div>`:`<div style="font-size:10px;font-weight:400;color:var(--dimmer)">유사 SKU 없음 — 직접 선택 또는 SKU 추가</div>`}</td>
-        <td class="num">${won(u2.qty)}</td><td class="num">${won(u2.amount)}원</td>
-        <td><select id="al_i${i}"><option value="">— SKU 선택 —</option>${S.skus.map(k=>`<option value="${k.id}" ${u2.suggest&&u2.suggest.skuId===k.id?'selected':''}>${esc(k.name)}</option>`).join('')}</select></td>
-        <td style="white-space:nowrap"><button class="btn sm" data-pmap="${i}">매핑</button>${cap('skus')?` <button class="btn ghost sm" data-ppro="${i}">SKU로 추가</button>`:''}</td></tr>`).join('')}
-      </tbody></table></div>`:`<div style="margin-top:10px;font-size:11px;color:var(--ok);font-weight:700">미매칭 품목 없음</div>`}
-    ${posConf.aliases&&posConf.aliases.length?`<div style="margin-top:12px"><b style="font-size:12px">매핑된 별칭 (통합 내역 — 해제 시 과거분 소급 원복)</b>
-      <table><thead><tr><th>POS 품목명(원본)</th><th>→ SKU</th><th class="num">누적 수량</th><th class="num">누적 금액</th><th></th></tr></thead><tbody>
-      ${posConf.aliases.map((a2,i)=>`<tr><td style="font-weight:700">${a2.names&&a2.names.length?esc(a2.names.join(', ')):esc(a2.alias)}</td>
-        <td>${esc(a2.skuName)}</td>
-        <td class="num">${won(a2.qty)}</td><td class="num">${won(a2.amount)}원</td>
-        <td><button class="btn danger sm" data-adel="${i}">해제</button></td></tr>`).join('')}
-      </tbody></table></div>`:''}
+
+
     <div class="note">토스플레이스 개발자센터(developers.tossplace.com)에서 앱을 만들고 발급받은 API 키와 매장 ID를 입력하십시오. 완료(COMPLETED) 주문만 집계하며, 폐기수량은 점주 마감 입력을 그대로 보존합니다. mock 제공자는 키 없이 파이프라인을 시연·검증하는 용도입니다.</div>
   </div>`:`<div class="panel"><div class="empty">POS 연동 정보 불러오는 중…</div></div>`):''}
 
-  ${cap('skus')?`<div class="panel"><div class="panel-h"><h2>SKU 관리 (관리)</h2><span class="meta">공급가 기본 = 소비자가 × 48%</span></div>
-    <div class="row">
-      <div><label>품목명</label><input id="k_name"></div>
-      <div style="flex:0 0 130px"><label>소비자가</label><input id="k_price" type="number" min="0" step="100"></div>
-      <div style="flex:0 0 130px"><label>공급가 (비우면 48%)</label><input id="k_supply" type="number" min="0" step="1"></div>
-      <div style="display:flex;align-items:flex-end"><button class="btn" id="addsku">추가</button></div>
-    </div>
-    <table><thead><tr><th>품목</th><th class="num">소비자가</th><th class="num">공급가</th><th class="num">공급율</th><th></th></tr></thead><tbody>
-    ${S.skus.map(k=>`<tr><td style="font-weight:700">${esc(k.name)}</td>
-      <td class="num">${won(k.price)}</td><td class="num">${won(k.supply)}</td>
-      <td class="num" style="color:var(--dim)">${(k.supply/k.price*100).toFixed(1)}%</td>
-      <td><button class="btn danger sm" data-kdel="${k.id}">삭제</button></td></tr>`).join('')}
-    </tbody></table></div>`:''}
+
 
   <div class="panel"><div class="panel-h"><h2>내 비밀번호 변경</h2><span class="meta">${esc(S.me.username)} · 변경 시 다른 기기 세션 종료</span></div>
     <div class="row">
@@ -993,16 +1075,19 @@ function bind(){
       await refresh();render();}catch(e){alert(emsg(e));}});
 
   on('#addsku',async()=>{
-    const nm=$.querySelector('#k_name').value.trim();
-    const pr=+$.querySelector('#k_price').value||0;
-    if(!nm||!pr)return alert('품목명과 소비자가를 입력하십시오.');
-    try{await api('POST','/api/skus',{name:nm,price:pr,supply:+$.querySelector('#k_supply').value||0});
-      await refresh();render();}catch(e){alert(emsg(e));}});
+    const name=$.querySelector('#k_name').value.trim();
+    const price=parseInt($.querySelector('#k_price').value,10)||0;
+    const supply=parseInt($.querySelector('#k_supply').value,10)||0;
+    const catEl=$.querySelector('#k_cat'),scEl=$.querySelector('#k_scope');
+    if(!name||!price)return alert('품목명과 소비자가를 입력하십시오.');
+    try{await api('POST','/api/skus',{name,price,supply:supply||undefined,
+      category:catEl?catEl.value:undefined,storeId:scEl&&scEl.value?scEl.value:undefined});
+      prodConf={loaded:false};await refresh();render();}catch(e){alert(emsg(e));}});
   $.querySelectorAll('[data-kdel]').forEach(b=>b.onclick=async()=>{
     if(!confirm('이 SKU를 삭제합니다.\n이 SKU로 통합된 POS 별칭이 있으면 함께 해제되어 해당 매출은 미매칭으로 돌아가고, 마감도 소급 재계산됩니다.'))return;
     try{const r=await api('DELETE','/api/skus/'+b.dataset.kdel);
       if(r.unmapped)alert('삭제 완료 — 별칭 '+r.unmapped+'건 해제 · '+r.rebuilt+'개 매장·일자 소급 원복');
-      posConf={loaded:false};anData=null;repData=null;await refresh();render();}catch(e){alert(emsg(e));}});
+      prodConf={loaded:false};anData=null;repData=null;await refresh();render();}catch(e){alert(emsg(e));}});
   on('#chpw',async()=>{
     try{await api('POST','/api/password',{old:$.querySelector('#p_old').value,
       new:$.querySelector('#p_new').value});alert('변경되었습니다.');await refresh();render();}
@@ -1092,25 +1177,37 @@ function bind(){
       else alert('진단 실패 ['+(r.step||'')+']\n'+(r.detail||'')+(r.hint?'\n\n→ '+r.hint:''));}
     catch(e){alert(emsg(e));}
     posConf={loaded:false};render();});
-  $.querySelectorAll('[data-ppro]').forEach(b=>b.onclick=async()=>{
-    const item=posConf.unmatched[+b.dataset.ppro];
-    const inferred=item.qty>0?Math.round(item.amount/item.qty/100)*100:0;
-    const pv=prompt('"'+item.name.replace(/\s*\([^)]*\)\s*$/,'')+'" 을(를) 신규 SKU로 추가합니다.\n소비자가(원) — POS 실판매 평균에서 추론된 값입니다. 수정 가능:',inferred||'');
-    if(pv===null)return;
-    const price=parseInt(String(pv).replace(/[^0-9]/g,''),10);
-    if(!price)return alert('소비자가를 숫자로 입력하십시오.');
-    try{const r=await api('POST','/api/skus/promote',{rawName:item.name,price});
-      alert('추가·매핑 완료 — '+r.name+' '+won(r.price)+'원 (공급가 '+won(r.supply)+'원)\n'+r.rebuilt+'개 매장·일자 소급 반영');
-      posConf={loaded:false};anData=null;repData=null;await refresh();render();}
+  $.querySelectorAll('[data-ppro]').forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.ppro;prodPromo=prodPromo===i?-1:i;render();});
+  $.querySelectorAll('[data-pgo]').forEach(b=>b.onclick=async()=>{
+    const i=+b.dataset.pgo;const item=prodConf.unmatched[i];
+    const name=$.querySelector('#pp_name').value.trim();
+    const price=parseInt($.querySelector('#pp_price').value,10);
+    if(!name||!price)return alert('SKU명과 소비자가를 입력하십시오.');
+    try{const r=await api('POST','/api/skus/promote',{rawName:item.name,price,
+      category:$.querySelector('#pp_cat').value,storeId:$.querySelector('#pp_scope').value||undefined});
+      alert('추가·매핑 완료 — '+r.name+' '+won(r.price)+'원'+($.querySelector('#pp_scope').value?' (매장 전용)':'')+'\n'+r.rebuilt+'개 매장·일자 소급 반영');
+      prodPromo=-1;prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
     catch(e){
-      if(e.data&&e.data.error==='SKU_EXISTS')alert('동일 이름의 SKU("'+e.data.name+'")가 이미 있습니다.\n드롭다운에서 선택해 [매핑]을 사용하십시오.');
+      if(e.data&&e.data.error==='SKU_EXISTS')alert('같은 범위에 동일 이름 SKU("'+e.data.name+'")가 이미 있습니다.\n드롭다운 [매핑]을 사용하십시오.');
       else alert(emsg(e));}});
+  $.querySelectorAll('[data-kcat]').forEach(sel=>sel.onchange=async()=>{
+    try{await api('PATCH','/api/skus/'+sel.dataset.kcat,{category:sel.value});
+      prodConf={loaded:false};await refresh();render();}catch(e){alert(emsg(e));render();}});
+  $.querySelectorAll('[data-prow]').forEach(tr=>tr.onclick=e=>{
+    if(e.target.closest('select,button'))return;
+    const k2=tr.dataset.prow;
+    if(prodPriceOpen.has(k2))prodPriceOpen.delete(k2);else prodPriceOpen.add(k2);
+    render();});
+  $.querySelectorAll('[data-pcat]').forEach(b=>b.onclick=()=>{prodCat=b.dataset.pcat;render();});
+  $.querySelectorAll('[data-pscope]').forEach(b=>b.onclick=()=>{prodScope=b.dataset.pscope;render();});
+  {const ps=$.querySelector('#prod_store');if(ps)ps.onchange=()=>{prodStoreSel=ps.value;render();};}
   $.querySelectorAll('[data-adel]').forEach(b=>b.onclick=async()=>{
-    const a2=posConf.aliases[+b.dataset.adel];
+    const a2=prodConf.aliases[+b.dataset.adel];
     if(!confirm('"'+(a2.names&&a2.names.length?a2.names.join(', '):a2.alias)+'" → '+a2.skuName+' 통합을 해제합니다.\n해당 매출은 미매칭으로 돌아가고 마감도 소급 원복됩니다.'))return;
     try{const r=await api('DELETE','/api/pos/alias/'+encodeURIComponent(a2.alias));
       alert('해제 완료 — '+r.rebuilt+'개 매장·일자 재계산');
-      posConf={loaded:false};anData=null;repData=null;await refresh();render();}
+      prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
     catch(e){alert(emsg(e));}});
   on('#purgedemo',async()=>{
     if(!confirm('예시(데모) 데이터를 삭제합니다:\n· 시드 매장 3곳(가로수길·정자·사당)과 그 마감·발주\n· 예시 리드 2건 · 예시 공지\n\n실제 등록 매장·POS 실측·별칭·계정은 유지됩니다. 진행합니까?'))return;
@@ -1126,13 +1223,13 @@ function bind(){
       posConf={loaded:false};anData=null;await refresh();render();}
     catch(e){alert('백필 실패: '+((e.data&&e.data.reason)||'연결 오류'));posConf={loaded:false};render();}});
   $.querySelectorAll('[data-pmap]').forEach(b=>b.onclick=async()=>{
-    const i=+b.dataset.pmap;const item=posConf.unmatched[i];
+    const i=+b.dataset.pmap;const item=prodConf.unmatched[i];
     const skuId=$.querySelector('#al_i'+i).value;
     if(!skuId)return alert('매핑할 SKU를 먼저 선택하십시오.');
     if(!confirm('"'+item.name+'" 을(를) 선택한 SKU로 통합합니다. 과거분까지 소급 재계산됩니다.'))return;
     try{const r=await api('POST','/api/pos/alias',{alias:item.name,skuId});
       alert('매핑 완료 — '+r.rebuilt+'개 매장·일자 소급 재계산');
-      posConf={loaded:false};anData=null;await refresh();render();}
+      prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
     catch(e){alert(emsg(e));}});
 }
 
