@@ -179,6 +179,7 @@ let PH='boot',ST0=null,S=null,tab='dash';
 let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoading=false;
 let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
 let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
+let anOpen=new Set();
 let csv={raw:'',rows:null,head:null,map:null,preview:null};
 let reveal=null; /* {name, code} 1회 노출 */
 let setupCodes=null;
@@ -564,7 +565,7 @@ function vAn(){
   if(!anData||anData.storeId!==sid||anData.from!==from||anData.to!==to){
     if(!anLoading){anLoading=true;
       api('GET','/api/analytics?storeId='+encodeURIComponent(sid)+'&from='+from+'&to='+to)
-        .then(r=>{anData=r;anLoading=false;render();})
+        .then(r=>{anData=r;anOpen=new Set();anLoading=false;render();})
         .catch(()=>{anLoading=false;anData={storeId:sid,from,to,err:true};render();});}
     return head+'<div class="empty">분석 계산 중…</div>';
   }
@@ -593,9 +594,13 @@ function vAn(){
     <div class="bars">${hourSlice.map(h=>`<div class="b"><i style="height:${Math.round(h.amount/mxH*88)}px"></i><span>${h.hour}시</span></div>`).join('')}</div></div>`:''}
   <div class="panel"><div class="panel-h"><h2>상품 믹스</h2><span class="meta">매출 비중 — P&L 모델 믹스 가정 검증용</span></div>
     <table><thead><tr><th>품목</th><th class="num">수량</th><th class="num">매출</th><th style="width:40%">비중</th></tr></thead><tbody>
-    ${A.mix.map(x2=>`<tr><td style="font-weight:700">${esc(x2.name)} ${x2.matched?'':'<span class="pill pl-warn" style="background:var(--warnsoft);color:var(--warn)">미매칭</span>'}</td>
+    ${A.mix.map((x2,mi)=>{const mk='m'+mi;const hasNm=x2.names&&x2.names.length>0;const open=anOpen.has(mk);
+      return `<tr ${hasNm?`data-mixk="${mk}" style="cursor:pointer"`:''}><td style="font-weight:700">${hasNm?`<span style="color:var(--dim);font-size:10px">${open?'▾':'▸'}</span> `:''}${esc(x2.name)} ${x2.matched?'':'<span class="pill pl-warn" style="background:var(--warnsoft);color:var(--warn)">미매칭</span>'}${hasNm&&x2.names.length>1?` <span class="pill pl-dim">${x2.names.length}개 통합</span>`:''}</td>
       <td class="num">${won(x2.qty)}</td><td class="num">${won(x2.amount)}원</td>
-      <td><div style="display:flex;align-items:center;gap:7px"><div style="flex:1;background:#F1EDE5;border-radius:4px;height:9px;overflow:hidden"><div style="width:${Math.min(100,x2.share).toFixed(1)}%;height:100%;background:${x2.matched?'var(--sig)':'var(--warn)'}"></div></div><span style="font-size:11px;color:var(--dim);min-width:44px;text-align:right">${x2.share.toFixed(1)}%</span></div></td></tr>`).join('')}
+      <td><div style="display:flex;align-items:center;gap:7px"><div style="flex:1;background:#F1EDE5;border-radius:4px;height:9px;overflow:hidden"><div style="width:${Math.min(100,x2.share).toFixed(1)}%;height:100%;background:${x2.matched?'var(--sig)':'var(--warn)'}"></div></div><span style="font-size:11px;color:var(--dim);min-width:44px;text-align:right">${x2.share.toFixed(1)}%</span></div></td></tr>`
+      +(open&&hasNm?x2.names.map(nm=>`<tr style="background:#FAF7F1"><td style="padding-left:26px;font-size:12px;color:var(--dim)">└ ${esc(nm.name)}</td>
+        <td class="num" style="font-size:12px;color:var(--dim)">${won(nm.qty)}</td>
+        <td class="num" style="font-size:12px;color:var(--dim)">${won(nm.amount)}원</td><td></td></tr>`).join(''):'');}).join('')}
     </tbody></table></div>`;
 }
 
@@ -716,9 +721,9 @@ function vStores(){
 function vConf(){
   const logs=S.audit||[];
   if(cap('pos')&&!posConf.loaded&&!posConf.loading){posConf.loading=true;
-    Promise.all([api('GET','/api/pos/links'),api('GET','/api/pos/unmatched')])
-      .then(([a,b2])=>{posConf={loaded:true,links:a.links,events:a.events||[],unmatched:b2.items};render();})
-      .catch(()=>{posConf={loaded:true,links:[],unmatched:[]};render();});}
+    Promise.all([api('GET','/api/pos/links'),api('GET','/api/pos/unmatched'),api('GET','/api/pos/aliases')])
+      .then(([a,b2,c2])=>{posConf={loaded:true,links:a.links,events:a.events||[],unmatched:b2.items,aliases:c2.aliases||[]};render();})
+      .catch(()=>{posConf={loaded:true,links:[],unmatched:[],aliases:[]};render();});}
   return `
   <div class="head"><div><h1>설정 — ${esc(S.me.deptLabel)}</h1><p>부서 권한에 해당하는 항목만 표시됩니다 (서버 검증)</p></div></div>
   ${reveal?`<div class="reveal"><b style="font-size:13px;letter-spacing:0">${esc(reveal.name)}</b> 접속코드: <b>${esc(reveal.code)}</b>
@@ -772,11 +777,19 @@ function vConf(){
     </tbody></table>
     ${posConf.unmatched&&posConf.unmatched.length?`<div style="margin-top:12px"><b style="font-size:12px;color:var(--warn)">미매칭 POS 품목 — 매핑 시 과거분 소급 재계산</b>
       <table><thead><tr><th>POS 품목명</th><th class="num">수량</th><th class="num">금액</th><th>SKU 매핑</th><th></th></tr></thead><tbody>
-      ${posConf.unmatched.map((u2,i)=>`<tr><td style="font-weight:700">${esc(u2.name)}</td>
+      ${posConf.unmatched.map((u2,i)=>`<tr><td style="font-weight:700">${esc(u2.name)}
+          ${u2.suggest?`<div style="font-size:10px;font-weight:400;color:var(--ok)">제안: ${esc(u2.suggest.name)} (유사도 ${u2.suggest.score}%)</div>`:`<div style="font-size:10px;font-weight:400;color:var(--dimmer)">유사 SKU 없음 — 직접 선택 또는 SKU 추가</div>`}</td>
         <td class="num">${won(u2.qty)}</td><td class="num">${won(u2.amount)}원</td>
-        <td><select id="al_i${i}">${S.skus.map(k=>`<option value="${k.id}">${esc(k.name)}</option>`).join('')}</select></td>
+        <td><select id="al_i${i}"><option value="">— SKU 선택 —</option>${S.skus.map(k=>`<option value="${k.id}" ${u2.suggest&&u2.suggest.skuId===k.id?'selected':''}>${esc(k.name)}</option>`).join('')}</select></td>
         <td><button class="btn sm" data-pmap="${i}">매핑</button></td></tr>`).join('')}
       </tbody></table></div>`:`<div style="margin-top:10px;font-size:11px;color:var(--ok);font-weight:700">미매칭 품목 없음</div>`}
+    ${posConf.aliases&&posConf.aliases.length?`<div style="margin-top:12px"><b style="font-size:12px">매핑된 별칭 (통합 내역 — 해제 시 과거분 소급 원복)</b>
+      <table><thead><tr><th>POS 품목명(원본)</th><th>→ SKU</th><th class="num">누적 수량</th><th class="num">누적 금액</th><th></th></tr></thead><tbody>
+      ${posConf.aliases.map((a2,i)=>`<tr><td style="font-weight:700">${a2.names&&a2.names.length?esc(a2.names.join(', ')):esc(a2.alias)}</td>
+        <td>${esc(a2.skuName)}</td>
+        <td class="num">${won(a2.qty)}</td><td class="num">${won(a2.amount)}원</td>
+        <td><button class="btn danger sm" data-adel="${i}">해제</button></td></tr>`).join('')}
+      </tbody></table></div>`:''}
     <div class="note">토스플레이스 개발자센터(developers.tossplace.com)에서 앱을 만들고 발급받은 API 키와 매장 ID를 입력하십시오. 완료(COMPLETED) 주문만 집계하며, 폐기수량은 점주 마감 입력을 그대로 보존합니다. mock 제공자는 키 없이 파이프라인을 시연·검증하는 용도입니다.</div>
   </div>`:`<div class="panel"><div class="empty">POS 연동 정보 불러오는 중…</div></div>`):''}
 
@@ -805,6 +818,7 @@ function vConf(){
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn ghost" id="expjson">JSON 내보내기</button>
       <label class="btn ghost" style="cursor:pointer">JSON 가져오기(병합)<input type="file" id="impjson" accept=".json" style="display:none"></label>
+      <button class="btn danger" id="purgedemo">예시 데이터 삭제</button>
     </div>
     <div class="note">아티팩트(파일럿)판 백업을 그대로 병합할 수 있습니다(수정시각 최신 우선). 이관된 매장은 접속코드 미발급 → 위에서 재발급. 이관된 계정은 비밀번호 미설정 → 계정 관리에서 재설정.</div></div>`:''}
 
@@ -1032,6 +1046,10 @@ function bind(){
       catch(e){alert('올바른 백업 파일이 아니거나 병합에 실패했습니다.');}};
     rd.readAsText(f);};
 
+  $.querySelectorAll('[data-mixk]').forEach(tr=>tr.onclick=()=>{
+    const k2=tr.dataset.mixk;
+    if(anOpen.has(k2))anOpen.delete(k2);else anOpen.add(k2);
+    render();});
   const anS=$.querySelector('#an_store');
   if(anS)anS.onchange=()=>{anStore=anS.value;anData=null;render();};
   $.querySelectorAll('[data-anp]').forEach(b=>b.onclick=()=>{anDays=+b.dataset.anp;anData=null;render();});
@@ -1072,6 +1090,19 @@ function bind(){
       else alert('진단 실패 ['+(r.step||'')+']\n'+(r.detail||'')+(r.hint?'\n\n→ '+r.hint:''));}
     catch(e){alert(emsg(e));}
     posConf={loaded:false};render();});
+  $.querySelectorAll('[data-adel]').forEach(b=>b.onclick=async()=>{
+    const a2=posConf.aliases[+b.dataset.adel];
+    if(!confirm('"'+(a2.names&&a2.names.length?a2.names.join(', '):a2.alias)+'" → '+a2.skuName+' 통합을 해제합니다.\n해당 매출은 미매칭으로 돌아가고 마감도 소급 원복됩니다.'))return;
+    try{const r=await api('DELETE','/api/pos/alias/'+encodeURIComponent(a2.alias));
+      alert('해제 완료 — '+r.rebuilt+'개 매장·일자 재계산');
+      posConf={loaded:false};anData=null;repData=null;await refresh();render();}
+    catch(e){alert(emsg(e));}});
+  on('#purgedemo',async()=>{
+    if(!confirm('예시(데모) 데이터를 삭제합니다:\n· 시드 매장 3곳(가로수길·정자·사당)과 그 마감·발주\n· 예시 리드 2건 · 예시 공지\n\n실제 등록 매장·POS 실측·별칭·계정은 유지됩니다. 진행합니까?'))return;
+    try{const r=await api('POST','/api/admin/purge-demo',{});
+      alert('삭제 완료 — 매장 '+r.counts.stores+' · 마감 '+r.counts.closings+' · 리드 '+r.counts.leads+' · 발주 '+r.counts.orders+' · 공지 '+r.counts.notices);
+      posConf={loaded:false};anData=null;repData=null;anStore=null;repStores=null;await refresh();render();}
+    catch(e){alert(emsg(e));}});
   $.querySelectorAll('[data-pbf]').forEach(b=>b.onclick=async()=>{
     if(!confirm('최근 30일 매출을 POS에서 일괄 수집합니다. 기존 폐기수량은 보존됩니다. 진행합니까?'))return;
     b.textContent='백필 중…';b.disabled=true;
@@ -1082,6 +1113,8 @@ function bind(){
   $.querySelectorAll('[data-pmap]').forEach(b=>b.onclick=async()=>{
     const i=+b.dataset.pmap;const item=posConf.unmatched[i];
     const skuId=$.querySelector('#al_i'+i).value;
+    if(!skuId)return alert('매핑할 SKU를 먼저 선택하십시오.');
+    if(!confirm('"'+item.name+'" 을(를) 선택한 SKU로 통합합니다. 과거분까지 소급 재계산됩니다.'))return;
     try{const r=await api('POST','/api/pos/alias',{alias:item.name,skuId});
       alert('매핑 완료 — '+r.rebuilt+'개 매장·일자 소급 재계산');
       posConf={loaded:false};anData=null;await refresh();render();}

@@ -224,6 +224,37 @@ function upsertClosing(storeId, date, items, mode) {
 
 /* ---------------- POS 연동 (토스플레이스) ---------------- */
 const normName = s => String(s || '').replace(/\s+/g, '');
+const normKey = s => String(s || '').replace(/\([^)]*\)/g, '').replace(/[\s\u00b7.\-_/]/g, '').toLowerCase();
+function lev(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++)
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+function suggestSku(rawName) { // 표기 유사도 기반 SKU 제안 (60점 미만은 제안하지 않음)
+  const n = normKey(rawName);
+  if (!n) return null;
+  let best = null;
+  for (const k of allSkus()) {
+    const kn = normKey(k.name);
+    let score;
+    if (n === kn) score = 100;
+    else if (n.includes(kn) || kn.includes(n)) score = 85;
+    else {
+      const L = Math.max(n.length, kn.length);
+      score = Math.round((1 - lev(n, kn) / L) * 100);
+    }
+    if (!best || score > best.score) best = { skuId: k.id, name: k.name, score };
+  }
+  return best && best.score >= 60 ? best : null;
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function kstParts(ts) { // ISO 시각 → KST {date, hour}. 오프셋 없으면 KST로 간주
   if (!ts) return null;
@@ -366,8 +397,10 @@ function computeAnalytics(storeId, from, to) {
       daily[r.date].qty += r.qty; daily[r.date].amount += r.amount;
       hourly[r.hour].qty += r.qty; hourly[r.hour].amount += r.amount;
       const key = r.sku_id || ('?' + normName(r.raw_name));
-      if (!mix[key]) mix[key] = { skuId: r.sku_id, name: r.sku_id ? ((skuMap[r.sku_id] || {}).name || r.raw_name) : r.raw_name, matched: !!r.sku_id, qty: 0, amount: 0 };
+      if (!mix[key]) mix[key] = { skuId: r.sku_id, name: r.sku_id ? ((skuMap[r.sku_id] || {}).name || r.raw_name) : r.raw_name, matched: !!r.sku_id, qty: 0, amount: 0, _nm: {} };
       mix[key].qty += r.qty; mix[key].amount += r.amount;
+      if (!mix[key]._nm[r.raw_name]) mix[key]._nm[r.raw_name] = { name: r.raw_name, qty: 0, amount: 0 };
+      mix[key]._nm[r.raw_name].qty += r.qty; mix[key]._nm[r.raw_name].amount += r.amount;
     });
   } else {
     source = 'closings'; /* POS 미연동 매장 폴백: 마감 × 정가 */
@@ -377,7 +410,7 @@ function computeAnalytics(storeId, from, to) {
         const k = skuMap[i.skuId]; if (!k) return;
         daily[c.date] = daily[c.date] || { qty: 0, amount: 0 };
         daily[c.date].qty += i.sold; daily[c.date].amount += k.price * i.sold;
-        if (!mix[i.skuId]) mix[i.skuId] = { skuId: i.skuId, name: k.name, matched: true, qty: 0, amount: 0 };
+        if (!mix[i.skuId]) mix[i.skuId] = { skuId: i.skuId, name: k.name, matched: true, qty: 0, amount: 0, _nm: {} };
         mix[i.skuId].qty += i.sold; mix[i.skuId].amount += k.price * i.sold;
       });
     });
@@ -401,7 +434,11 @@ function computeAnalytics(storeId, from, to) {
       c.items.forEach(i => { const k = skuMap[i.skuId]; if (k) prevAmount += k.price * i.sold; }); });
   }
   const mixArr = Object.values(mix).sort((a, b) => b.amount - a.amount)
-    .map(x => Object.assign({}, x, { share: totalAmount > 0 ? x.amount / totalAmount * 100 : 0 }));
+    .map(x => {
+      const names = Object.values(x._nm || {}).sort((a, b) => b.amount - a.amount);
+      const o = Object.assign({}, x, { share: totalAmount > 0 ? x.amount / totalAmount * 100 : 0, names });
+      delete o._nm; return o;
+    });
   return { storeId, from, to, days, source, totalAmount, totalQty,
     daily: dailyArr, hourly, weekendAvg: avg(wk), weekdayAvg: avg(wd),
     prevAmount, growthPct: prevAmount > 0 ? (totalAmount - prevAmount) / prevAmount * 100 : null,
@@ -958,7 +995,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/pos/unmatched' && req.method === 'GET') {
       if (deny('pos')) return;
       const rows = db.prepare('SELECT raw_name, SUM(qty) q, SUM(amount) amt FROM pos_sales WHERE sku_id IS NULL GROUP BY raw_name ORDER BY amt DESC').all();
-      return send(res, 200, { items: rows.map(r => ({ name: r.raw_name, qty: r.q, amount: r.amt })) });
+      return send(res, 200, { items: rows.map(r => ({ name: r.raw_name, qty: r.q, amount: r.amt, suggest: suggestSku(r.raw_name) })) });
     }
     if (p === '/api/pos/alias' && req.method === 'POST') {
       if (deny('pos')) return;
@@ -971,6 +1008,37 @@ const server = http.createServer(async (req, res) => {
       const n = reapplyAlias(alias, skuId);
       audit(actor, 'POS 품목 매핑', String(body.alias) + ' → ' + kRow.name + ' (' + n + '개 매장일 재계산)');
       return send(res, 200, { ok: true, rebuilt: n });
+    }
+    if (p === '/api/pos/aliases' && req.method === 'GET') {
+      if (deny('pos')) return;
+      const skuMap = {}; allSkus().forEach(k => { skuMap[k.id] = k.name; });
+      const list = db.prepare('SELECT alias, sku_id FROM sku_aliases ORDER BY rowid DESC').all().map(a => {
+        const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
+          .map(r => r.raw_name).filter(nm => normName(nm) === a.alias);
+        let qty = 0, amount = 0;
+        names.forEach(nm => { const st2 = db.prepare('SELECT COALESCE(SUM(qty),0) q, COALESCE(SUM(amount),0) a FROM pos_sales WHERE raw_name=?').get(nm); qty += st2.q; amount += st2.a; });
+        return { alias: a.alias, skuId: a.sku_id, skuName: skuMap[a.sku_id] || '(삭제된 SKU)', names, qty, amount };
+      });
+      return send(res, 200, { aliases: list });
+    }
+    if ((m = p.match(/^\/api\/pos\/alias\/(.+)$/)) && req.method === 'DELETE') {
+      if (deny('pos')) return;
+      const alias = normName(decodeURIComponent(m[1]));
+      const ex = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=?').get(alias);
+      if (!ex) return err(res, 404, 'NOT_FOUND');
+      db.prepare('DELETE FROM sku_aliases WHERE alias=?').run(alias);
+      const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
+        .map(r => r.raw_name).filter(nm => normName(nm) === alias);
+      const affected = new Set();
+      const upd = db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=?');
+      names.forEach(nm => {
+        upd.run(nm);
+        db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?').all(nm)
+          .forEach(a2 => affected.add(a2.store_id + '|' + a2.date));
+      });
+      [...affected].forEach(k2 => { const [sid, d] = k2.split('|'); rebuildClosingFromPos(sid, d); });
+      audit(actor, 'POS 품목 매핑 해제', alias + ' (' + affected.size + '개 매장일 재계산)');
+      return send(res, 200, { ok: true, rebuilt: affected.size });
     }
 
     /* ---- 매출 분석 (관리/마스터 + 점주 자기 매장) ---- */
@@ -999,6 +1067,28 @@ const server = http.createServer(async (req, res) => {
       const skusQ = (u.searchParams.get('skus') || '').split(',').map(x => x.trim()).filter(Boolean);
       return send(res, 200, computeSalesReport(from, to, unit,
         storesQ.length ? storesQ : null, skusQ.length ? new Set(skusQ) : null));
+    }
+
+    /* ---- 예시 데이터 삭제 (마스터) ---- */
+    if (p === '/api/admin/purge-demo' && req.method === 'POST') {
+      if (deny('backup')) return;
+      const M = now(); const counts = {};
+      const mark = (table, ids) => {
+        let n2 = 0;
+        ids.forEach(id => { const r2 = db.prepare('UPDATE ' + table + ' SET del=1, mt=? WHERE id=? AND del=0').run(M, id); n2 += r2.changes; });
+        return n2;
+      };
+      counts.leads = mark('leads', ['p1', 'p3']);
+      counts.orders = mark('orders', ['o1']);
+      counts.closings = mark('closings', ['c1', 'c2', 'c3']);
+      counts.notices = mark('notices', ['n1']);
+      counts.stores = mark('stores', ['s1', 's2', 's3']);
+      ['s1', 's2', 's3'].forEach(sid => {
+        db.prepare("DELETE FROM sessions WHERE role='store' AND store_id=?").run(sid);
+        db.prepare('UPDATE pos_links SET del=1, active=0, mt=? WHERE store_id=?').run(M, sid);
+      });
+      audit(actor, '예시 데이터 삭제', JSON.stringify(counts));
+      return send(res, 200, { ok: true, counts });
     }
 
     /* ---- 백업 (마스터) ---- */
@@ -1099,4 +1189,4 @@ if (process.env.POS_AUTOSYNC !== '0') setInterval(() => { posAutoSync().catch(()
 if (require.main === module) {
   server.listen(PORT, () => console.log('[OFD] 워크스테이션 서버 v2 가동 — http://localhost:' + PORT + ' (DB: ' + DB_PATH + ')'));
 }
-module.exports = { server, db, _test: { kstParts, computeAnalytics } };
+module.exports = { server, db, _test: { kstParts, computeAnalytics, suggestSku } };

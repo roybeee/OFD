@@ -395,6 +395,58 @@ async function main() {
     log('X8 월별 합계 = 일별 합계', rd.data.grand.amount === rm.data.grand.amount && rd.data.grand.qty === rm.data.grand.qty);
   }
 
+  /* ===== Y. 미매칭 지능화 — 제안·통합 내역·해제 ===== */
+  {
+    const s1 = _test.suggestSku('보스톤크림 (BO)');
+    const s2b = _test.suggestSku('버터피스타치오 (B)');
+    const s3 = _test.suggestSku('레몬에이드');
+    log('Y1 유사도 제안: 보스톤→보스턴·괄호 무시·음료는 제안 없음',
+      !!s1 && s1.name === '보스턴크림' && !!s2b && s2b.name === '버터피스타치오' && s2b.score >= 85 && s3 === null);
+  }
+  r = await call('ad', 'GET', '/api/analytics?storeId=s2&from=' + satD + '&to=' + satD);
+  {
+    const mk3 = r.data.mix.find(x => x.skuId === 'k3');
+    const mk1 = r.data.mix.find(x => x.skuId === 'k1');
+    log('Y2 믹스 드릴다운: 통합 원본 메뉴명 노출', !!mk3 && mk3.names.some(n => n.name === '신메뉴딸기') && mk3.names[0].amount === 45000
+      && !!mk1 && mk1.names.some(n => n.name === '우유크림도넛'));
+  }
+  const berryDates = [...new Set([satD, monD, addD(t, -2), addD(t, -1), t])];
+  const berryQty = berryDates.reduce((a2, d) => a2 + ((day(d) === 0 || day(d) === 6) ? 10 : 5), 0);
+  r = await call('op2', 'GET', '/api/pos/aliases');
+  {
+    const al = r.data.aliases.find(a2 => a2.skuId === 'k3');
+    log('Y3 별칭 목록: 통합 원본·누적 수량 정확', !!al && al.names.includes('신메뉴딸기') && al.qty === berryQty);
+  }
+  r = await call('op2', 'DELETE', '/api/pos/alias/' + encodeURIComponent('신메뉴딸기'));
+  log('Y4 별칭 해제: 전체 매장일 소급 원복', r.status === 200 && r.data.rebuilt === berryDates.length);
+  r = await call('op2', 'GET', '/api/pos/unmatched');
+  {
+    const um2 = r.data.items.find(x => x.name === '신메뉴딸기');
+    log('Y5 해제 후 미매칭 복귀(제안 없음)', !!um2 && um2.qty === berryQty && um2.suggest === null);
+  }
+  chk = await call('own2', 'GET', '/api/bootstrap');
+  {
+    const cS = chk.data.sales.find(c => c.date === satD);
+    log('Y6 마감 원복: k3 제거·폐기 4 유지', !cS.items.find(i => i.skuId === 'k3') && cS.items.find(i => i.skuId === 'k1').waste === 4);
+  }
+  r = await call('ad', 'GET', '/api/analytics?storeId=s2&from=' + satD + '&to=' + satD);
+  log('Y7 분석 원복: 미매칭 45,000 재표시', r.data.unmatchedAmount === 45000);
+
+  /* ===== Z. 예시 데이터 삭제 ===== */
+  r = await call('ad', 'POST', '/api/admin/purge-demo', {});
+  log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);
+  r = await call('m', 'POST', '/api/admin/purge-demo', {});
+  log('Z2 삭제 실행: 매장3·마감3·리드2·발주1·공지1',
+    r.status === 200 && r.data.counts.stores === 3 && r.data.counts.closings === 3
+    && r.data.counts.leads === 2 && r.data.counts.orders === 1 && r.data.counts.notices === 1);
+  chk = await call('m', 'GET', '/api/bootstrap');
+  log('Z3 시드 매장 제거·실매장 유지', !chk.data.stores.some(s => ['s1', 's2', 's3'].includes(s.id))
+    && chk.data.stores.some(s => s.id === 's77') && !chk.data.sales.some(c => c.storeId === 's2' && ['c1','c2','c3'].includes(c.id)));
+  r = await call('own2', 'GET', '/api/bootstrap');
+  log('Z4 삭제 매장 점주 세션 즉시 무효', r.status === 401);
+  r = await call('m', 'POST', '/api/admin/purge-demo', {});
+  log('Z5 재실행 멱등(0건)', r.status === 200 && r.data.counts.stores === 0 && r.data.counts.closings === 0);
+
   /* ===== R. UI ===== */
   const ui = await fetch(BASE + '/');
   const uiText = await ui.text();
