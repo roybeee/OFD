@@ -555,6 +555,23 @@ async function main() {
     log('AE5 분석 수량 복원', chk.data.mix.find(x => x.name === '우유크림도넛').qty === k1qty);
   }
 
+  /* ===== AF. 매장 정보 수정 ===== */
+  r = await call('sa', 'PATCH', '/api/stores/s77', { region: '서울' });
+  log('AF1 영업: 매장 수정 403', r.status === 403);
+  r = await call('op2', 'PATCH', '/api/stores/s77', { type: '직영', region: '서울', addr: '금천구 독산동 302-9', phone: '010-2193-5280', openDate: '2026-05-10' });
+  log('AF2 운영: 전 항목 수정 200', r.status === 200 && r.data.store.type === '직영'
+    && r.data.store.openDate === '2026-05-10' && r.data.store.phone === '010-2193-5280');
+  r = await call('op2', 'PATCH', '/api/stores/s77', { openDate: '20260-05-10' });
+  log('AF3 잘못된 날짜 400', r.status === 400 && r.data.error === 'BAD_DATE');
+  r = await call('op2', 'PATCH', '/api/stores/s77', { type: '위탁' });
+  log('AF4 잘못된 구분 400', r.status === 400 && r.data.error === 'BAD_TYPE');
+  r = await call('op2', 'PATCH', '/api/stores/s77', { name: '  ' });
+  log('AF5 빈 매장명 400', r.status === 400);
+  chk = await call('m', 'GET', '/api/bootstrap');
+  log('AF6 수정 감사 기록', chk.data.audit.some(a2 => a2.act.startsWith('매장 정보 수정') && a2.act.includes('오픈일')));
+  r = await call('op2', 'PATCH', '/api/stores/nope', { region: 'x' });
+  log('AF7 없는 매장 404', r.status === 404);
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

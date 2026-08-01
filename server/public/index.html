@@ -180,6 +180,7 @@ let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoa
 let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
 let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
 let anOpen=new Set();
+let stEdit=null;
 let prodConf={loaded:false},prodCat='전체',prodScope='전체',prodPriceOpen=new Set(),prodPromo=-1,prodStoreSel=null;
 const CATS=['도넛','링도넛','음료','굿즈','서비스','세트','기타'];
 let csv={raw:'',rows:null,head:null,map:null,preview:null};
@@ -820,11 +821,21 @@ function vStores(){
     <button class="btn" id="addstore">등록 (접속코드 자동 발급)</button></div>`:''}
   <div class="panel">
     <table><thead><tr><th>매장명</th><th>구분</th><th>지역</th><th>소재지</th><th>전화</th><th>오픈일</th><th></th></tr></thead><tbody>
-    ${S.stores.map(s=>`<tr><td style="font-weight:700">${esc(s.name)}</td>
+    ${S.stores.map(s=>stEdit===s.id?`<tr style="background:#FAF7F1">
+      <td><input id="se_name" value="${esc(s.name)}" style="width:120px;padding:5px 7px;font-size:12px"></td>
+      <td><select id="se_type" style="width:74px;padding:5px;font-size:12px"><option ${s.type==='가맹'?'selected':''}>가맹</option><option ${s.type==='직영'?'selected':''}>직영</option></select></td>
+      <td><input id="se_region" value="${esc(s.region||'')}" style="width:74px;padding:5px 7px;font-size:12px"></td>
+      <td><input id="se_addr" value="${esc(s.addr||'')}" style="width:100%;min-width:200px;padding:5px 7px;font-size:12px"></td>
+      <td><input id="se_phone" value="${esc(s.phone||'')}" style="width:112px;padding:5px 7px;font-size:12px"></td>
+      <td><input type="date" id="se_open" value="${/^\d{4}-\d{2}-\d{2}$/.test(s.openDate||'')?s.openDate:''}" style="width:132px;padding:4px 6px;font-size:12px">
+        ${(s.openDate&&!/^\d{4}-\d{2}-\d{2}$/.test(s.openDate))?`<div style="font-size:10px;color:var(--risk)">기존값 오류: ${esc(s.openDate)}</div>`:''}</td>
+      <td style="white-space:nowrap"><button class="btn sm" data-stsave="${s.id}">저장</button> <button class="btn ghost sm" data-stcancel="1">취소</button></td></tr>`
+      :`<tr><td style="font-weight:700">${esc(s.name)}</td>
       <td><span class="pill ${s.type==='직영'?'pl-info':'pl-sig'}">${esc(s.type)}</span></td>
       <td>${esc(s.region)}</td><td style="font-size:11.5px;color:var(--dim)">${esc(s.addr)}</td>
-      <td style="font-size:11.5px">${esc(s.phone)}</td><td>${s.openDate||'-'}</td>
-      <td>${cap('stores')?`<button class="btn danger sm" data-stdel="${s.id}">삭제</button>`:''}</td></tr>`).join('')}
+      <td style="font-size:11.5px">${esc(s.phone)}</td>
+      <td>${s.openDate?(/^\d{4}-\d{2}-\d{2}$/.test(s.openDate)?s.openDate:`<span style="color:var(--risk)">${esc(s.openDate)} ⚠</span>`):'-'}</td>
+      <td style="white-space:nowrap">${cap('stores')?`<button class="btn ghost sm" data-stedit="${s.id}">수정</button> <button class="btn danger sm" data-stdel="${s.id}">삭제</button>`:''}</td></tr>`).join('')}
     </tbody></table>
     <div class="note">계약서 22개점 vs 상권보고서 26개점 불일치(War Room r9) 해소 전까지, 밀집이 직접 확인한 매장만 등록하십시오.</div>
   </div>`;
@@ -1069,6 +1080,18 @@ function bind(){
       openDate:$.querySelector('#st_open').value});
       reveal={name:nm,code:r.code};
       await refresh();render();}catch(e){alert(emsg(e));}});
+  $.querySelectorAll('[data-stedit]').forEach(b=>b.onclick=()=>{stEdit=b.dataset.stedit;render();});
+  $.querySelectorAll('[data-stcancel]').forEach(b=>b.onclick=()=>{stEdit=null;render();});
+  $.querySelectorAll('[data-stsave]').forEach(b=>b.onclick=async()=>{
+    const v=id=>{const el=$.querySelector(id);return el?el.value.trim():undefined;};
+    const nm=v('#se_name');
+    if(!nm)return alert('매장명을 입력하십시오.');
+    try{await api('PATCH','/api/stores/'+b.dataset.stsave,{name:nm,type:v('#se_type'),region:v('#se_region'),
+      addr:v('#se_addr'),phone:v('#se_phone'),openDate:v('#se_open')});
+      stEdit=null;await refresh();render();}
+    catch(e){
+      if(e.data&&e.data.error==='BAD_DATE')alert('오픈일 형식이 올바르지 않습니다 (YYYY-MM-DD).');
+      else alert(emsg(e));}});
   $.querySelectorAll('[data-stdel]').forEach(b=>b.onclick=async()=>{
     if(!confirm('매장을 삭제합니까? 발주·매출 기록은 유지됩니다.'))return;
     try{await api('DELETE','/api/stores/'+b.dataset.stdel);await refresh();render();}catch(e){alert(emsg(e));}});

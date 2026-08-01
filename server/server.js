@@ -868,12 +868,45 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/stores' && req.method === 'POST') {
       if (deny('stores')) return;
       if (!String(body.name || '').trim()) return err(res, 400, 'NAME_REQUIRED');
+      const od0 = String(body.openDate || '').trim();
+      if (od0 && !/^\d{4}-\d{2}-\d{2}$/.test(od0)) return err(res, 400, 'BAD_DATE');
       const id = uid('s'); const code = genCode();
       db.prepare('INSERT INTO stores(id,name,type,region,addr,phone,open_date,code_hash,mt) VALUES(?,?,?,?,?,?,?,?,?)')
         .run(id, String(body.name).trim(), body.type === '직영' ? '직영' : '가맹', String(body.region || ''),
-          String(body.addr || ''), String(body.phone || ''), String(body.openDate || ''), pwHash(code), now());
+          String(body.addr || ''), String(body.phone || ''), od0, pwHash(code), now());
       audit(actor, '매장 등록', String(body.name).trim());
       return send(res, 200, { id, code });
+    }
+    if ((m = p.match(/^\/api\/stores\/([\w-]+)$/)) && req.method === 'PATCH') {
+      if (deny('stores')) return;
+      const r0 = db.prepare('SELECT * FROM stores WHERE id=? AND del=0').get(m[1]);
+      if (!r0) return err(res, 404, 'NOT_FOUND');
+      const chg = [];
+      const nm2 = body.name !== undefined ? String(body.name).trim() : r0.name;
+      if (!nm2) return err(res, 400, 'NAME_REQUIRED');
+      if (nm2 !== r0.name) chg.push('상호 ' + r0.name + '→' + nm2);
+      let type2 = r0.type;
+      if (body.type !== undefined) {
+        if (body.type !== '직영' && body.type !== '가맹') return err(res, 400, 'BAD_TYPE');
+        type2 = body.type; if (type2 !== r0.type) chg.push('구분 ' + r0.type + '→' + type2);
+      }
+      let od2 = r0.open_date || '';
+      if (body.openDate !== undefined) {
+        od2 = String(body.openDate).trim();
+        if (od2 && !/^\d{4}-\d{2}-\d{2}$/.test(od2)) return err(res, 400, 'BAD_DATE');
+        if (od2 && (od2 < '2000-01-01' || od2 > '2100-12-31')) return err(res, 400, 'BAD_DATE');
+        if (od2 !== (r0.open_date || '')) chg.push('오픈일 ' + (r0.open_date || '-') + '→' + (od2 || '-'));
+      }
+      const rg2 = body.region !== undefined ? String(body.region).trim() : (r0.region || '');
+      const ad2 = body.addr !== undefined ? String(body.addr).trim() : (r0.addr || '');
+      const ph2 = body.phone !== undefined ? String(body.phone).trim() : (r0.phone || '');
+      if (rg2 !== (r0.region || '')) chg.push('지역');
+      if (ad2 !== (r0.addr || '')) chg.push('소재지');
+      if (ph2 !== (r0.phone || '')) chg.push('전화');
+      db.prepare('UPDATE stores SET name=?, type=?, region=?, addr=?, phone=?, open_date=?, mt=? WHERE id=?')
+        .run(nm2, type2, rg2, ad2, ph2, od2, now(), m[1]);
+      audit(actor, '매장 정보 수정', nm2 + (chg.length ? ' — ' + chg.join(' · ') : ''));
+      return send(res, 200, { ok: true, store: mStore(db.prepare('SELECT * FROM stores WHERE id=?').get(m[1])) });
     }
     if ((m = p.match(/^\/api\/stores\/([\w-]+)\/code$/)) && req.method === 'POST') {
       if (deny('codes')) return;
