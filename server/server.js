@@ -817,8 +817,8 @@ const server = http.createServer(async (req, res) => {
       if (!stRow) return err(res, 404, 'STORE_NOT_FOUND');
       const ex = db.prepare('SELECT * FROM pos_links WHERE store_id=?').get(sid);
       const provider = body.provider === 'mock' ? 'mock' : 'tossplace';
-      const akEnc = body.accessKey ? encSecret(String(body.accessKey)) : (ex ? ex.access_key_enc : null);
-      const skEnc = body.secretKey ? encSecret(String(body.secretKey)) : (ex ? ex.secret_key_enc : null);
+      const akEnc = String(body.accessKey || '').trim() ? encSecret(String(body.accessKey).trim()) : (ex ? ex.access_key_enc : null);
+      const skEnc = String(body.secretKey || '').trim() ? encSecret(String(body.secretKey).trim()) : (ex ? ex.secret_key_enc : null);
       const mid = body.merchantId !== undefined ? String(body.merchantId).trim() : (ex ? ex.merchant_id : '');
       if (provider === 'tossplace' && (!mid || !akEnc || !skEnc)) return err(res, 400, 'LINK_INCOMPLETE');
       const act = body.active === undefined ? (ex ? ex.active : 1) : (body.active ? 1 : 0);
@@ -840,6 +840,29 @@ const server = http.createServer(async (req, res) => {
       const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) ? body.date : kstToday();
       try { const r2 = await syncStoreDay(m[1], date, actor); return send(res, 200, r2); }
       catch (e) { return err(res, 502, 'SYNC_FAIL', { reason: e.message || String(e) }); }
+    }
+    if ((m = p.match(/^\/api\/pos\/test\/([\w-]+)$/)) && req.method === 'POST') {
+      if (deny('pos')) return;
+      const link = db.prepare('SELECT * FROM pos_links WHERE store_id=? AND del=0').get(m[1]);
+      if (!link) return err(res, 404, 'NO_LINK');
+      if (link.provider === 'mock') return send(res, 200, { ok: true, provider: 'mock', detail: 'mock 제공자는 항상 통과합니다' });
+      const ak = decSecret(link.access_key_enc), sk = decSecret(link.secret_key_enc);
+      if (!ak || !sk) return send(res, 200, { ok: false, step: 'KEY', detail: '키 복호화 실패 — Access/Secret Key를 다시 입력·저장하십시오' });
+      try {
+        const info = await tpGet(TP_BASE + encodeURIComponent(link.merchant_id), ak, sk);
+        const nm = info && (info.name || info.merchantName || info.title) ? String(info.name || info.merchantName || info.title) : '';
+        audit(actor, 'POS 연결 진단 성공', (nm || link.merchant_id));
+        return send(res, 200, { ok: true, merchantId: link.merchant_id, name: nm, raw: info ? JSON.stringify(info).slice(0, 300) : '' });
+      } catch (e) {
+        const msg = e.message || String(e);
+        audit(actor, 'POS 연결 진단 실패', link.merchant_id + ' — ' + msg);
+        return send(res, 200, { ok: false, step: 'API', detail: msg,
+          hint: /401|403/.test(msg)
+            ? '키 인증 거부 — ① 현장 POS에서 [연결하기]까지 완료됐는지(코드 입력만으로는 미설치) ② 개발자센터 앱 상세의 연결 매장 목록에 이 매장이 보이는지 ③ Access/Secret Key를 뒤바꿔 넣지 않았는지 확인하십시오.'
+            : /404/.test(msg)
+            ? 'merchantId(' + link.merchant_id + ')를 찾을 수 없습니다 — 매장고유번호를 현장과 다시 대조하십시오.'
+            : '네트워크 또는 토스플레이스 서버 응답 문제입니다. 잠시 후 재시도하십시오.' });
+      }
     }
     if ((m = p.match(/^\/api\/pos\/backfill\/([\w-]+)$/)) && req.method === 'POST') {
       if (deny('pos')) return;

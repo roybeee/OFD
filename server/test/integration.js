@@ -336,6 +336,17 @@ async function main() {
   chk = await call('m', 'GET', '/api/bootstrap');
   log('U3 백필 감사 요약 1건 기록', chk.data.audit.some(a2 => a2.act.includes('POS 백필')));
 
+  /* ===== V. POS 연결 진단 ===== */
+  r = await call('sa', 'POST', '/api/pos/test/s2', {});
+  log('V1 영업: 진단 403', r.status === 403);
+  r = await call('op2', 'POST', '/api/pos/test/s2', {});
+  log('V2 mock 진단 통과', r.status === 200 && r.data.ok === true);
+  r = await call('op2', 'POST', '/api/pos/test/s1', {});
+  log('V3 미연동 매장 진단 404(NO_LINK)', r.status === 404);
+  r = await call('op2', 'PUT', '/api/pos/links/s3', { provider: 'tossplace', merchantId: '  9942  ', accessKey: ' AK ', secretKey: ' SK ' });
+  chk = await call('op2', 'GET', '/api/pos/links');
+  log('V4 저장 시 공백 제거(merchantId)', chk.data.links.find(L => L.storeId === 's3').merchantId === '9942');
+
   /* ===== R. UI ===== */
   const ui = await fetch(BASE + '/');
   const uiText = await ui.text();
