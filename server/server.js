@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS pos_events(id TEXT PRIMARY KEY, ts INTEGER, type TEXT
 try { db.exec('ALTER TABLE skus ADD COLUMN category TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE skus ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE sku_aliases ADD COLUMN store_id TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE orders ADD COLUMN deliver_date TEXT'); db.exec('UPDATE orders SET deliver_date=date WHERE deliver_date IS NULL'); } catch (e) {}
 
 /* ---------------- utils ---------------- */
 const uid = p => p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
@@ -167,7 +168,7 @@ const J = s => { try { return JSON.parse(s || '[]'); } catch (e) { return []; } 
 const mStore = r => r && ({ id: r.id, name: r.name, type: r.type, region: r.region, addr: r.addr, phone: r.phone, openDate: r.open_date, hasCode: !!r.code_hash, mt: r.mt });
 const mLead = r => r && ({ id: r.id, name: r.name, phone: r.phone, area: r.area, storeName: r.store_name, stage: r.stage, docDate: r.doc_date || '', advisor: !!r.advisor, openTarget: r.open_target || '', memo: r.memo || '', flag: !!r.flag, created: r.created, mt: r.mt });
 const mSku = r => r && ({ id: r.id, name: r.name, price: r.price, supply: r.supply, category: r.category || '기타', storeId: r.store_id || null, mt: r.mt });
-const mOrder = r => r && ({ id: r.id, storeId: r.store_id, date: r.date, status: r.status, memo: r.memo || '', items: J(r.items), mt: r.mt });
+const mOrder = r => r && ({ id: r.id, storeId: r.store_id, date: r.date, deliverDate: r.deliver_date || r.date, status: r.status, memo: r.memo || '', items: J(r.items), mt: r.mt });
 const mClosing = r => r && ({ id: r.id, storeId: r.store_id, date: r.date, items: J(r.items), mt: r.mt });
 const mNotice = r => r && ({ id: r.id, date: r.date, title: r.title, body: r.body || '', pinned: !!r.pinned, mt: r.mt });
 const mUser = r => r && ({ id: r.id, username: r.username, name: r.name, dept: r.dept, active: !!r.active, mt: r.mt });
@@ -250,6 +251,11 @@ function upsertClosing(storeId, date, items, mode) {
 
 /* ---------------- POS 연동 (토스플레이스) ---------------- */
 const normName = s => String(s || '').replace(/\s+/g, '');
+const isDate = v => { /* 형식 + 실재 여부 (2026-13-99 차단) */
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v || ''))) return false;
+  const d = new Date(v + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+};
 const normKey = s => String(s || '').replace(/\([^)]*\)/g, '').replace(/[\s\u00b7.\-_/]/g, '').toLowerCase();
 function lev(a, b) {
   if (a === b) return 0;
@@ -374,10 +380,24 @@ function resolveSku(rawName, storeId) {
   const al = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=? AND (store_id IS NULL OR store_id=\'\')').get(n);
   return al ? al.sku_id : null;
 }
+function receivedQty(storeId, date) { /* 입고 = 해당 입고일의 출고·완료 발주 수량 (당일생산-당일배송) */
+  const map = {};
+  db.prepare("SELECT items FROM orders WHERE store_id=? AND COALESCE(deliver_date,date)=? AND del=0 AND status IN ('출고','완료')")
+    .all(storeId, date).forEach(o => {
+      J(o.items).forEach(i => { map[i.skuId] = (map[i.skuId] || 0) + (i.qty | 0); });
+    });
+  return map;
+}
 function rebuildClosingFromPos(storeId, date) {
-  const rows = db.prepare('SELECT sku_id, SUM(qty) q FROM pos_sales WHERE store_id=? AND date=? AND sku_id IS NOT NULL GROUP BY sku_id').all(storeId, date);
-  const items = rows.map(r => ({ skuId: r.sku_id, sold: r.q | 0, waste: 0 })).filter(i => i.sold > 0);
-  if (items.length) upsertClosing(storeId, date, items, 'import'); /* 폐기수량 보존 */
+  const sold = {};
+  db.prepare('SELECT sku_id, SUM(qty) q FROM pos_sales WHERE store_id=? AND date=? AND sku_id IS NOT NULL GROUP BY sku_id')
+    .all(storeId, date).forEach(r => { sold[r.sku_id] = r.q | 0; });
+  const recv = receivedQty(storeId, date);
+  const ids = [...new Set([...Object.keys(sold), ...Object.keys(recv)])];
+  /* 폐기 = 입고 − 판매 (당일생산-당일판매 기준). 입고 기록이 없으면 0으로 두고 수기 폐기값을 보존한다. */
+  const items = ids.map(k => ({ skuId: k, sold: sold[k] || 0, waste: recv[k] !== undefined ? Math.max(0, recv[k] - (sold[k] || 0)) : 0 }))
+    .filter(i => i.sold > 0 || i.waste > 0);
+  if (items.length) upsertClosing(storeId, date, items, Object.keys(recv).length ? 'auto' : 'import');
 }
 async function syncStoreDay(storeId, date, actorName, quiet) {
   const link = db.prepare('SELECT * FROM pos_links WHERE store_id=? AND del=0 AND active=1').get(storeId);
@@ -831,8 +851,11 @@ const server = http.createServer(async (req, res) => {
         .map(i => ({ skuId: String(i.skuId), qty: Math.max(0, i.qty | 0) })).filter(i => i.qty > 0);
       if (!items.length) return err(res, 400, 'EMPTY_ITEMS');
       const id = uid('o');
-      db.prepare('INSERT INTO orders(id,store_id,date,status,memo,items,mt) VALUES(?,?,?,?,?,?,?)')
-        .run(id, sid, kstToday(), '대기', String(body.memo || ''), JSON.stringify(items), now());
+      let dd = String(body.deliverDate || '').trim();
+      if (dd && !isDate(dd)) return err(res, 400, 'BAD_DATE');
+      if (!dd) dd = addDays(kstToday(), 1); /* 기본: 익일 배송 */
+      db.prepare('INSERT INTO orders(id,store_id,date,deliver_date,status,memo,items,mt) VALUES(?,?,?,?,?,?,?,?)')
+        .run(id, sid, kstToday(), dd, '대기', String(body.memo || ''), JSON.stringify(items), now());
       audit(actor, '발주 제출', (db.prepare('SELECT name FROM stores WHERE id=?').get(sid) || {}).name);
       return send(res, 200, { id });
     }
@@ -843,6 +866,7 @@ const server = http.createServer(async (req, res) => {
       const i = OSTAT.indexOf(r.status);
       if (i < 0 || i >= OSTAT.length - 1) return err(res, 409, 'FINAL_STATE');
       db.prepare('UPDATE orders SET status=?, mt=? WHERE id=?').run(OSTAT[i + 1], now(), m[1]);
+      if (OSTAT[i + 1] === '출고') rebuildClosingFromPos(r.store_id, r.deliver_date || r.date); /* 입고 확정 → 폐기 자동 재계산 */
       audit(actor, '발주 상태', (db.prepare('SELECT name FROM stores WHERE id=?').get(r.store_id) || {}).name + ' → ' + OSTAT[i + 1]);
       return send(res, 200, { status: OSTAT[i + 1] });
     }
@@ -892,7 +916,7 @@ const server = http.createServer(async (req, res) => {
       if (deny('stores')) return;
       if (!String(body.name || '').trim()) return err(res, 400, 'NAME_REQUIRED');
       const od0 = String(body.openDate || '').trim();
-      if (od0 && !/^\d{4}-\d{2}-\d{2}$/.test(od0)) return err(res, 400, 'BAD_DATE');
+      if (od0 && !isDate(od0)) return err(res, 400, 'BAD_DATE');
       const id = uid('s'); const code = genCode();
       db.prepare('INSERT INTO stores(id,name,type,region,addr,phone,open_date,code_hash,mt) VALUES(?,?,?,?,?,?,?,?,?)')
         .run(id, String(body.name).trim(), body.type === '직영' ? '직영' : '가맹', String(body.region || ''),
@@ -924,7 +948,7 @@ const server = http.createServer(async (req, res) => {
       let od2 = r0.open_date || '';
       if (body.openDate !== undefined) {
         od2 = String(body.openDate).trim();
-        if (od2 && !/^\d{4}-\d{2}-\d{2}$/.test(od2)) return err(res, 400, 'BAD_DATE');
+        if (od2 && !isDate(od2)) return err(res, 400, 'BAD_DATE');
         if (od2 && (od2 < '2000-01-01' || od2 > '2100-12-31')) return err(res, 400, 'BAD_DATE');
         if (od2 !== (r0.open_date || '')) chg.push('오픈일 ' + (r0.open_date || '-') + '→' + (od2 || '-'));
       }
@@ -1297,6 +1321,35 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, computeSalesReport(from, to, unit,
         storesQ.length ? storesQ : null, skusQ.length ? new Set(skusQ) : null));
     }
+    if (p === '/api/waste' && req.method === 'GET') { /* 입고 − 판매 = 폐기 (당일생산-당일판매) */
+      if (denyAny(['settle', 'orders'])) return;
+      const sid = String(u.searchParams.get('storeId') || '');
+      if (!db.prepare('SELECT 1 FROM stores WHERE id=? AND del=0').get(sid)) return err(res, 404, 'STORE_NOT_FOUND');
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(u.searchParams.get('date') || '') ? u.searchParams.get('date') : kstToday();
+      const skuMap = {}; allSkus().forEach(k => { skuMap[k.id] = k; });
+      const sold = {};
+      db.prepare('SELECT sku_id, SUM(qty) q FROM pos_sales WHERE store_id=? AND date=? AND sku_id IS NOT NULL GROUP BY sku_id')
+        .all(sid, date).forEach(r => { sold[r.sku_id] = r.q | 0; });
+      const recv = receivedQty(sid, date);
+      const hasPos = db.prepare('SELECT COUNT(*) c FROM pos_sales WHERE store_id=? AND date=?').get(sid, date).c > 0;
+      const ids = [...new Set([...Object.keys(recv), ...Object.keys(sold)])].filter(k => skuMap[k]);
+      const items = ids.map(k => {
+        const rq = recv[k], sq = sold[k] || 0;
+        const w = rq === undefined ? null : Math.max(0, rq - sq);
+        return { skuId: k, name: skuMap[k].name, category: skuMap[k].category,
+          received: rq === undefined ? null : rq, sold: sq, waste: w,
+          over: rq !== undefined && sq > rq ? sq - rq : 0,
+          wasteRate: rq ? (Math.max(0, rq - sq) / rq * 100) : null,
+          lossAmount: w === null ? null : w * skuMap[k].supply };
+      }).sort((a, b) => (b.lossAmount || 0) - (a.lossAmount || 0));
+      const tr = items.reduce((a, x) => a + (x.received || 0), 0);
+      const ts = items.reduce((a, x) => a + x.sold, 0);
+      const tw = items.reduce((a, x) => a + (x.waste || 0), 0);
+      return send(res, 200, { storeId: sid, date, hasPos, hasOrder: Object.keys(recv).length > 0,
+        items, totals: { received: tr, sold: ts, waste: tw,
+          wasteRate: tr ? tw / tr * 100 : null,
+          lossAmount: items.reduce((a, x) => a + (x.lossAmount || 0), 0) } });
+    }
 
     /* ---- 예시 데이터 삭제 (마스터) ---- */
     if (p === '/api/admin/purge-demo' && req.method === 'POST') {
@@ -1356,8 +1409,8 @@ const server = http.createServer(async (req, res) => {
         x => [x.id, x.name, x.type || '가맹', x.region || '', x.addr || '', x.phone || '', g(x, 'openDate', 'open_date') || '', x.mt || now(), x.del ? 1 : 0]);
       const r3 = mergeTable(d.leads, 'leads', ['id', 'name', 'phone', 'area', 'store_name', 'stage', 'doc_date', 'advisor', 'open_target', 'memo', 'flag', 'created', 'mt', 'del'],
         x => [x.id, x.name, x.phone || '', x.area || '', g(x, 'storeName', 'store_name') || '', x.stage | 0, g(x, 'docDate', 'doc_date') || '', x.advisor ? 1 : 0, g(x, 'openTarget', 'open_target') || '', x.memo || '', x.flag ? 1 : 0, x.created || '', x.mt || now(), x.del ? 1 : 0]);
-      const r4 = mergeTable(d.orders, 'orders', ['id', 'store_id', 'date', 'status', 'memo', 'items', 'mt', 'del'],
-        x => [x.id, g(x, 'storeId', 'store_id'), x.date, x.status || '대기', x.memo || '', JSON.stringify(x.items || []), x.mt || now(), x.del ? 1 : 0]);
+      const r4 = mergeTable(d.orders, 'orders', ['id', 'store_id', 'date', 'deliver_date', 'status', 'memo', 'items', 'mt', 'del'],
+        x => [x.id, g(x, 'storeId', 'store_id'), x.date, g(x, 'deliverDate', 'deliver_date') || x.date, x.status || '대기', x.memo || '', JSON.stringify(x.items || []), x.mt || now(), x.del ? 1 : 0]);
       const r5 = mergeTable(d.sales, 'closings', ['id', 'store_id', 'date', 'items', 'mt', 'del'],
         x => [x.id, g(x, 'storeId', 'store_id'), x.date, JSON.stringify(x.items || []), x.mt || now(), x.del ? 1 : 0]);
       const r6 = mergeTable(d.notices, 'notices', ['id', 'date', 'title', 'body', 'pinned', 'mt', 'del'],

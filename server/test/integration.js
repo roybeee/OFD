@@ -563,6 +563,8 @@ async function main() {
     && r.data.store.openDate === '2026-05-10' && r.data.store.phone === '010-2193-5280');
   r = await call('op2', 'PATCH', '/api/stores/s77', { openDate: '20260-05-10' });
   log('AF3 잘못된 날짜 400', r.status === 400 && r.data.error === 'BAD_DATE');
+  r = await call('op2', 'PATCH', '/api/stores/s77', { openDate: '2026-02-31' });
+  log('AF3b 실재하지 않는 날짜 400', r.status === 400 && r.data.error === 'BAD_DATE');
   r = await call('op2', 'PATCH', '/api/stores/s77', { type: '위탁' });
   log('AF4 잘못된 구분 400', r.status === 400 && r.data.error === 'BAD_TYPE');
   r = await call('op2', 'PATCH', '/api/stores/s77', { name: '  ' });
@@ -589,6 +591,42 @@ async function main() {
   r = await call('op2', 'POST', '/api/config/navermap', { key: '' });
   chk = await call('m', 'GET', '/api/bootstrap');
   log('AG7 키 해제', chk.data.mapKey === '');
+
+  /* ===== AH. 폐기 자동 산출 (입고 − 판매) ===== */
+  {
+    /* s2 satD: mock 판매 버터피스타치오(k2) 30개. k1은 AE에서 삭제되었으므로 k2·k4로 검증 */
+    let o = await call('op2', 'POST', '/api/orders', { storeId: 's2', deliverDate: satD,
+      items: [{ skuId: 'k2', qty: 40 }, { skuId: 'k4', qty: 5 }] });
+    const oid = o.data.id;
+    log('AH1 발주 입고일 지정', o.status === 200);
+    chk = await call('ad', 'GET', '/api/waste?storeId=s2&date=' + satD);
+    log('AH2 출고 전에는 입고 없음', chk.data.hasOrder === false);
+    for (const st of ['승인', '입금확인', '출고']) await call('op2', 'POST', '/api/orders/' + oid + '/advance', {});
+    chk = await call('ad', 'GET', '/api/waste?storeId=s2&date=' + satD);
+    const w1 = chk.data.items.find(x => x.skuId === 'k2');
+    const w2 = chk.data.items.find(x => x.skuId === 'k4');
+    log('AH3 폐기 = 입고 − 판매 (40−30=10 / 5−0=5)', chk.data.hasOrder === true
+      && w1.received === 40 && w1.sold === 30 && w1.waste === 10
+      && w2.received === 5 && w2.sold === 0 && w2.waste === 5);
+    log('AH4 폐기율·로스금액·합계', Math.round(w1.wasteRate) === 25
+      && w1.lossAmount === 10 * 2784
+      && chk.data.totals.received === 45 && chk.data.totals.waste === 15
+      && Math.round(chk.data.totals.wasteRate) === 33);
+    chk = await call('own2', 'GET', '/api/bootstrap');
+    const cAuto = chk.data.sales.find(c => c.date === satD);
+    log('AH5 마감에 폐기 자동 반영', cAuto.items.find(i => i.skuId === 'k2').waste === 10
+      && cAuto.items.find(i => i.skuId === 'k2').sold === 30
+      && cAuto.items.find(i => i.skuId === 'k4').waste === 5);
+    o = await call('op2', 'POST', '/api/orders', { storeId: 's2', deliverDate: monD, items: [{ skuId: 'k2', qty: 5 }] });
+    for (const st of ['승인', '입금확인', '출고']) await call('op2', 'POST', '/api/orders/' + o.data.id + '/advance', {});
+    chk = await call('ad', 'GET', '/api/waste?storeId=s2&date=' + monD);
+    const w3 = chk.data.items.find(x => x.skuId === 'k2');
+    log('AH6 판매>입고: 폐기 0·초과분 표기', w3.waste === 0 && w3.over === w3.sold - 5 && w3.over > 0);
+    r = await call('sa', 'GET', '/api/waste?storeId=s2&date=' + satD);
+    log('AH7 영업: 폐기 조회 403', r.status === 403);
+    r = await call('op2', 'POST', '/api/orders', { storeId: 's2', deliverDate: '2026-13-99', items: [{ skuId: 'k2', qty: 1 }] });
+    log('AH8 잘못된 입고일 400', r.status === 400);
+  }
 
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
