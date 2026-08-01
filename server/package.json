@@ -1,0 +1,13 @@
+{
+  "name": "ofd-workstation-server",
+  "version": "1.0.0",
+  "description": "OFD 프랜차이즈 워크스테이션 — 의존성 0개 서버판 (가맹 영업·발주·마감·정산·감사 로그, 서버 강제 접근 통제)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "test": "node --no-warnings test/integration.js"
+  },
+  "engines": { "node": ">=22.5.0" },
+  "license": "UNLICENSED",
+  "private": true
+}

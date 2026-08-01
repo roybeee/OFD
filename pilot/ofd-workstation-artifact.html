@@ -1,0 +1,966 @@
+<div id="app"><div class="boot">Loading...</div></div>
+
+<style>
+#app, #app * { box-sizing:border-box; margin:0; padding:0; }
+#app input, #app textarea, #app select, #app button { font-family:inherit; }
+#app{
+  --bg:#FAF7F2; --sur:#FFFFFF; --ink:#1F2430; --line:#E7E0D6;
+  --dim:#8B8577; --dimmer:#B5AE9F;
+  --sig:#F26B21; --deep:#C24E10; --soft:#FDEBDD;
+  --ok:#1F9D55; --oksoft:#E6F4EC; --warn:#B7791F; --warnsoft:#FCF3E3;
+  --risk:#C53030; --risksoft:#FBEAEA; --info:#2B6CB0; --infosoft:#E8F0F9;
+  font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',
+    -apple-system,BlinkMacSystemFont,system-ui,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg); color:var(--ink); min-height:740px;
+  font-size:14px; line-height:1.5; letter-spacing:-.01em;
+  font-variant-numeric:tabular-nums; border-radius:14px; overflow:hidden;
+  display:flex; flex-direction:column;
+}
+#app .boot{padding:60px;color:var(--dim);font-size:13px}
+#app .top{background:var(--sur);border-bottom:1px solid var(--line);
+  padding:13px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#app .logo{display:flex;align-items:center;gap:9px}
+#app .logo .dot{width:12px;height:12px;border-radius:4px;background:var(--sig)}
+#app .logo b{font-size:15px;font-weight:800;letter-spacing:-.03em}
+#app .logo span{font-size:9px;color:var(--dimmer);letter-spacing:.12em;font-weight:700}
+#app .sess{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#app .sess .who{font-size:12px;font-weight:800;color:var(--deep);background:var(--soft);
+  padding:5px 11px;border-radius:20px}
+#app .sess .rv{font-size:10px;color:var(--dimmer)}
+#app .tabs{background:var(--sur);border-bottom:1px solid var(--line);
+  padding:0 14px;display:flex;gap:2px;overflow-x:auto}
+#app .tabs button{background:none;border:0;border-bottom:2.5px solid transparent;
+  padding:11px 12px;font:inherit;font-size:13px;color:var(--dim);cursor:pointer;
+  white-space:nowrap;font-weight:600;transition:.13s}
+#app .tabs button:hover{color:var(--ink)}
+#app .tabs button.on{color:var(--sig);border-bottom-color:var(--sig);font-weight:800}
+#app .main{flex:1;overflow-y:auto;padding:20px;min-width:0}
+#app .head{display:flex;justify-content:space-between;align-items:flex-end;
+  margin-bottom:15px;gap:14px;flex-wrap:wrap}
+#app .head h1{font-size:18px;font-weight:800;letter-spacing:-.03em}
+#app .head p{font-size:11.5px;color:var(--dim);margin-top:3px}
+#app .panel{background:var(--sur);border:1px solid var(--line);border-radius:11px;
+  padding:15px;margin-bottom:13px}
+#app .panel-h{display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:11px;gap:10px;flex-wrap:wrap}
+#app .panel-h h2{font-size:13.5px;font-weight:800;letter-spacing:-.02em}
+#app .panel-h .meta{font-size:11px;color:var(--dim)}
+#app .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:13px}
+#app .kpi{background:var(--sur);border:1px solid var(--line);border-radius:10px;padding:12px}
+#app .kpi .k{font-size:10px;color:var(--dim);font-weight:700}
+#app .kpi .v{font-size:21px;font-weight:800;letter-spacing:-.03em;margin-top:6px;line-height:1}
+#app .kpi .v em{font-size:11px;font-style:normal;color:var(--dim);font-weight:600;margin-left:2px}
+#app .kpi .s{font-size:10px;color:var(--dimmer);margin-top:6px}
+#app .pill{font-size:9.5px;font-weight:800;padding:3px 9px;border-radius:20px;
+  white-space:nowrap;display:inline-block;border:1px solid transparent}
+#app .pl-wait{background:var(--warnsoft);color:var(--warn)}
+#app .pl-ok{background:var(--oksoft);color:var(--ok)}
+#app .pl-info{background:var(--infosoft);color:var(--info)}
+#app .pl-risk{background:var(--risksoft);color:var(--risk)}
+#app .pl-dim{background:#F1EDE5;color:var(--dim)}
+#app .pl-sig{background:var(--soft);color:var(--deep)}
+#app .kb{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
+#app .kb-col{min-width:196px;flex:1;background:#F4F0E8;border:1px solid var(--line);
+  border-radius:10px;padding:9px}
+#app .kb-col h3{font-size:11px;font-weight:800;color:var(--dim);padding:2px 4px 8px;
+  display:flex;justify-content:space-between}
+#app .kb-col h3 i{font-style:normal;color:var(--dimmer)}
+#app .card{background:var(--sur);border:1px solid var(--line);border-radius:8px;
+  padding:10px;margin-bottom:8px;cursor:pointer;transition:.12s}
+#app .card:hover{border-color:var(--sig)}
+#app .card.sel{border-color:var(--sig);box-shadow:0 0 0 2px var(--soft)}
+#app .card b{font-size:12.5px;font-weight:700;display:block}
+#app .card .a{font-size:10.5px;color:var(--dim);margin-top:2px}
+#app .card .g{font-size:10px;margin-top:6px;font-weight:700}
+#app .card .mv{display:flex;gap:5px;margin-top:8px}
+#app .card .mv button{flex:1;background:#F4F0E8;border:1px solid var(--line);
+  border-radius:5px;padding:4px 0;font-size:11px;cursor:pointer;color:var(--dim)}
+#app .card .mv button:hover{color:var(--ink);border-color:var(--dim)}
+#app input,#app textarea,#app select{background:var(--sur);border:1px solid var(--line);
+  border-radius:7px;color:var(--ink);padding:8px 10px;font-size:13px;width:100%}
+#app input:focus,#app textarea:focus,#app select:focus{outline:2px solid var(--sig);outline-offset:-1px}
+#app textarea{resize:vertical;min-height:64px}
+#app label{display:block;font-size:10px;color:var(--dim);font-weight:700;margin-bottom:4px}
+#app .row{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+#app .row>div{flex:1;min-width:120px}
+#app .btn{background:var(--sig);color:#fff;border:0;border-radius:7px;padding:9px 15px;
+  font-size:13px;font-weight:700;cursor:pointer;transition:.12s;white-space:nowrap}
+#app .btn:hover{background:var(--deep)}
+#app .btn.ghost{background:none;border:1px solid var(--line);color:var(--dim)}
+#app .btn.ghost:hover{color:var(--ink);border-color:var(--dim)}
+#app .btn.sm{padding:5px 10px;font-size:11px}
+#app .btn.danger{background:none;border:1px solid var(--risksoft);color:var(--risk)}
+#app .btn.danger:hover{background:var(--risksoft)}
+#app .chk{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink)}
+#app .chk input{width:auto}
+#app table{width:100%;border-collapse:collapse;font-size:12.5px}
+#app th{text-align:left;font-size:10px;color:var(--dim);font-weight:800;
+  padding:8px 9px;border-bottom:1.5px solid var(--line);white-space:nowrap}
+#app td{padding:8px 9px;border-bottom:1px solid #F1EDE5;vertical-align:middle}
+#app tr:last-child td{border-bottom:0}
+#app td.num,#app th.num{text-align:right}
+#app .qty{width:70px;text-align:right;padding:6px 8px}
+#app .bars{display:flex;align-items:flex-end;gap:5px;height:96px;padding-top:6px}
+#app .bars .b{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+  align-items:center;gap:4px;min-width:0}
+#app .bars .b i{width:100%;background:var(--sig);border-radius:3px 3px 0 0;min-height:2px}
+#app .bars .b span{font-size:8.5px;color:var(--dimmer);white-space:nowrap}
+#app .note{font-size:11px;color:var(--dim);line-height:1.6;background:#F7F3EB;
+  border-left:2.5px solid var(--sig);padding:10px 12px;border-radius:0 7px 7px 0;margin-top:11px}
+#app .empty{color:var(--dimmer);font-size:12px;padding:18px 0;text-align:center}
+#app .save{position:fixed;bottom:20px;right:20px;background:var(--ok);color:#fff;
+  padding:8px 14px;border-radius:8px;font-size:12px;font-weight:800;opacity:0;
+  transition:.25s;pointer-events:none;z-index:50}
+#app .save.on{opacity:1}
+#app .gatewrap{flex:1;display:flex;align-items:center;justify-content:center;padding:30px}
+#app .gate{width:100%;max-width:680px}
+#app .gate .gt{text-align:center;margin-bottom:22px}
+#app .gate .gt b{font-size:20px;font-weight:800}
+#app .gate .gt p{font-size:12px;color:var(--dim);margin-top:5px}
+#app .gate .cols{display:flex;gap:14px;flex-wrap:wrap}
+#app .gate .cols>.panel{flex:1;min-width:260px;margin:0}
+#app .code{letter-spacing:.35em;font-weight:800;text-align:center;font-size:16px}
+#app .logrow{font-size:11px;color:var(--dim);padding:6px 0;border-bottom:1px solid #F1EDE5;
+  display:flex;gap:10px}
+#app .logrow .lt{color:var(--dimmer);white-space:nowrap}
+#app .logrow .lw{font-weight:800;color:var(--deep);white-space:nowrap}
+@media(max-width:760px){
+  #app .main{padding:13px}
+  #app .kb-col{min-width:180px}
+  #app .sess{margin-left:0;width:100%}
+}
+@media(prefers-reduced-motion:reduce){#app *{transition:none!important}}
+</style>
+
+<script>
+(function(){
+const KDB='ofd_erp_db_v2', KSES='ofd_erp_session', KV1='ofd_erp_state';
+const $=document.getElementById('app');
+const STAGES=['\uB9AC\uB4DC','\uC0C1\uB2F4','\uC815\uBCF4\uACF5\uAC1C\uC11C \uC81C\uACF5','\uAC00\uB9F9\uACC4\uC57D','\uC2E4\uC0AC\u00B7\uACF5\uC0AC','\uC624\uD508\uC644\uB8CC'];
+const OSTAT=['\uB300\uAE30','\uC2B9\uC778','\uC785\uAE08\uD655\uC778','\uCD9C\uACE0','\uC644\uB8CC'];
+const OSCLS={'\uB300\uAE30':'pl-wait','\uC2B9\uC778':'pl-info','\uC785\uAE08\uD655\uC778':'pl-sig','\uCD9C\uACE0':'pl-info','\uC644\uB8CC':'pl-ok'};
+
+/* ---------- utils ---------- */
+const pad=n=>String(n).padStart(2,'0');
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+const addD=(s,n)=>{const d=new Date(s+'T00:00:00');d.setDate(d.getDate()+n);
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+const diffD=(a,b)=>Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/864e5);
+const isWknd=s=>{const w=new Date(s+'T00:00:00').getDay();return w===0||w===6;};
+const md=s=>s?s.slice(5).replace('-','.'):'';
+const won=n=>n.toLocaleString('ko-KR');
+const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function hashPin(s){
+  const msg='ofd:'+s;
+  try{
+    if(typeof crypto!=='undefined'&&crypto.subtle){
+      const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(msg));
+      return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');
+    }
+  }catch(e){}
+  let h=5381;for(let i=0;i<msg.length;i++)h=((h*33)^msg.charCodeAt(0+i))>>>0;
+  return 'x'+h.toString(16);
+}
+const genCode=()=>String(Math.floor(100000+Math.random()*900000));
+
+/* ---------- storage ---------- */
+async function sget(k,shared){try{const r=await window.storage.get(k,shared);return r&&r.value?JSON.parse(r.value):null;}catch(e){return null;}}
+async function sset(k,v,shared){try{await window.storage.set(k,JSON.stringify(v),shared);return true;}catch(e){console.error('storage set failed',k,e);return false;}}
+
+/* ---------- db / sync ---------- */
+let DB=null, SES=null, ph='boot', tab='dash';
+let pSel=null, salesDate=today(), salesStore=null, setMonth=today().slice(0,7);
+let csv={raw:'',rows:null,map:null,preview:null};
+let saveT=null, syncing=false;
+
+const COLS=['skus','stores','leads','orders','sales','notices','logs'];
+function emptyDb(){return{rev:1,skus:[],stores:[],leads:[],orders:[],sales:[],notices:[],logs:[],
+  sec:{pinH:'',codes:{},mt:1}};}
+function mergeDb(a,b){ /* b wins on higher mt per entity; tombstones respected */
+  if(!a)return b; if(!b)return a;
+  const out=emptyDb();
+  COLS.forEach(c=>{
+    const m=new Map();
+    (a[c]||[]).forEach(x=>m.set(x.id,x));
+    (b[c]||[]).forEach(x=>{const p=m.get(x.id);
+      if(!p||(x.mt||0)>=(p.mt||0))m.set(x.id,x);});
+    out[c]=[...m.values()];
+  });
+  out.sec=((b.sec&&b.sec.mt||0)>=(a.sec&&a.sec.mt||0))?(b.sec||a.sec):(a.sec||b.sec);
+  out.rev=Math.max(a.rev||1,b.rev||1)+1;
+  return out;
+}
+const C=n=>DB[n].filter(x=>!x.del);
+function up(n,obj){obj.mt=Date.now();
+  const i=DB[n].findIndex(x=>x.id===obj.id);
+  if(i>=0)DB[n][i]=obj;else DB[n].push(obj);
+  save();}
+function rm(n,id){const x=DB[n].find(y=>y.id===id);
+  if(x){x.del=true;x.mt=Date.now();save();}}
+function log(act){DB.logs.push({id:uid('g'),mt:Date.now(),who:SES?SES.label:'-',act});
+  if(DB.logs.length>500)DB.logs=DB.logs.slice(-500);}
+
+async function pushDb(){
+  const remote=await sget(KDB,true);
+  DB=mergeDb(remote,DB);
+  const ok=await sset(KDB,DB,true);
+  const el=$.querySelector('.save');
+  if(ok&&el){el.textContent='\uB3D9\uAE30\uD654\uB428 rev '+DB.rev;el.classList.add('on');
+    setTimeout(()=>el.classList.remove('on'),1300);}
+}
+function save(){clearTimeout(saveT);saveT=setTimeout(pushDb,400);}
+async function pullDb(){
+  if(syncing)return;syncing=true;
+  const remote=await sget(KDB,true);
+  if(remote){DB=mergeDb(DB,remote);}
+  syncing=false;render();
+}
+
+/* ---------- seed / migrate ---------- */
+function seedDb(withDemo){
+  const db=emptyDb(),t=today(),M=1;
+  db.skus=[['\uC6B0\uC720\uD06C\uB9BC\uB3C4\uB11B',4200,2016],['\uBC84\uD130\uD53C\uC2A4\uD0C0\uCE58\uC624',5800,2784],['\uD06C\uB9BC\uBE0C\uB944\uB808',4700,2256],
+   ['\uC624\uB9AC\uC9C0\uB110',3000,1440],['\uC2DC\uB098\uBAAC\uC288\uAC00',3400,1632],['\uBCF4\uC2A4\uD134\uD06C\uB9BC',4900,2352],['\uD2F0\uB77C\uBBF8\uC218',5800,2784],
+   ['\uD53C\uB11B\uBC84\uD130',5800,2784],['\uCD08\uCF54\uD06C\uB7F0\uCE58',3800,1824],['\uBA54\uC774\uD50C\uD53C\uCE78',5000,2400]]
+   .map((x,i)=>({id:'k'+(i+1),mt:M,name:x[0],price:x[1],supply:x[2]}));
+  db.stores=[
+   {id:'s1',mt:M,name:'\uAC00\uB85C\uC218\uAE38\uC810',type:'\uC9C1\uC601',region:'\uC11C\uC6B8',addr:'\uAC15\uB0A8\uAD6C \uAC15\uB0A8\uB300\uB85C160\uAE38 35-5',phone:'0507-1339-2589',openDate:'2018-05-01'},
+   {id:'s2',mt:M,name:'\uC815\uC790\uC810',type:'\uAC00\uB9F9',region:'\uACBD\uAE30',addr:'\uC131\uB0A8\uC2DC \uBD84\uB2F9\uAD6C \uC815\uC790\uC77C\uB85C 135',phone:'031-607-4137',openDate:'2021-03-01'},
+   {id:'s3',mt:M,name:'\uC0AC\uB2F9\uC810',type:'\uAC00\uB9F9',region:'\uC11C\uC6B8',addr:'\uC11C\uCD08\uAD6C \uB3D9\uC791\uB300\uB85C 36',phone:'0507-1406-5061',openDate:'2022-06-01'}];
+  if(withDemo){
+    db.leads=[
+     {id:'p1',mt:M,name:'\uAE40OO',phone:'010-1234-0001',area:'\uC218\uC6D0 \uAD11\uAD50',storeName:'\uAD11\uAD50\uC810(\uC608\uC815)',
+      stage:2,docDate:addD(t,-6),advisor:false,openTarget:addD(t,45),
+      memo:'(\uC608\uC2DC) \uAC24\uB7EC\uB9AC\uC544 \uAD11\uAD50 \uC778\uADFC 1\uCE35 30\uD3C9 \uD76C\uB9DD',flag:false,created:addD(t,-9)},
+     {id:'p2',mt:M,name:'\uBC15OO',phone:'010-1234-0002',area:'\uC11C\uC6B8 \uB9C8\uACE1',storeName:'',
+      stage:1,docDate:'',advisor:false,openTarget:'',memo:'(\uC608\uC2DC) \uC624\uD53C\uC2A4 \uC0C1\uAD8C \uBB38\uC758',flag:false,created:addD(t,-3)},
+     {id:'p3',mt:M,name:'\uC774OO',phone:'010-1234-0003',area:'\uB3D9\uD0C4 \uC2E0\uB3C4\uC2DC',storeName:'\uB3D9\uD0C4\uC810(\uC608\uC815)',
+      stage:4,docDate:addD(t,-40),advisor:true,openTarget:addD(t,20),memo:'(\uC608\uC2DC) \uC778\uD14C\uB9AC\uC5B4 \uCC29\uACF5',flag:false,created:addD(t,-55)}];
+    db.orders=[{id:'o1',mt:M,storeId:'s2',date:addD(t,-1),items:[{skuId:'k1',qty:60},{skuId:'k2',qty:30}],status:'\uB300\uAE30',memo:'(\uC608\uC2DC)'}];
+    db.sales=[
+     {id:'c1',mt:M,storeId:'s2',date:addD(t,-3),items:[{skuId:'k1',sold:42,waste:1},{skuId:'k2',sold:22,waste:0}]},
+     {id:'c2',mt:M,storeId:'s2',date:addD(t,-2),items:[{skuId:'k1',sold:35,waste:3},{skuId:'k2',sold:18,waste:1}]},
+     {id:'c3',mt:M,storeId:'s2',date:addD(t,-1),items:[{skuId:'k1',sold:40,waste:2},{skuId:'k2',sold:20,waste:0}]}];
+    db.notices=[{id:'n1',mt:M,date:t,pinned:true,title:'\uD504\uB79C\uCC28\uC774\uC988 \uC6CC\uD06C\uC2A4\uD14C\uC774\uC158 v2 \uC624\uD508',
+      body:'\uBA40\uD2F0\uC720\uC800\u00B7POS \uAC00\uC838\uC624\uAE30\u00B7\uC815\uC0B0 \uC9D1\uACC4\uAC00 \uCD94\uAC00\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC810\uC8FC \uC811\uC18D\uCF54\uB4DC\uB294 \uBCF8\uC0AC \uC124\uC815 \uD0ED\uC5D0\uC11C \uBC1C\uAE09\uD569\uB2C8\uB2E4.'}];
+  }
+  return db;
+}
+function migrateV1(v1){
+  const db=emptyDb(),M=Date.now();
+  ['skus','stores','leads','orders','sales','notices'].forEach(c=>{
+    (v1[c]||[]).forEach(x=>{x.mt=M;db[c].push(x);});});
+  return db;
+}
+
+/* ---------- domain ---------- */
+const sku=id=>C('skus').find(k=>k.id===id);
+const store=id=>C('stores').find(s=>s.id===id);
+const isHQ=()=>SES&&SES.who==='hq';
+const myStore=()=>isHQ()?null:store(SES.who);
+function gate(L){if(!L.docDate)return{has:false};
+  const days=L.advisor?7:14,g=addD(L.docDate,days),left=diffD(today(),g);
+  return{has:true,days,gate:g,ok:left<=0,left};}
+function orderAmt(o){return o.items.reduce((a,i)=>{const k=sku(i.skuId);return a+(k?k.supply*i.qty:0);},0);}
+function closingRev(c){return c.items.reduce((a,i)=>{const k=sku(i.skuId);return a+(k?k.price*i.sold:0);},0);}
+function closingLoss(c){const s=c.items.reduce((a,i)=>a+i.sold,0),w=c.items.reduce((a,i)=>a+i.waste,0);
+  return{sold:s,waste:w,rate:s+w>0?(w/(s+w)*100):0};}
+function recQty(storeId,skuId,target){
+  const cs=C('sales').filter(c=>c.storeId===storeId).sort((a,b)=>b.date<a.date?-1:1);
+  const wk=isWknd(target);
+  let pool=cs.filter(c=>isWknd(c.date)===wk).slice(0,5);
+  let basis=wk?'\uC8FC\uB9D0':'\uD3C9\uC77C';
+  if(pool.length<3){pool=cs.slice(0,7);basis='\uC804\uCCB4';}
+  if(!pool.length)return{rec:0,basis:'-',n:0};
+  const tot=pool.reduce((a,c)=>{const it=c.items.find(i=>i.skuId===skuId);return a+(it?it.sold:0);},0);
+  const avg=tot/pool.length;
+  const v=Math.round(avg*110)/100; /* x1.1, \uBD80\uB3D9\uC18C\uC218\uC810 \uACBD\uACC4 \uBCF4\uC815 */
+  return{rec:Math.ceil(v/5)*5,basis,n:pool.length};}
+function revByDate(storeId){const out=[];
+  for(let n=13;n>=0;n--){const d=addD(today(),-n);
+    const rev=C('sales').filter(c=>c.date===d&&(!storeId||c.storeId===storeId))
+      .reduce((a,c)=>a+closingRev(c),0);
+    out.push({d,rev});}
+  return out;}
+
+/* ---------- render root ---------- */
+function tabsFor(){return isHQ()
+  ?[['dash','\uB300\uC2DC\uBCF4\uB4DC'],['pipe','\uC601\uC5C5'],['orders','\uBC1C\uC8FC'],['sales','\uB9E4\uCD9C'],['settle','\uC815\uC0B0'],['notice','\uACF5\uC9C0'],['stores','\uB9E4\uC7A5'],['conf','\uC124\uC815']]
+  :[['dash','\uB300\uC2DC\uBCF4\uB4DC'],['orders','\uBC1C\uC8FC'],['sales','\uB9E4\uCD9C \uB9C8\uAC10'],['notice','\uACF5\uC9C0']];}
+function render(){
+  if(ph==='setup')return renderSetup();
+  if(ph==='gate')return renderGate();
+  const TB=tabsFor();
+  if(!TB.find(x=>x[0]===tab))tab='dash';
+  $.innerHTML=`
+  <div class="top">
+    <div class="logo"><div class="dot"></div>
+      <div><b>OFD \uC6CC\uD06C\uC2A4\uD14C\uC774\uC158</b><br><span>FRANCHISE OPS v2</span></div></div>
+    <div class="sess">
+      <span class="who">${esc(SES.label)}</span>
+      <span class="rv">rev ${DB.rev}</span>
+      <button class="btn ghost sm" id="sync">\uB3D9\uAE30\uD654</button>
+      <button class="btn ghost sm" id="logout">\uC138\uC158 \uC804\uD658</button>
+    </div>
+  </div>
+  <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</div>
+  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>
+  <div class="save">\uB3D9\uAE30\uD654\uB428</div>`;
+  bind();
+}
+
+/* ---------- setup / gate ---------- */
+let setupHasV1=false;
+function renderSetup(){
+  $.innerHTML=`
+  <div class="gatewrap"><div class="gate">
+    <div class="gt"><b>\uC6CC\uD06C\uC2A4\uD14C\uC774\uC158 \uCD08\uAE30 \uC124\uC815</b>
+      <p>\uACF5\uC720 \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0DD\uC131\uD569\uB2C8\uB2E4. \uAD00\uB9AC\uC790 PIN\uC740 \uBCF8\uC0AC \uBAA8\uB4DC \uC9C4\uC785\uC5D0 \uC0AC\uC6A9\uB429\uB2C8\uB2E4.</p></div>
+    <div class="panel">
+      <div class="row">
+        <div><label>\uAD00\uB9AC\uC790 PIN (4~8\uC790\uB9AC \uC22B\uC790)</label><input id="su_pin" type="password" maxlength="8" class="code"></div>
+        <div><label>PIN \uD655\uC778</label><input id="su_pin2" type="password" maxlength="8" class="code"></div>
+      </div>
+      <div style="margin-bottom:10px"><label class="chk"><input type="checkbox" id="su_demo" checked> \uC608\uC2DC \uB370\uC774\uD130 \uD3EC\uD568 (\uB9AC\uB4DC\u00B7\uBC1C\uC8FC\u00B7\uB9C8\uAC10 \uC0D8\uD50C)</label></div>
+      ${setupHasV1?'<div style="margin-bottom:10px"><label class="chk"><input type="checkbox" id="su_mig" checked> \uAE30\uC874 v1 \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 (\uC774 \uBE0C\uB77C\uC6B0\uC800\uC5D0 \uC800\uC7A5\uB41C \uC774\uC804 \uBC84\uC804 \uB370\uC774\uD130 \uAC10\uC9C0\uB428)</label></div>':''}
+      <button class="btn" id="su_go">\uB370\uC774\uD130\uBCA0\uC774\uC2A4 \uC0DD\uC131</button>
+      <div class="note">\uBCF4\uC548 \uACE0\uC9C0 \u2014 \uC811\uADFC \uD1B5\uC81C\uB294 \uD074\uB77C\uC774\uC5B8\uD2B8 \uAC80\uC99D \uBC29\uC2DD\uC785\uB2C8\uB2E4(\uC11C\uBC84 \uAC15\uC81C \uC544\uB2D8). \uD30C\uC77C\uB7FF \uC6B4\uC601 \uC6A9\uB3C4\uC774\uBA70, \uC8FC\uBBFC\uBC88\uD638\u00B7\uACC4\uC88C \uB4F1 \uBBFC\uAC10\uC815\uBCF4\uB294 \uC800\uC7A5\uD558\uC9C0 \uB9C8\uC2ED\uC2DC\uC624. \uC815\uC2DD \uBC30\uD3EC \uC2DC \uBC31\uC5D4\uB4DC \uC804\uD658\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.</div>
+    </div>
+  </div></div>`;
+  const go=$.querySelector('#su_go');
+  go.onclick=async()=>{
+    const p1=$.querySelector('#su_pin').value.trim(),p2=$.querySelector('#su_pin2').value.trim();
+    if(!/^\d{4,8}$/.test(p1)){alert('PIN\uC740 4~8\uC790\uB9AC \uC22B\uC790\uC785\uB2C8\uB2E4.');return;}
+    if(p1!==p2){alert('PIN \uD655\uC778\uC774 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.');return;}
+    const mig=setupHasV1&&$.querySelector('#su_mig')&&$.querySelector('#su_mig').checked;
+    let db;
+    if(mig){const v1=await sget(KV1,false);db=v1?migrateV1(v1):seedDb(true);}
+    else db=seedDb($.querySelector('#su_demo').checked);
+    db.sec.pinH=await hashPin(p1);db.sec.mt=Date.now();
+    C0(db).forEach(s=>{db.sec.codes[s.id]=genCode();});
+    DB=db;
+    SES={who:'hq',label:'\uBCF8\uC0AC \uAD00\uB9AC\uC790'};
+    await sset(KSES,SES,false);
+    db.logs.push({id:uid('g'),mt:Date.now(),who:SES.label,act:'\uB370\uC774\uD130\uBCA0\uC774\uC2A4 \uC0DD\uC131'+(mig?' (v1 \uC774\uAD00)':'')});
+    await sset(KDB,DB,true);
+    ph='app';tab='dash';render();
+  };
+  function C0(db){return db.stores.filter(x=>!x.del);}
+}
+function renderGate(){
+  const sts=C('stores');
+  $.innerHTML=`
+  <div class="gatewrap"><div class="gate">
+    <div class="gt"><b>OFD \uC6CC\uD06C\uC2A4\uD14C\uC774\uC158</b><p>\uBAA8\uB4DC\uB97C \uC120\uD0DD\uD574 \uC811\uC18D\uD558\uC2ED\uC2DC\uC624. \uC810\uC8FC \uC811\uC18D\uCF54\uB4DC\uB294 \uBCF8\uC0AC\uC5D0\uC11C \uBC1C\uAE09\uD569\uB2C8\uB2E4.</p></div>
+    <div class="cols">
+      <div class="panel"><div class="panel-h"><h2>\uBCF8\uC0AC \uAD00\uB9AC\uC790</h2></div>
+        <div style="margin-bottom:10px"><label>\uAD00\uB9AC\uC790 PIN</label>
+          <input id="g_pin" type="password" maxlength="8" class="code"></div>
+        <button class="btn" id="g_hq" style="width:100%">\uBCF8\uC0AC \uBAA8\uB4DC \uC9C4\uC785</button></div>
+      <div class="panel"><div class="panel-h"><h2>\uAC00\uB9F9\uC810\uC8FC</h2></div>
+        <div style="margin-bottom:10px"><label>\uB9E4\uC7A5 \uC120\uD0DD</label>
+          <select id="g_store">${sts.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+        <div style="margin-bottom:10px"><label>\uC811\uC18D\uCF54\uB4DC (6\uC790\uB9AC)</label>
+          <input id="g_code" maxlength="6" class="code" inputmode="numeric"></div>
+        <button class="btn" id="g_st" style="width:100%">\uC810\uC8FC \uBAA8\uB4DC \uC9C4\uC785</button></div>
+    </div>
+    <div class="note" style="margin-top:14px">\uAC19\uC740 \uB9C1\uD06C\uB97C \uC5EC\uB294 \uBAA8\uB4E0 \uC0AC\uC6A9\uC790\uAC00 \uD558\uB098\uC758 \uACF5\uC720 \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uBD05\uB2C8\uB2E4. \uC811\uADFC \uD1B5\uC81C\uB294 \uD074\uB77C\uC774\uC5B8\uD2B8 \uAC80\uC99D(\uD30C\uC77C\uB7FF\uC6A9)\uC774\uBA70, \uBAA8\uB4E0 \uC8FC\uC694 \uD589\uC704\uB294 \uAC10\uC0AC \uB85C\uADF8\uC5D0 \uAE30\uB85D\uB429\uB2C8\uB2E4.</div>
+  </div></div>`;
+  $.querySelector('#g_hq').onclick=async()=>{
+    const h=await hashPin($.querySelector('#g_pin').value.trim());
+    if(h!==DB.sec.pinH){alert('PIN\uC774 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.');return;}
+    SES={who:'hq',label:'\uBCF8\uC0AC \uAD00\uB9AC\uC790'};
+    await sset(KSES,SES,false);
+    log('\uBCF8\uC0AC \uC138\uC158 \uC2DC\uC791');save();ph='app';tab='dash';render();};
+  $.querySelector('#g_st').onclick=async()=>{
+    const sid=$.querySelector('#g_store').value,code=$.querySelector('#g_code').value.trim();
+    if(!sid){alert('\uB9E4\uC7A5\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uBCF8\uC0AC\uC5D0\uC11C \uBA3C\uC800 \uB4F1\uB85D\uD558\uC2ED\uC2DC\uC624.');return;}
+    if(DB.sec.codes[sid]!==code){alert('\uC811\uC18D\uCF54\uB4DC\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.');return;}
+    const st=store(sid);
+    SES={who:sid,label:st.name+' \uC810\uC8FC'};
+    await sset(KSES,SES,false);
+    log('\uC810\uC8FC \uC138\uC158 \uC2DC\uC791');save();ph='app';tab='dash';render();};
+}
+
+/* ---------- views (app) ---------- */
+function vDash(){
+  const t=today();
+  if(isHQ()){
+    const act=C('leads').filter(L=>L.stage<5).length;
+    const cool=C('leads').filter(L=>L.stage===2&&gate(L).has&&!gate(L).ok).length;
+    const pend=C('orders').filter(o=>o.status==='\uB300\uAE30').length;
+    const opened=C('stores').filter(s=>s.openDate&&s.openDate.slice(0,7)===t.slice(0,7)).length;
+    const dates=[...new Set(C('sales').map(c=>c.date))].sort();
+    const last=dates[dates.length-1];
+    const lastRev=last?C('sales').filter(c=>c.date===last).reduce((a,c)=>a+closingRev(c),0):0;
+    const bars=revByDate(null),mx=Math.max(...bars.map(b=>b.rev),1);
+    return `
+    <div class="head"><div><h1>\uBCF8\uC0AC \uB300\uC2DC\uBCF4\uB4DC</h1><p>${t} \uAE30\uC900 \u00B7 \uB9E4\uC7A5 ${C('stores').length}\uAC1C (\uC9C1\uC601 ${C('stores').filter(s=>s.type==='\uC9C1\uC601').length} \u00B7 \uAC00\uB9F9 ${C('stores').filter(s=>s.type==='\uAC00\uB9F9').length})</p></div></div>
+    <div class="kpis">
+      <div class="kpi"><div class="k">\uD65C\uC131 \uB9AC\uB4DC</div><div class="v">${act}<em>\uAC74</em></div><div class="s">\uD30C\uC774\uD504\uB77C\uC778 \uC9C4\uD589 \uC911</div></div>
+      <div class="kpi"><div class="k">\uC219\uB824\uAE30\uAC04 \uC9C4\uD589</div><div class="v" style="color:${cool?'var(--warn)':'var(--ink)'}">${cool}<em>\uAC74</em></div><div class="s">\uACC4\uC57D \uB300\uAE30 (\uC81C7\uC870\u2462)</div></div>
+      <div class="kpi"><div class="k">\uBC1C\uC8FC \uC2B9\uC778 \uB300\uAE30</div><div class="v" style="color:${pend?'var(--sig)':'var(--ink)'}">${pend}<em>\uAC74</em></div><div class="s">\uBC1C\uC8FC \uD0ED\uC5D0\uC11C \uCC98\uB9AC</div></div>
+      <div class="kpi"><div class="k">\uC774\uBC88 \uB2EC \uC624\uD508</div><div class="v">${opened}<em>\uAC1C\uC810</em></div><div class="s">${t.slice(0,7)}</div></div>
+      <div class="kpi"><div class="k">\uCD5C\uADFC \uB9C8\uAC10 \uB9E4\uCD9C</div><div class="v">${won(lastRev)}<em>\uC6D0</em></div><div class="s">${last?last+' \uC804 \uB9E4\uC7A5':'\uAE30\uB85D \uC5C6\uC74C'}</div></div>
+    </div>
+    <div class="panel"><div class="panel-h"><h2>\uC601\uC5C5 \uD37C\uB110</h2></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${STAGES.map((st,i)=>{const n=C('leads').filter(L=>L.stage===i).length;
+        return `<div style="flex:1;min-width:90px;background:#F4F0E8;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:10px;color:var(--dim);font-weight:700">${st}</div>
+        <div style="font-size:20px;font-weight:800;margin-top:4px;color:${n?'var(--ink)':'var(--dimmer)'}">${n}</div></div>`;}).join('')}</div></div>
+    <div class="panel"><div class="panel-h"><h2>\uCD5C\uADFC 14\uC77C \uB9E4\uCD9C (\uC804 \uB9E4\uC7A5)</h2></div>
+      <div class="bars">${bars.map(b=>`<div class="b"><i style="height:${Math.round(b.rev/mx*88)}px"></i><span>${b.d.slice(8)}</span></div>`).join('')}</div></div>
+    ${noticeList(3)}`;
+  }
+  const st=myStore();
+  if(!st){return '<div class="empty">\uB9E4\uC7A5 \uC815\uBCF4\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uC138\uC158\uC744 \uC804\uD658\uD558\uC2ED\uC2DC\uC624.</div>';}
+  const mine=C('sales').filter(c=>c.storeId===st.id).sort((a,b)=>b.date<a.date?-1:1);
+  const lastC=mine[0];
+  const myOrd=C('orders').filter(o=>o.storeId===st.id&&o.status!=='\uC644\uB8CC');
+  const bars=revByDate(st.id),mx=Math.max(...bars.map(b=>b.rev),1);
+  return `
+  <div class="head"><div><h1>${esc(st.name)} \uB300\uC2DC\uBCF4\uB4DC</h1><p>${esc(st.type)} \u00B7 ${esc(st.region)} \u00B7 \uC624\uD508 ${st.openDate||'-'}</p></div></div>
+  <div class="kpis">
+    <div class="kpi"><div class="k">\uCD5C\uADFC \uB9C8\uAC10 \uB9E4\uCD9C</div><div class="v">${lastC?won(closingRev(lastC)):0}<em>\uC6D0</em></div><div class="s">${lastC?lastC.date:'\uAE30\uB85D \uC5C6\uC74C'}</div></div>
+    <div class="kpi"><div class="k">\uCD5C\uADFC \uB85C\uC2A4\uC728</div><div class="v">${lastC?closingLoss(lastC).rate.toFixed(1):'0.0'}<em>%</em></div><div class="s">\uD3D0\uAE30\u00F7(\uD310\uB9E4+\uD3D0\uAE30)</div></div>
+    <div class="kpi"><div class="k">\uC9C4\uD589 \uC911 \uBC1C\uC8FC</div><div class="v">${myOrd.length}<em>\uAC74</em></div><div class="s">${myOrd.length?myOrd.map(o=>o.status).join(' \u00B7 '):'\uC5C6\uC74C'}</div></div>
+  </div>
+  <div class="panel"><div class="panel-h"><h2>\uCD5C\uADFC 14\uC77C \uB9E4\uCD9C</h2></div>
+    <div class="bars">${bars.map(b=>`<div class="b"><i style="height:${Math.round(b.rev/mx*88)}px"></i><span>${b.d.slice(8)}</span></div>`).join('')}</div></div>
+  ${noticeList(3)}`;
+}
+
+function gateBadge(L){
+  const g=gate(L);
+  if(L.stage!==2)return'';
+  if(!g.has)return `<div class="g" style="color:var(--risk)">\uC81C\uACF5\uC77C \uBBF8\uAE30\uB85D</div>`;
+  return g.ok?`<div class="g" style="color:var(--ok)">\uC219\uB824 \uACBD\uACFC \u2014 \uACC4\uC57D \uAC00\uB2A5</div>`
+    :`<div class="g" style="color:var(--warn)">\uC219\uB824 D-${g.left} \u00B7 \uACC4\uC57D\uAC00\uB2A5 ${md(g.gate)} (+${g.days}\uC77C)</div>`;
+}
+function vPipe(){
+  const sel=C('leads').find(L=>L.id===pSel);
+  return `
+  <div class="head"><div><h1>\uAC00\uB9F9 \uC601\uC5C5 \uD30C\uC774\uD504\uB77C\uC778</h1>
+    <p>\uC815\uBCF4\uACF5\uAC1C\uC11C \uB2E8\uACC4\uB294 \uAC00\uB9F9\uC0AC\uC5C5\uBC95 \uC81C7\uC870\u2462 \uC219\uB824\uAE30\uAC04(14\uC77C\u00B7\uC790\uBB38 7\uC77C)\uC774 \uC790\uB3D9 \uACC4\uC0B0\u00B7\uD1B5\uC81C\uB429\uB2C8\uB2E4.</p></div>
+    <button class="btn" id="newlead">+ \uB9AC\uB4DC \uCD94\uAC00</button></div>
+  <div class="kb">
+    ${STAGES.map((st,i)=>`<div class="kb-col"><h3>${st}<i>${C('leads').filter(L=>L.stage===i).length}</i></h3>
+      ${C('leads').filter(L=>L.stage===i).map(L=>`
+      <div class="card ${pSel===L.id?'sel':''}" data-sel="${L.id}">
+        <b>${esc(L.name)} ${L.flag?'<span class="pill pl-risk">\uC219\uB824 \uBBF8\uC900\uC218 \uAE30\uB85D</span>':''}</b>
+        <div class="a">${esc(L.area)}${L.storeName?' \u00B7 '+esc(L.storeName):''}</div>
+        ${gateBadge(L)}
+        ${L.openTarget&&i>=3&&i<5?`<div class="g" style="color:var(--info)">\uC624\uD508 \uBAA9\uD45C ${md(L.openTarget)}</div>`:''}
+        <div class="mv"><button data-mv="${L.id}|-1" ${i===0?'disabled':''}>\u25C0</button>
+          <button data-mv="${L.id}|1" ${i===5?'disabled':''}>\u25B6</button></div>
+      </div>`).join('')||'<div class="empty" style="padding:8px 0">-</div>'}
+    </div>`).join('')}
+  </div>
+  ${sel?`
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-h"><h2>\uB9AC\uB4DC \uC0C1\uC138 \u2014 ${esc(sel.name)}</h2>
+      <div><button class="btn danger sm" data-dellead="${sel.id}">\uC0AD\uC81C</button>
+      <button class="btn ghost sm" id="closelead">\uB2EB\uAE30</button></div></div>
+    <div class="row">
+      <div><label>\uB300\uD45C\uC790\uBA85</label><input id="f_name" value="${esc(sel.name)}"></div>
+      <div><label>\uC5F0\uB77D\uCC98</label><input id="f_phone" value="${esc(sel.phone)}"></div>
+      <div><label>\uD76C\uB9DD \uC9C0\uC5ED</label><input id="f_area" value="${esc(sel.area)}"></div>
+      <div><label>\uB9E4\uC7A5\uBA85(\uC608\uC815)</label><input id="f_sname" value="${esc(sel.storeName||'')}"></div>
+    </div>
+    <div class="row">
+      <div><label>\uC815\uBCF4\uACF5\uAC1C\uC11C\u00B7\uC778\uADFC\uAC00\uB9F9\uC810 \uD604\uD669 \uC81C\uACF5\uC77C</label><input type="date" id="f_doc" value="${sel.docDate||''}"></div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:6px">
+        <label class="chk"><input type="checkbox" id="f_adv" ${sel.advisor?'checked':''}> \uC790\uBB38 (\uC219\uB824 7\uC77C)</label></div>
+      <div><label>\uC624\uD508 \uBAA9\uD45C\uC77C</label><input type="date" id="f_open" value="${sel.openTarget||''}"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>\uBA54\uBAA8</label><textarea id="f_memo">${esc(sel.memo||'')}</textarea></div>
+    <button class="btn" id="savelead">\uC800\uC7A5</button>
+    ${(()=>{const g=gate(sel);return g.has?`<span style="font-size:11px;color:var(--dim);margin-left:10px">\uACC4\uC57D \uAC00\uB2A5\uC77C: <b>${g.gate}</b></span>`:'';})()}
+  </div>`:''}`;
+}
+
+function vOrders(){
+  if(isHQ()){
+    const os=[...C('orders')].sort((a,b)=>b.date<a.date?-1:1);
+    return `
+    <div class="head"><div><h1>\uBC1C\uC8FC \uAD00\uB9AC (\uBCF8\uC0AC)</h1><p>\uB300\uAE30 \u2192 \uC2B9\uC778 \u2192 \uC785\uAE08\uD655\uC778 \u2192 \uCD9C\uACE0 \u2192 \uC644\uB8CC</p></div></div>
+    <div class="panel">
+      ${os.length?`<table><thead><tr><th>\uC77C\uC790</th><th>\uB9E4\uC7A5</th><th>\uD488\uBAA9</th><th class="num">\uACF5\uAE09\uAC00 \uD569\uACC4</th><th>\uC0C1\uD0DC</th><th></th></tr></thead><tbody>
+      ${os.map(o=>{const st=store(o.storeId);
+        return `<tr><td>${o.date}</td><td style="font-weight:700">${st?esc(st.name):'-'}</td>
+        <td style="font-size:11.5px;color:var(--dim)">${o.items.map(i=>{const k=sku(i.skuId);return k?esc(k.name)+' '+i.qty:'';}).join(', ')}</td>
+        <td class="num" style="font-weight:700">${won(orderAmt(o))}\uC6D0</td>
+        <td><span class="pill ${OSCLS[o.status]}">${o.status}</span></td>
+        <td style="white-space:nowrap">
+          ${o.status!=='\uC644\uB8CC'?`<button class="btn sm" data-onext="${o.id}">${OSTAT[OSTAT.indexOf(o.status)+1]}\uB85C</button>`:''}
+          <button class="btn danger sm" data-odel="${o.id}">\uBC18\uB824</button></td></tr>`;}).join('')}
+      </tbody></table>`:'<div class="empty">\uBC1C\uC8FC \uB0B4\uC5ED\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</div>'}
+    </div>`;
+  }
+  const st=myStore();
+  const mine=C('orders').filter(o=>o.storeId===st.id).sort((a,b)=>b.date<a.date?-1:1);
+  const target=addD(today(),1);
+  return `
+  <div class="head"><div><h1>\uBC1C\uC8FC \u2014 ${esc(st.name)}</h1>
+    <p>\uAD8C\uC7A5\uC218\uB7C9 = \uB300\uC0C1\uC77C(${md(target)} ${isWknd(target)?'\uC8FC\uB9D0':'\uD3C9\uC77C'}) \uAE30\uC900 \uB3D9\uC77C \uC694\uC77C\uB300 \uD3C9\uADE0 \uD310\uB9E4 \u00D7 1.1 (5\uAC1C \uB2E8\uC704 \uC62C\uB9BC)</p></div></div>
+  <div class="panel"><div class="panel-h"><h2>\uBC1C\uC8FC\uC11C \uC791\uC131</h2>
+    <button class="btn ghost sm" id="fillrec">\uAD8C\uC7A5\uAC12 \uCC44\uC6B0\uAE30</button></div>
+    <table><thead><tr><th>\uD488\uBAA9</th><th class="num">\uACF5\uAE09\uAC00</th><th class="num">\uAD8C\uC7A5</th><th class="num">\uADFC\uAC70</th><th class="num">\uC218\uB7C9</th></tr></thead><tbody>
+    ${C('skus').map(k=>{const r=recQty(st.id,k.id,target);
+      return `<tr><td style="font-weight:700">${esc(k.name)}</td>
+      <td class="num">${won(k.supply)}</td>
+      <td class="num" style="font-weight:800;color:var(--deep)" data-rec="${r.rec}">${r.rec||'-'}</td>
+      <td class="num" style="color:var(--dimmer);font-size:10.5px">${r.basis} ${r.n}\uD68C</td>
+      <td class="num"><input class="qty" type="number" min="0" step="5" id="q_${k.id}" placeholder="0"></td></tr>`;}).join('')}
+    </tbody></table>
+    <div style="margin-top:12px"><button class="btn" id="submitorder">\uBC1C\uC8FC\uC11C \uC81C\uCD9C</button></div>
+  </div>
+  <div class="panel"><div class="panel-h"><h2>\uB0B4 \uBC1C\uC8FC \uB0B4\uC5ED</h2></div>
+    ${mine.length?`<table><thead><tr><th>\uC77C\uC790</th><th>\uD488\uBAA9</th><th class="num">\uACF5\uAE09\uAC00 \uD569\uACC4</th><th>\uC0C1\uD0DC</th></tr></thead><tbody>
+    ${mine.map(o=>`<tr><td>${o.date}</td>
+      <td style="font-size:11.5px;color:var(--dim)">${o.items.map(i=>{const k=sku(i.skuId);return k?esc(k.name)+' '+i.qty:'';}).join(', ')}</td>
+      <td class="num" style="font-weight:700">${won(orderAmt(o))}\uC6D0</td>
+      <td><span class="pill ${OSCLS[o.status]}">${o.status}</span></td></tr>`).join('')}
+    </tbody></table>`:'<div class="empty">\uBC1C\uC8FC \uB0B4\uC5ED\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</div>'}
+  </div>`;
+}
+
+function vSales(){
+  const hq=isHQ();
+  if(hq&&!salesStore)salesStore=C('stores')[0]?C('stores')[0].id:null;
+  const sid=hq?salesStore:SES.who;
+  const st=store(sid);
+  if(!st)return '<div class="empty">\uB9E4\uC7A5\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</div>';
+  const ex=C('sales').find(c=>c.storeId===sid&&c.date===salesDate);
+  const hist=C('sales').filter(c=>c.storeId===sid).sort((a,b)=>b.date<a.date?-1:1).slice(0,14);
+  return `
+  <div class="head"><div><h1>\uB9E4\uCD9C \uB9C8\uAC10${hq?' (\uBCF8\uC0AC)':' \u2014 '+esc(st.name)}</h1>
+    <p>\uAC19\uC740 \uB0A0\uC9DC \uC7AC\uC800\uC7A5 \uC2DC \uB36E\uC5B4\uC501\uB2C8\uB2E4. POS \uB0B4\uBCF4\uB0B4\uAE30(CSV)\uB85C \uD310\uB9E4\uC218\uB7C9\uC744 \uC77C\uAD04 \uB4F1\uB85D\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.</p></div></div>
+  <div class="panel">
+    <div class="row">
+      ${hq?`<div><label>\uB9E4\uC7A5</label><select id="sl_store">${C('stores').map(s=>`<option value="${s.id}" ${s.id===sid?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>`:''}
+      <div><label>\uB9C8\uAC10 \uC77C\uC790</label><input type="date" id="sl_date" value="${salesDate}"></div>
+    </div>
+    <table><thead><tr><th>\uD488\uBAA9</th><th class="num">\uC18C\uBE44\uC790\uAC00</th><th class="num">\uD310\uB9E4</th><th class="num">\uD3D0\uAE30</th></tr></thead><tbody>
+    ${C('skus').map(k=>{const it=ex?ex.items.find(i=>i.skuId===k.id):null;
+      return `<tr><td style="font-weight:700">${esc(k.name)}</td>
+      <td class="num" style="color:var(--dim)">${won(k.price)}</td>
+      <td class="num"><input class="qty" type="number" min="0" id="sd_${k.id}" value="${it?it.sold:''}" placeholder="0"></td>
+      <td class="num"><input class="qty" type="number" min="0" id="wt_${k.id}" value="${it?it.waste:''}" placeholder="0"></td></tr>`;}).join('')}
+    </tbody></table>
+    <div style="margin-top:12px"><button class="btn" id="saveclose">\uB9C8\uAC10 \uC800\uC7A5</button>
+    ${ex?'<span style="font-size:11px;color:var(--warn);margin-left:10px;font-weight:700">\uAE30\uC874 \uB9C8\uAC10 \uC218\uC815 \uC911</span>':''}</div>
+  </div>
+
+  <div class="panel"><div class="panel-h"><h2>POS \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 (CSV)</h2><span class="meta">\uD1A0\uC2A4 \uB4F1 POS \uB0B4\uBCF4\uB0B4\uAE30 \uD30C\uC77C</span></div>
+    <div class="row">
+      <div style="flex:2"><label>CSV \uBD99\uC5EC\uB123\uAE30 (\uC27C\uD45C/\uD0ED \uAD6C\uBD84, \uCCAB \uC904 \uD5E4\uB354)</label>
+        <textarea id="cs_raw" placeholder="\uC77C\uC790,\uD488\uBAA9,\uC218\uB7C9&#10;2026-07-31,\uC6B0\uC720\uD06C\uB9BC\uB3C4\uB11B,40&#10;...">${esc(csv.raw)}</textarea></div>
+      <div style="flex:0 0 170px;display:flex;flex-direction:column;gap:8px;justify-content:flex-end">
+        <input type="file" id="cs_file" accept=".csv,.txt" style="font-size:11px">
+        <button class="btn ghost" id="cs_parse">\uBD84\uC11D</button></div>
+    </div>
+    ${csv.rows?`
+    <div class="row">
+      <div><label>\uC77C\uC790 \uC5F4</label><select id="cs_d">${csv.head.map((h,i)=>`<option value="${i}" ${csv.map.d===i?'selected':''}>${esc(h)}</option>`).join('')}</select></div>
+      <div><label>\uD488\uBAA9 \uC5F4</label><select id="cs_n">${csv.head.map((h,i)=>`<option value="${i}" ${csv.map.n===i?'selected':''}>${esc(h)}</option>`).join('')}</select></div>
+      <div><label>\uD310\uB9E4\uC218\uB7C9 \uC5F4</label><select id="cs_q">${csv.head.map((h,i)=>`<option value="${i}" ${csv.map.q===i?'selected':''}>${esc(h)}</option>`).join('')}</select></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn ghost" id="cs_prev" style="width:100%">\uBBF8\uB9AC\uBCF4\uAE30</button></div>
+    </div>`:''}
+    ${csv.preview?`
+    <div style="font-size:12px;margin:6px 0 10px">
+      <b>${csv.preview.days}\uAC1C \uC77C\uC790 \u00B7 ${csv.preview.rows}\uD589</b> \u2014
+      \uB9E4\uCE6D ${csv.preview.ok}\uAC1C SKU${csv.preview.miss.length?` \u00B7 <span style="color:var(--risk)">\uBBF8\uB9E4\uCE6D ${csv.preview.miss.length}\uC885: ${csv.preview.miss.map(esc).join(', ')} (\uAC74\uB108\uB700)</span>`:''}
+    </div>
+    <button class="btn" id="cs_go">\uAC00\uC838\uC624\uAE30 \uC2E4\uD589 (${hq?esc(st.name):'\uB0B4 \uB9E4\uC7A5'} \uB9C8\uAC10\uC73C\uB85C \uBC18\uC601)</button>`:''}
+    <div class="note">\uAC19\uC740 \uC77C\uC790\u00B7\uD488\uBAA9 \uD589\uC740 \uC218\uB7C9\uC774 \uD569\uC0B0\uB429\uB2C8\uB2E4. \uAE30\uC874 \uB9C8\uAC10\uC774 \uC788\uC73C\uBA74 \uD310\uB9E4\uC218\uB7C9\uC740 CSV \uAC12\uC73C\uB85C \uB300\uCCB4\uB418\uACE0 \uD3D0\uAE30\uC218\uB7C9\uC740 \uC720\uC9C0\uB429\uB2C8\uB2E4. \uD488\uBAA9\uBA85\uC740 \uACF5\uBC31 \uBB34\uC2DC \uD6C4 SKU\uBA85\uACFC \uC815\uD655\uD788 \uC77C\uCE58\uD574\uC57C \uD569\uB2C8\uB2E4.</div>
+  </div>
+
+  <div class="panel"><div class="panel-h"><h2>\uCD5C\uADFC \uB9C8\uAC10 \uC774\uB825</h2><span class="meta">${esc(st.name)}</span></div>
+    ${hist.length?`<table><thead><tr><th>\uC77C\uC790</th><th class="num">\uB9E4\uCD9C\uC561</th><th class="num">\uD310\uB9E4</th><th class="num">\uD3D0\uAE30</th><th class="num">\uB85C\uC2A4\uC728</th></tr></thead><tbody>
+    ${hist.map(c=>{const L=closingLoss(c);
+      return `<tr><td>${c.date}</td><td class="num" style="font-weight:700">${won(closingRev(c))}\uC6D0</td>
+      <td class="num">${L.sold}</td><td class="num">${L.waste}</td>
+      <td class="num" style="color:${L.rate>=8?'var(--risk)':L.rate>=4?'var(--warn)':'var(--ok)'};font-weight:700">${L.rate.toFixed(1)}%</td></tr>`;}).join('')}
+    </tbody></table>`:'<div class="empty">\uB9C8\uAC10 \uAE30\uB85D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</div>'}
+  </div>`;
+}
+
+function vSettle(){
+  const m=setMonth;
+  const rows=C('stores').map(s=>{
+    const sup=C('orders').filter(o=>o.storeId===s.id&&o.date.slice(0,7)===m&&(o.status==='\uCD9C\uACE0'||o.status==='\uC644\uB8CC'))
+      .reduce((a,o)=>a+orderAmt(o),0);
+    const cs=C('sales').filter(c=>c.storeId===s.id&&c.date.slice(0,7)===m);
+    const rev=cs.reduce((a,c)=>a+closingRev(c),0);
+    let sold=0,waste=0;cs.forEach(c=>{const L=closingLoss(c);sold+=L.sold;waste+=L.waste;});
+    const loss=sold+waste>0?waste/(sold+waste)*100:0;
+    return{s,sup,rev,loss,ratio:rev>0?sup/rev*100:0};});
+  const tot=rows.reduce((a,r)=>({sup:a.sup+r.sup,rev:a.rev+r.rev}),{sup:0,rev:0});
+  return `
+  <div class="head"><div><h1>\uC815\uC0B0 (\uBCF8\uC0AC)</h1>
+    <p>\uACF5\uAE09 \uB9E4\uCD9C = \uCD9C\uACE0\u00B7\uC644\uB8CC \uBC1C\uC8FC\uC758 \uACF5\uAE09\uAC00 \uD569\uACC4 \u2014 \uC81C3\uC870\u24614\uD638\uC5D0 \uB530\uB77C \uBC00\uC9D1(\uC744)\uC5D0 \uADC0\uC18D\uB418\uB294 \uC0DD\uC0B0\u00B7\uBB3C\uB958 \uC218\uC775\uC758 \uAE30\uCD08 \uC218\uCE58</p></div>
+    <div><input type="month" id="st_month" value="${m}" style="width:150px"></div></div>
+  <div class="panel">
+    <table><thead><tr><th>\uB9E4\uC7A5</th><th>\uAD6C\uBD84</th><th class="num">\uACF5\uAE09 \uB9E4\uCD9C(\uBC00\uC9D1)</th><th class="num">\uB9E4\uC7A5 \uB9E4\uCD9C</th><th class="num">\uACF5\uAE09/\uB9E4\uCD9C</th><th class="num">\uB85C\uC2A4\uC728</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td style="font-weight:700">${esc(r.s.name)}</td>
+      <td><span class="pill ${r.s.type==='\uC9C1\uC601'?'pl-info':'pl-sig'}">${esc(r.s.type)}</span></td>
+      <td class="num" style="font-weight:700">${won(r.sup)}\uC6D0</td>
+      <td class="num">${won(r.rev)}\uC6D0</td>
+      <td class="num" style="color:var(--dim)">${r.ratio.toFixed(1)}%</td>
+      <td class="num" style="color:${r.loss>=8?'var(--risk)':r.loss>=4?'var(--warn)':'var(--ok)'}">${r.loss.toFixed(1)}%</td></tr>`).join('')}
+    <tr><td style="font-weight:800">\uD569\uACC4</td><td></td>
+      <td class="num" style="font-weight:800;color:var(--deep)">${won(tot.sup)}\uC6D0</td>
+      <td class="num" style="font-weight:800">${won(tot.rev)}\uC6D0</td><td></td><td></td></tr>
+    </tbody></table>
+    <div class="note">\uB85C\uC5F4\uD2F0 \uC815\uC0B0 \uBAA8\uB4C8\uC740 \uC81C4\uC870 \uC790\uB8CC(\uAE30\uC874 \uAC00\uB9F9\uACC4\uC57D\uC11C\u00B7\uB85C\uC5F4\uD2F0 \uC0B0\uC815\uAE30\uC900) \uC218\uB839 \uD6C4 \uC694\uC728\uC744 \uBC18\uC601\uD574 \uCD94\uAC00\uD569\uB2C8\uB2E4. \uAE30\uC874 \uB9E4\uC7A5 \uB85C\uC5F4\uD2F0\uB294 \uAC11 \uADC0\uC18D\u00B7\uC2E0\uADDC \uB9E4\uC7A5\uC740 \uC744 \uADC0\uC18D\uC774\uBBC0\uB85C, \uAE30\uC900\uC77C \uB9E4\uC7A5 \uD655\uC815(\uB9AC\uC2A4\uD06C r9) \uC804\uC5D0\uB294 \uB9E4\uC7A5\uBCC4 \uADC0\uC18D \uAD6C\uBD84\uC744 \uD655\uC815\uD558\uC9C0 \uB9C8\uC2ED\uC2DC\uC624.</div>
+  </div>`;
+}
+
+function noticeList(limit){
+  const ns=[...C('notices')].sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0)||(b.date<a.date?-1:1));
+  const arr=limit?ns.slice(0,limit):ns;
+  return `<div class="panel"><div class="panel-h"><h2>\uACF5\uC9C0${limit?' (\uCD5C\uADFC)':''}</h2>
+    ${limit?`<button class="btn ghost sm" data-tab="notice">\uC804\uCCB4 \uBCF4\uAE30</button>`:''}</div>
+    ${arr.length?arr.map(n=>`<div style="padding:10px 0;border-bottom:1px solid #F1EDE5">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${n.pinned?'<span class="pill pl-sig">\uACE0\uC815</span>':''}
+        <b style="font-size:13px">${esc(n.title)}</b>
+        <span style="font-size:10.5px;color:var(--dimmer)">${n.date}</span>
+        ${isHQ()&&!limit?`<button class="btn danger sm" data-ndel="${n.id}" style="margin-left:auto">\uC0AD\uC81C</button>`:''}</div>
+      <div style="font-size:12.5px;color:var(--dim);margin-top:4px;white-space:pre-wrap">${esc(n.body)}</div>
+    </div>`).join(''):'<div class="empty">\uACF5\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.</div>'}</div>`;
+}
+function vNotice(){
+  return `
+  <div class="head"><div><h1>\uACF5\uC9C0</h1><p>\uBCF8\uC0AC \uACF5\uC9C0\uAC00 \uC804 \uC810\uC8FC \uD3EC\uD138\uC5D0 \uB178\uCD9C\uB429\uB2C8\uB2E4.</p></div></div>
+  ${isHQ()?`<div class="panel"><div class="panel-h"><h2>\uACF5\uC9C0 \uC791\uC131</h2></div>
+    <div class="row"><div style="flex:2"><label>\uC81C\uBAA9</label><input id="n_title"></div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:6px"><label class="chk"><input type="checkbox" id="n_pin"> \uC0C1\uB2E8 \uACE0\uC815</label></div></div>
+    <div style="margin-bottom:10px"><label>\uB0B4\uC6A9</label><textarea id="n_body"></textarea></div>
+    <button class="btn" id="addnotice">\uAC8C\uC2DC</button></div>`:''}
+  ${noticeList(0)}`;
+}
+
+function vStores(){
+  return `
+  <div class="head"><div><h1>\uB9E4\uC7A5 \uB300\uC7A5</h1>
+    <p>\uC778\uADFC\uAC00\uB9F9\uC810 \uD604\uD669\uBB38\uC11C(\uC81C7\uC870\u2461) \uC6D0\uCC9C \uBAA9\uB85D \u00B7 \uD30C\uC774\uD504\uB77C\uC778 \uC624\uD508\uC644\uB8CC \uC2DC \uC790\uB3D9 \uCD94\uAC00 \u00B7 \uC811\uC18D\uCF54\uB4DC\uB294 \uC124\uC815 \uD0ED</p></div></div>
+  <div class="panel"><div class="panel-h"><h2>\uB9E4\uC7A5 \uCD94\uAC00</h2></div>
+    <div class="row">
+      <div><label>\uB9E4\uC7A5\uBA85</label><input id="st_name"></div>
+      <div style="flex:0 0 100px"><label>\uAD6C\uBD84</label><select id="st_type"><option>\uAC00\uB9F9</option><option>\uC9C1\uC601</option></select></div>
+      <div style="flex:0 0 100px"><label>\uC9C0\uC5ED</label><input id="st_region"></div>
+      <div style="flex:2"><label>\uC18C\uC7AC\uC9C0</label><input id="st_addr"></div>
+      <div><label>\uC804\uD654\uBC88\uD638</label><input id="st_phone"></div>
+      <div style="flex:0 0 150px"><label>\uC624\uD508\uC77C</label><input type="date" id="st_open"></div>
+    </div>
+    <button class="btn" id="addstore">\uB4F1\uB85D</button></div>
+  <div class="panel">
+    <table><thead><tr><th>\uB9E4\uC7A5\uBA85</th><th>\uAD6C\uBD84</th><th>\uC9C0\uC5ED</th><th>\uC18C\uC7AC\uC9C0</th><th>\uC804\uD654</th><th>\uC624\uD508\uC77C</th><th></th></tr></thead><tbody>
+    ${C('stores').map(s=>`<tr><td style="font-weight:700">${esc(s.name)}</td>
+      <td><span class="pill ${s.type==='\uC9C1\uC601'?'pl-info':'pl-sig'}">${esc(s.type)}</span></td>
+      <td>${esc(s.region)}</td><td style="font-size:11.5px;color:var(--dim)">${esc(s.addr)}</td>
+      <td style="font-size:11.5px">${esc(s.phone)}</td><td>${s.openDate||'-'}</td>
+      <td><button class="btn danger sm" data-stdel="${s.id}">\uC0AD\uC81C</button></td></tr>`).join('')}
+    </tbody></table>
+    <div class="note">\uACC4\uC57D\uC11C 22\uAC1C\uC810 vs \uC0C1\uAD8C\uBCF4\uACE0\uC11C 26\uAC1C\uC810 \uBD88\uC77C\uCE58(War Room r9) \uD574\uC18C \uC804\uAE4C\uC9C0, \uBC00\uC9D1\uC774 \uC9C1\uC811 \uD655\uC778\uD55C \uB9E4\uC7A5\uB9CC \uB4F1\uB85D\uD558\uC2ED\uC2DC\uC624.</div>
+  </div>`;
+}
+
+function vConf(){
+  const logs=[...C('logs')].sort((a,b)=>b.mt-a.mt).slice(0,200);
+  return `
+  <div class="head"><div><h1>\uC124\uC815 (\uBCF8\uC0AC)</h1><p>SKU\u00B7\uC811\uC18D\uCF54\uB4DC\u00B7\uBC31\uC5C5\u00B7\uAC10\uC0AC \uB85C\uADF8</p></div></div>
+
+  <div class="panel"><div class="panel-h"><h2>\uC810\uC8FC \uC811\uC18D\uCF54\uB4DC</h2><span class="meta">\uC810\uC8FC\uC5D0\uAC8C \uC804\uB2EC \u00B7 \uC7AC\uBC1C\uAE09 \uC2DC \uC774\uC804 \uCF54\uB4DC \uBB34\uD6A8</span></div>
+    <table><thead><tr><th>\uB9E4\uC7A5</th><th>\uC811\uC18D\uCF54\uB4DC</th><th></th></tr></thead><tbody>
+    ${C('stores').map(s=>`<tr><td style="font-weight:700">${esc(s.name)}</td>
+      <td class="code" style="letter-spacing:.25em">${esc(DB.sec.codes[s.id]||'-')}</td>
+      <td><button class="btn ghost sm" data-regen="${s.id}">\uC7AC\uBC1C\uAE09</button></td></tr>`).join('')}
+    </tbody></table></div>
+
+  <div class="panel"><div class="panel-h"><h2>SKU \uAD00\uB9AC</h2><span class="meta">\uACF5\uAE09\uAC00 \uAE30\uBCF8 = \uC18C\uBE44\uC790\uAC00 \u00D7 48%</span></div>
+    <div class="row">
+      <div><label>\uD488\uBAA9\uBA85</label><input id="k_name"></div>
+      <div style="flex:0 0 130px"><label>\uC18C\uBE44\uC790\uAC00</label><input id="k_price" type="number" min="0" step="100"></div>
+      <div style="flex:0 0 130px"><label>\uACF5\uAE09\uAC00 (\uBE44\uC6B0\uBA74 48%)</label><input id="k_supply" type="number" min="0" step="1"></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn" id="addsku">\uCD94\uAC00</button></div>
+    </div>
+    <table><thead><tr><th>\uD488\uBAA9</th><th class="num">\uC18C\uBE44\uC790\uAC00</th><th class="num">\uACF5\uAE09\uAC00</th><th class="num">\uACF5\uAE09\uC728</th><th></th></tr></thead><tbody>
+    ${C('skus').map(k=>`<tr><td style="font-weight:700">${esc(k.name)}</td>
+      <td class="num">${won(k.price)}</td><td class="num">${won(k.supply)}</td>
+      <td class="num" style="color:var(--dim)">${(k.supply/k.price*100).toFixed(1)}%</td>
+      <td><button class="btn danger sm" data-kdel="${k.id}">\uC0AD\uC81C</button></td></tr>`).join('')}
+    </tbody></table></div>
+
+  <div class="panel"><div class="panel-h"><h2>\uAD00\uB9AC\uC790 PIN \uBCC0\uACBD</h2></div>
+    <div class="row">
+      <div><label>\uD604\uC7AC PIN</label><input id="p_old" type="password" maxlength="8" class="code"></div>
+      <div><label>\uC0C8 PIN (4~8\uC790\uB9AC)</label><input id="p_new" type="password" maxlength="8" class="code"></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn" id="chpin">\uBCC0\uACBD</button></div>
+    </div></div>
+
+  <div class="panel"><div class="panel-h"><h2>\uBC31\uC5C5\u00B7\uC774\uAD00</h2></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn ghost" id="expjson">JSON \uB0B4\uBCF4\uB0B4\uAE30</button>
+      <label class="btn ghost" style="cursor:pointer">JSON \uAC00\uC838\uC624\uAE30(\uBCD1\uD569)<input type="file" id="impjson" accept=".json" style="display:none"></label>
+    </div>
+    <div class="note">\uAC00\uC838\uC624\uAE30\uB294 \uC0AD\uC81C \uD45C\uC2DD\u00B7\uC218\uC815\uC2DC\uAC01 \uAE30\uC900\uC73C\uB85C \uBCD1\uD569\uB429\uB2C8\uB2E4(\uCD5C\uC2E0 \uC6B0\uC120). \uBC84\uC804 \uAD50\uCCB4 \uC2DC \uC774 \uAE30\uB2A5\uC73C\uB85C \uB370\uC774\uD130\uB97C \uC774\uAD00\uD558\uC2ED\uC2DC\uC624.</div></div>
+
+  <div class="panel"><div class="panel-h"><h2>\uAC10\uC0AC \uB85C\uADF8</h2><span class="meta">\uCD5C\uADFC ${logs.length}\uAC74 \u00B7 \uC81C3\uC870\u2466 \uB300\uC751 \uAE30\uB85D</span></div>
+    ${logs.length?logs.map(g=>`<div class="logrow">
+      <span class="lt">${new Date(g.mt).toISOString().slice(0,16).replace('T',' ')}</span>
+      <span class="lw">${esc(g.who)}</span><span>${esc(g.act)}</span></div>`).join(''):'<div class="empty">\uAE30\uB85D \uC5C6\uC74C</div>'}
+  </div>`;
+}
+
+/* ---------- csv ---------- */
+function parseCsvText(text){
+  const lines=text.replace(/\r/g,'').split('\n').filter(l=>l.trim());
+  if(lines.length<2)return null;
+  const dl=[',','\t',';'].map(d=>({d,n:lines[0].split(d).length})).sort((a,b)=>b.n-a.n)[0].d;
+  const splitLine=l=>{
+    const out=[];let cur='',q=false;
+    for(let i=0;i<l.length;i++){const ch=l[i];
+      if(q){if(ch==='"'){if(l[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=ch;}
+      else{if(ch==='"')q=true;else if(ch===dl){out.push(cur);cur='';}else cur+=ch;}}
+    out.push(cur);return out.map(s=>s.trim());};
+  const head=splitLine(lines[0]);
+  const rows=lines.slice(1).map(splitLine);
+  const guess=(names)=>{const i=head.findIndex(h=>names.some(n=>h.replace(/\s/g,'').toLowerCase().includes(n)));return i>=0?i:0;};
+  return{head,rows,map:{d:guess(['\uC77C\uC790','\uB0A0\uC9DC','date']),n:guess(['\uD488\uBAA9','\uBA54\uB274','\uC0C1\uD488','item','name']),q:guess(['\uC218\uB7C9','\uD310\uB9E4','qty','count'])}};
+}
+function normDate(s){
+  let x=s.replace(/[./]/g,'-').trim();
+  if(/^\d{8}$/.test(x))x=x.slice(0,4)+'-'+x.slice(4,6)+'-'+x.slice(6);
+  const m=x.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m)return m[1]+'-'+pad(+m[2])+'-'+pad(+m[3]);
+  const m2=x.match(/^(\d{1,2})-(\d{1,2})$/);
+  if(m2)return today().slice(0,4)+'-'+pad(+m2[1])+'-'+pad(+m2[2]);
+  return null;
+}
+function buildPreview(){
+  const{rows,map}=csv;
+  const norm=s=>s.replace(/\s/g,'');
+  const byName={};C('skus').forEach(k=>byName[norm(k.name)]=k.id);
+  const agg={};const missSet=new Set();let cnt=0;
+  rows.forEach(r=>{
+    const d=normDate(r[map.d]||'');const nm=norm(r[map.n]||'');const q=+String(r[map.q]||'').replace(/[^\d.-]/g,'');
+    if(!d||!nm||!(q>0))return;
+    cnt++;
+    const kid=byName[nm];
+    if(!kid){missSet.add(r[map.n]);return;}
+    agg[d]=agg[d]||{};agg[d][kid]=(agg[d][kid]||0)+q;});
+  csv.preview={agg,days:Object.keys(agg).length,rows:cnt,
+    ok:new Set(Object.values(agg).flatMap(o=>Object.keys(o))).size,
+    miss:[...missSet]};
+}
+function runImport(sid){
+  const{agg}=csv.preview;let made=0;
+  Object.entries(agg).forEach(([d,items])=>{
+    const ex=C('sales').find(c=>c.storeId===sid&&c.date===d);
+    const waste={};if(ex)ex.items.forEach(i=>waste[i.skuId]=i.waste);
+    const merged={};
+    Object.entries(items).forEach(([kid,q])=>{merged[kid]={skuId:kid,sold:q,waste:waste[kid]||0};});
+    if(ex)ex.items.forEach(i=>{if(!merged[i.skuId]&&i.waste>0)merged[i.skuId]={skuId:i.skuId,sold:0,waste:i.waste};});
+    const obj=ex?{...ex}:{id:uid('c'),storeId:sid,date:d};
+    obj.items=Object.values(merged);
+    up('sales',obj);made++;});
+  log('POS CSV \uAC00\uC838\uC624\uAE30: '+made+'\uAC1C \uC77C\uC790 \uBC18\uC601 ('+(store(sid)||{}).name+')');
+  save();csv={raw:'',rows:null,map:null,preview:null};render();
+}
+
+/* ---------- events ---------- */
+function bind(){
+  $.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render();});
+  const sy=$.querySelector('#sync');if(sy)sy.onclick=()=>pullDb();
+  const lo=$.querySelector('#logout');
+  if(lo)lo.onclick=async()=>{log('\uC138\uC158 \uC885\uB8CC');await pushDb();SES=null;
+    try{await window.storage.delete(KSES,false);}catch(e){}
+    ph='gate';render();};
+
+  const nl=$.querySelector('#newlead');
+  if(nl)nl.onclick=()=>{const id=uid('p');
+    up('leads',{id,name:'\uC2E0\uADDC \uB9AC\uB4DC',phone:'',area:'',storeName:'',stage:0,docDate:'',advisor:false,openTarget:'',memo:'',flag:false,created:today()});
+    log('\uB9AC\uB4DC \uC0DD\uC131');pSel=id;render();};
+  $.querySelectorAll('[data-sel]').forEach(c=>c.onclick=e=>{
+    if(e.target.closest('[data-mv]'))return;
+    pSel=pSel===c.dataset.sel?null:c.dataset.sel;render();});
+  $.querySelectorAll('[data-mv]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();const[id,d]=b.dataset.mv.split('|');moveLead(id,+d);});
+  const cl=$.querySelector('#closelead');if(cl)cl.onclick=()=>{pSel=null;render();};
+  const sv=$.querySelector('#savelead');
+  if(sv)sv.onclick=()=>{const L=C('leads').find(x=>x.id===pSel);if(!L)return;
+    L.name=$.querySelector('#f_name').value.trim()||L.name;
+    L.phone=$.querySelector('#f_phone').value.trim();
+    L.area=$.querySelector('#f_area').value.trim();
+    L.storeName=$.querySelector('#f_sname').value.trim();
+    L.docDate=$.querySelector('#f_doc').value;
+    L.advisor=$.querySelector('#f_adv').checked;
+    L.openTarget=$.querySelector('#f_open').value;
+    L.memo=$.querySelector('#f_memo').value;
+    up('leads',L);log('\uB9AC\uB4DC \uC218\uC815: '+L.name);render();};
+  $.querySelectorAll('[data-dellead]').forEach(b=>b.onclick=()=>{
+    if(!confirm('\uB9AC\uB4DC\uB97C \uC0AD\uC81C\uD569\uB2C8\uAE4C?'))return;
+    rm('leads',b.dataset.dellead);log('\uB9AC\uB4DC \uC0AD\uC81C');pSel=null;render();});
+
+  const so=$.querySelector('#submitorder');
+  if(so)so.onclick=()=>{
+    const items=C('skus').map(k=>({skuId:k.id,qty:+($.querySelector('#q_'+k.id).value||0)})).filter(i=>i.qty>0);
+    if(!items.length){alert('\uC218\uB7C9\uC744 1\uAC1C \uC774\uC0C1 \uC785\uB825\uD558\uC2ED\uC2DC\uC624.');return;}
+    up('orders',{id:uid('o'),storeId:SES.who,date:today(),items,status:'\uB300\uAE30',memo:''});
+    log('\uBC1C\uC8FC \uC81C\uCD9C ('+SES.label+')');render();};
+  const fr=$.querySelector('#fillrec');
+  if(fr)fr.onclick=()=>{$.querySelectorAll('[data-rec]').forEach(td=>{
+    const tr=td.closest('tr');const inp=tr.querySelector('input.qty');
+    if(inp)inp.value=+td.dataset.rec||'';});};
+  $.querySelectorAll('[data-onext]').forEach(b=>b.onclick=()=>{
+    const o=C('orders').find(x=>x.id===b.dataset.onext);
+    const i=OSTAT.indexOf(o.status);
+    if(i<OSTAT.length-1){o.status=OSTAT[i+1];up('orders',o);
+      log('\uBC1C\uC8FC \uC0C1\uD0DC: '+(store(o.storeId)||{}).name+' \u2192 '+o.status);render();}});
+  $.querySelectorAll('[data-odel]').forEach(b=>b.onclick=()=>{
+    if(!confirm('\uBC1C\uC8FC\uB97C \uBC18\uB824(\uC0AD\uC81C)\uD569\uB2C8\uAE4C?'))return;
+    rm('orders',b.dataset.odel);log('\uBC1C\uC8FC \uBC18\uB824');render();});
+
+  const ss=$.querySelector('#sl_store');if(ss)ss.onchange=()=>{salesStore=ss.value;render();};
+  const sd=$.querySelector('#sl_date');if(sd)sd.onchange=()=>{salesDate=sd.value||today();render();};
+  const sc=$.querySelector('#saveclose');
+  if(sc)sc.onclick=()=>{
+    const sid=isHQ()?salesStore:SES.who;
+    const items=C('skus').map(k=>({skuId:k.id,
+      sold:+($.querySelector('#sd_'+k.id).value||0),
+      waste:+($.querySelector('#wt_'+k.id).value||0)})).filter(i=>i.sold>0||i.waste>0);
+    if(!items.length){alert('\uD310\uB9E4 \uB610\uB294 \uD3D0\uAE30 \uC218\uB7C9\uC744 \uC785\uB825\uD558\uC2ED\uC2DC\uC624.');return;}
+    const ex=C('sales').find(c=>c.storeId===sid&&c.date===salesDate);
+    const obj=ex?{...ex,items}:{id:uid('c'),storeId:sid,date:salesDate,items};
+    up('sales',obj);log('\uB9E4\uCD9C \uB9C8\uAC10 \uC800\uC7A5: '+(store(sid)||{}).name+' '+salesDate);render();};
+
+  const cf=$.querySelector('#cs_file');
+  if(cf)cf.onchange=()=>{const f=cf.files[0];if(!f)return;
+    const rd=new FileReader();rd.onload=()=>{csv.raw=String(rd.result||'');
+      $.querySelector('#cs_raw').value=csv.raw;};rd.readAsText(f);};
+  const cp=$.querySelector('#cs_parse');
+  if(cp)cp.onclick=()=>{csv.raw=$.querySelector('#cs_raw').value;
+    const p=parseCsvText(csv.raw);
+    if(!p){alert('CSV\uB97C \uD574\uC11D\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uD5E4\uB354 \uD3EC\uD568 2\uD589 \uC774\uC0C1\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4.');return;}
+    csv.rows=p.rows;csv.head=p.head;csv.map=p.map;csv.preview=null;render();};
+  const cv=$.querySelector('#cs_prev');
+  if(cv)cv.onclick=()=>{csv.map={d:+$.querySelector('#cs_d').value,
+    n:+$.querySelector('#cs_n').value,q:+$.querySelector('#cs_q').value};
+    buildPreview();render();};
+  const cg=$.querySelector('#cs_go');
+  if(cg)cg.onclick=()=>{const sid=isHQ()?salesStore:SES.who;runImport(sid);};
+
+  const st_m=$.querySelector('#st_month');
+  if(st_m)st_m.onchange=()=>{setMonth=st_m.value||today().slice(0,7);render();};
+
+  const an=$.querySelector('#addnotice');
+  if(an)an.onclick=()=>{const t1=$.querySelector('#n_title').value.trim();
+    if(!t1){$.querySelector('#n_title').focus();return;}
+    up('notices',{id:uid('n'),date:today(),pinned:$.querySelector('#n_pin').checked,
+      title:t1,body:$.querySelector('#n_body').value.trim()});
+    log('\uACF5\uC9C0 \uAC8C\uC2DC: '+t1);render();};
+  $.querySelectorAll('[data-ndel]').forEach(b=>b.onclick=()=>{
+    if(!confirm('\uACF5\uC9C0\uB97C \uC0AD\uC81C\uD569\uB2C8\uAE4C?'))return;rm('notices',b.dataset.ndel);log('\uACF5\uC9C0 \uC0AD\uC81C');render();});
+
+  const as=$.querySelector('#addstore');
+  if(as)as.onclick=()=>{const nm=$.querySelector('#st_name').value.trim();
+    if(!nm){$.querySelector('#st_name').focus();return;}
+    const id=uid('s');
+    up('stores',{id,name:nm,type:$.querySelector('#st_type').value,
+      region:$.querySelector('#st_region').value.trim(),
+      addr:$.querySelector('#st_addr').value.trim(),
+      phone:$.querySelector('#st_phone').value.trim(),
+      openDate:$.querySelector('#st_open').value});
+    DB.sec.codes[id]=genCode();DB.sec.mt=Date.now();
+    log('\uB9E4\uC7A5 \uB4F1\uB85D: '+nm);render();};
+  $.querySelectorAll('[data-stdel]').forEach(b=>b.onclick=()=>{
+    if(!confirm('\uB9E4\uC7A5\uC744 \uC0AD\uC81C\uD569\uB2C8\uAE4C? \uBC1C\uC8FC\u00B7\uB9E4\uCD9C \uAE30\uB85D\uC740 \uC720\uC9C0\uB429\uB2C8\uB2E4.'))return;
+    rm('stores',b.dataset.stdel);log('\uB9E4\uC7A5 \uC0AD\uC81C');render();});
+
+  $.querySelectorAll('[data-regen]').forEach(b=>b.onclick=()=>{
+    const sid=b.dataset.regen;
+    DB.sec.codes[sid]=genCode();DB.sec.mt=Date.now();
+    log('\uC811\uC18D\uCF54\uB4DC \uC7AC\uBC1C\uAE09: '+(store(sid)||{}).name);save();render();});
+  const ak=$.querySelector('#addsku');
+  if(ak)ak.onclick=()=>{const nm=$.querySelector('#k_name').value.trim();
+    const pr=+$.querySelector('#k_price').value||0;
+    if(!nm||!pr){alert('\uD488\uBAA9\uBA85\uACFC \uC18C\uBE44\uC790\uAC00\uB97C \uC785\uB825\uD558\uC2ED\uC2DC\uC624.');return;}
+    const su=+$.querySelector('#k_supply').value||Math.round(pr*0.48);
+    up('skus',{id:uid('k'),name:nm,price:pr,supply:su});
+    log('SKU \uCD94\uAC00: '+nm);render();};
+  $.querySelectorAll('[data-kdel]').forEach(b=>b.onclick=()=>{
+    if(!confirm('SKU\uB97C \uC0AD\uC81C\uD569\uB2C8\uAE4C? \uACFC\uAC70 \uAE30\uB85D\uC5D0\uB294 \uB0A8\uC2B5\uB2C8\uB2E4.'))return;
+    rm('skus',b.dataset.kdel);log('SKU \uC0AD\uC81C');render();});
+  const cp2=$.querySelector('#chpin');
+  if(cp2)cp2.onclick=async()=>{
+    const oldH=await hashPin($.querySelector('#p_old').value.trim());
+    if(oldH!==DB.sec.pinH){alert('\uD604\uC7AC PIN\uC774 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.');return;}
+    const np=$.querySelector('#p_new').value.trim();
+    if(!/^\d{4,8}$/.test(np)){alert('\uC0C8 PIN\uC740 4~8\uC790\uB9AC \uC22B\uC790\uC785\uB2C8\uB2E4.');return;}
+    DB.sec.pinH=await hashPin(np);DB.sec.mt=Date.now();
+    log('\uAD00\uB9AC\uC790 PIN \uBCC0\uACBD');save();alert('\uBCC0\uACBD\uB418\uC5C8\uC2B5\uB2C8\uB2E4.');};
+  const ex=$.querySelector('#expjson');
+  if(ex)ex.onclick=()=>{
+    const blob=new Blob([JSON.stringify(DB,null,1)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='ofd_workstation_backup_'+today()+'.json';a.click();
+    log('\uBC31\uC5C5 \uB0B4\uBCF4\uB0B4\uAE30');};
+  const im=$.querySelector('#impjson');
+  if(im)im.onchange=()=>{const f=im.files[0];if(!f)return;
+    const rd=new FileReader();
+    rd.onload=()=>{try{const d=JSON.parse(String(rd.result));
+      if(!d||!d.skus)throw 0;
+      DB=mergeDb(DB,d);log('\uBC31\uC5C5 \uAC00\uC838\uC624\uAE30(\uBCD1\uD569)');save();render();
+      alert('\uBCD1\uD569 \uC644\uB8CC (rev '+DB.rev+')');}
+      catch(e){alert('\uC62C\uBC14\uB978 \uBC31\uC5C5 \uD30C\uC77C\uC774 \uC544\uB2D9\uB2C8\uB2E4.');}};
+    rd.readAsText(f);};
+}
+
+function moveLead(id,dir){
+  const L=C('leads').find(x=>x.id===id);if(!L)return;
+  const ns=Math.max(0,Math.min(5,L.stage+dir));
+  if(ns===L.stage)return;
+  if(dir>0&&L.stage===2&&ns===3){
+    if(!L.docDate){
+      alert('\uC815\uBCF4\uACF5\uAC1C\uC11C\u00B7\uC778\uADFC\uAC00\uB9F9\uC810 \uD604\uD669\uBB38\uC11C \uC81C\uACF5\uC77C\uC774 \uAE30\uB85D\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4.\n\uC81C\uACF5 \uC804 \uAC00\uB9F9\uAE08 \uC218\uB839\u00B7\uAC00\uB9F9\uACC4\uC57D \uCCB4\uACB0\uC740 \uAC00\uB9F9\uC0AC\uC5C5\uBC95 \uC81C7\uC870\u2462 \uC704\uBC18\uC785\uB2C8\uB2E4.');
+      return;}
+    const g=gate(L);
+    if(!g.ok){
+      if(!confirm('\uC219\uB824\uAE30\uAC04 \uBBF8\uACBD\uACFC \u2014 \uACC4\uC57D \uAC00\uB2A5\uC77C '+g.gate+' (\uC81C\uACF5\uC77C+'+g.days+'\uC77C).\n\uADF8 \uC804\uC758 \uAC00\uB9F9\uAE08 \uC218\uB839\u00B7\uACC4\uC57D \uCCB4\uACB0\uC740 \uAC00\uB9F9\uC0AC\uC5C5\uBC95 \uC81C7\uC870\u2462 \uC704\uBC18 \uC18C\uC9C0\uAC00 \uC788\uC2B5\uB2C8\uB2E4.\n\uC774\uBBF8 \uBC1C\uC0DD\uD55C \uACC4\uC57D\uC758 \uC0AC\uD6C4 \uAE30\uB85D\uC73C\uB85C\uB9CC \uC9C4\uD589\uD569\uB2C8\uAE4C?'))return;
+      L.flag=true;log('\uC219\uB824\uAE30\uAC04 \uBBF8\uC900\uC218 \uC0AC\uD6C4\uAE30\uB85D: '+L.name);}
+  }
+  if(dir>0&&L.stage===4&&ns===5){
+    const id2=uid('s');
+    up('stores',{id:id2,name:L.storeName||((L.area||L.name)+' \uC2E0\uADDC\uC810'),
+      type:'\uAC00\uB9F9',region:(L.area||'').split(' ')[0]||'',addr:L.area||'',
+      phone:L.phone||'',openDate:today()});
+    DB.sec.codes[id2]=genCode();DB.sec.mt=Date.now();
+    log('\uAC00\uB9F9\uC810 \uC624\uD508 \uB4F1\uB85D: '+(L.storeName||L.name));
+  }
+  L.stage=ns;up('leads',L);
+  log('\uB9AC\uB4DC \uB2E8\uACC4\uC774\uB3D9: '+L.name+' \u2192 '+STAGES[ns]);
+  render();
+}
+
+/* ---------- boot ---------- */
+async function boot(){
+  DB=await sget(KDB,true);
+  if(!DB){
+    const v1=await sget(KV1,false);
+    setupHasV1=!!(v1&&v1.skus);
+    ph='setup';render();return;
+  }
+  SES=await sget(KSES,false);
+  if(SES&&SES.who!=='hq'&&!store(SES.who))SES=null;
+  ph=SES?'app':'gate';
+  render();
+}
+boot();
+})();
+</script>
