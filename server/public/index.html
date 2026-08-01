@@ -699,12 +699,13 @@ function vProd(){
       <button class="btn ${prodScope==='본사'?'':'ghost '}sm" data-pscope="본사">본사 공통</button>
       ${S.stores.map(st=>`<button class="btn ${prodScope===st.id?'':'ghost '}sm" data-pscope="${st.id}">${esc(st.name)} 전용</button>`).join('')}
     </div>
-    <table><thead><tr><th>품목</th><th>카테고리</th><th class="num">소비자가</th><th class="num">공급가</th><th class="num">공급율</th><th>실판매가 편차</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>품목</th><th>카테고리</th><th>범위</th><th class="num">소비자가</th><th class="num">공급가</th><th class="num">공급율</th><th>실판매가 편차</th><th></th></tr></thead><tbody>
     ${list.length?list.map(k=>{
       const pi=priceInfoOf(k.id);const open=prodPriceOpen.has(k.id);const clickable=!!(pi&&pi.stores.length>0);
       return `<tr ${clickable?`data-prow="${k.id}" style="cursor:pointer"`:''}>
-        <td style="font-weight:700">${clickable?`<span style="color:var(--dim);font-size:10px">${open?'▾':'▸'}</span> `:''}${esc(k.name)}${k.storeId?` <span class="pill pl-dim">${esc(stName(k.storeId))} 전용</span>`:''}</td>
+        <td style="font-weight:700">${clickable?`<span style="color:var(--dim);font-size:10px">${open?'▾':'▸'}</span> `:''}${esc(k.name)}</td>
         <td><select data-kcat="${k.id}" style="width:84px;padding:4px 6px;font-size:12px">${CATS.map(c=>`<option ${(k.category||'기타')===c?'selected':''}>${c}</option>`).join('')}</select></td>
+        <td><select data-kscope="${k.id}" style="width:130px;padding:4px 6px;font-size:12px"><option value="" ${k.storeId?'':'selected'}>본사 공통</option>${S.stores.map(st=>`<option value="${st.id}" ${k.storeId===st.id?'selected':''}>${esc(st.name)} 전용</option>`).join('')}</select></td>
         <td class="num">${won(k.price)}</td><td class="num">${won(k.supply)}</td>
         <td class="num" style="color:var(--dim)">${k.price?(k.supply/k.price*100).toFixed(1):'-'}%</td>
         <td>${flagPill(pi)}</td>
@@ -713,8 +714,8 @@ function vProd(){
         <td style="font-size:11px;color:var(--dimmer)">실측 ${won(sr.qty)}개</td>
         <td class="num" style="font-size:12px">${won(sr.avg)}원</td>
         <td class="num" style="font-size:12px;color:${sr.diffPct>=2?'var(--risk)':sr.diffPct<=-2?'var(--info)':'var(--dim)'}">${sr.diffPct>=0?'+':''}${sr.diffPct.toFixed(1)}%</td>
-        <td colspan="3" style="font-size:11px;color:var(--dimmer)">기준가 ${won(pi.base)}원 대비</td></tr>`).join(''):'');
-    }).join(''):`<tr><td colspan="7" style="text-align:center;color:var(--dimmer);padding:18px">조건에 맞는 SKU가 없습니다</td></tr>`}
+        <td colspan="4" style="font-size:11px;color:var(--dimmer)">기준가 ${won(pi.base)}원 대비${sr.unitBreakdown&&sr.unitBreakdown.length?` · 판매 구성: ${sr.unitBreakdown.map(b3=>won(b3.unit)+'원×'+won(b3.qty)+'개').join(' · ')}`:''}</td></tr>`).join(''):'');
+    }).join(''):`<tr><td colspan="8" style="text-align:center;color:var(--dimmer);padding:18px">조건에 맞는 SKU가 없습니다</td></tr>`}
     </tbody></table></div>
 
   <div class="panel"><div class="panel-h"><h2>SKU 추가</h2><span class="meta">공급가 비우면 소비자가 × 48% · 범위를 매장으로 지정하면 그 매장 전용</span></div>
@@ -1191,6 +1192,13 @@ function bind(){
     catch(e){
       if(e.data&&e.data.error==='SKU_EXISTS')alert('같은 범위에 동일 이름 SKU("'+e.data.name+'")가 이미 있습니다.\n드롭다운 [매핑]을 사용하십시오.');
       else alert(emsg(e));}});
+  $.querySelectorAll('[data-kscope]').forEach(sel=>sel.onchange=async()=>{
+    try{await api('PATCH','/api/skus/'+sel.dataset.kscope,{storeId:sel.value});
+      prodConf={loaded:false};await refresh();render();}
+    catch(e){
+      if(e.data&&e.data.error==='SKU_EXISTS')alert('대상 범위에 동일 이름 SKU("'+e.data.name+'")가 이미 있어 변경할 수 없습니다.');
+      else alert(emsg(e));
+      render();}});
   $.querySelectorAll('[data-kcat]').forEach(sel=>sel.onchange=async()=>{
     try{await api('PATCH','/api/skus/'+sel.dataset.kcat,{category:sel.value});
       prodConf={loaded:false};await refresh();render();}catch(e){alert(emsg(e));render();}});

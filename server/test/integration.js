@@ -490,6 +490,26 @@ async function main() {
       && um4.stores.some(st3 => st3.storeId === 's2' && st3.qty === berryQty));
   }
 
+  /* ===== AC. 범위 인라인 수정·단가 구성 ===== */
+  r = await call('ad', 'PATCH', '/api/skus/k4', { storeId: 's77' });
+  chk = await call('own2', 'GET', '/api/bootstrap');
+  log('AC1 전용 전환: 타 매장에서 사라짐', r.status === 200 && !chk.data.skus.some(k => k.id === 'k4'));
+  r = await call('ad', 'PATCH', '/api/skus/k4', { storeId: '' });
+  chk = await call('own2', 'GET', '/api/bootstrap');
+  log('AC2 공통 복귀: 다시 노출', r.status === 200 && chk.data.skus.some(k => k.id === 'k4'));
+  r = await call('ad', 'POST', '/api/skus', { name: '오리지널', price: 3000, storeId: 's77' });
+  const dupSid = r.data.skuId;
+  r = await call('ad', 'PATCH', '/api/skus/' + dupSid, { storeId: '' });
+  log('AC3 범위 충돌 가드 409', r.status === 409 && r.data.error === 'SKU_EXISTS');
+  await call('ad', 'DELETE', '/api/skus/' + dupSid);
+  r = await call('ad', 'GET', '/api/products/prices?days=400');
+  {
+    const it = r.data.items.find(x => x.skuId === 'k1');
+    const st3 = it && it.stores.find(x => x.storeId === 's2');
+    log('AC4 단가 구성: 단일가 4,200원 분포 정확', !!st3 && st3.unitBreakdown.length === 1
+      && st3.unitBreakdown[0].unit === 4200 && st3.unitBreakdown[0].qty === st3.qty);
+  }
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

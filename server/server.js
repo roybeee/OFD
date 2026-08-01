@@ -911,9 +911,20 @@ const server = http.createServer(async (req, res) => {
       const pr2 = body.price !== undefined ? Math.max(1, body.price | 0) : r0.price;
       const sp2 = body.supply !== undefined ? Math.max(0, body.supply | 0) : r0.supply;
       if (!nm2) return err(res, 400, 'NAME_PRICE_REQUIRED');
-      db.prepare('UPDATE skus SET name=?, price=?, supply=?, category=?, mt=? WHERE id=?')
-        .run(nm2, pr2, sp2, body.category !== undefined ? body.category : (r0.category || '기타'), now(), m[1]);
-      audit(actor, 'SKU 수정', nm2 + (body.category !== undefined ? ' [' + body.category + ']' : ''));
+      let st2 = r0.store_id || null;
+      if (body.storeId !== undefined) {
+        if (body.storeId === null || body.storeId === '') st2 = null;
+        else {
+          if (!db.prepare('SELECT 1 FROM stores WHERE id=? AND del=0').get(String(body.storeId))) return err(res, 404, 'STORE_NOT_FOUND');
+          st2 = String(body.storeId);
+        }
+      }
+      const clash = allSkus().find(k => k.id !== m[1] && normKey(k.name) === normKey(nm2) && (k.storeId || null) === st2);
+      if (clash) return err(res, 409, 'SKU_EXISTS', { skuId: clash.id, name: clash.name });
+      db.prepare('UPDATE skus SET name=?, price=?, supply=?, category=?, store_id=?, mt=? WHERE id=?')
+        .run(nm2, pr2, sp2, body.category !== undefined ? body.category : (r0.category || '기타'), st2, now(), m[1]);
+      const scopeTxt = body.storeId !== undefined ? (st2 ? ' → ' + ((db.prepare('SELECT name FROM stores WHERE id=?').get(st2) || {}).name || st2) + ' 전용' : ' → 본사 공통') : '';
+      audit(actor, 'SKU 수정', nm2 + (body.category !== undefined ? ' [' + body.category + ']' : '') + scopeTxt);
       return send(res, 200, { ok: true });
     }
     if (p === '/api/skus/promote' && req.method === 'POST') { /* 미매칭 → SKU 원클릭 승격+매핑 */
@@ -945,12 +956,22 @@ const server = http.createServer(async (req, res) => {
       const days = Math.min(366, Math.max(1, parseInt(u.searchParams.get('days') || '30', 10) || 30));
       const to = kstToday(), from = addDays(to, -(days - 1));
       const agg = db.prepare('SELECT sku_id, store_id, SUM(qty) q, SUM(amount) a FROM pos_sales WHERE sku_id IS NOT NULL AND date>=? AND date<=? GROUP BY sku_id, store_id').all(from, to);
+      const daily = db.prepare('SELECT sku_id, store_id, qty, amount FROM pos_sales WHERE sku_id IS NOT NULL AND qty>0 AND date>=? AND date<=?').all(from, to);
+      const ub = {}; /* sku|store -> Map(단가 -> 수량): 일별 평균단가 분포로 혼합가·할인 유무 판별 */
+      daily.forEach(r2 => {
+        const key = r2.sku_id + '|' + r2.store_id, unit = Math.round(r2.amount / r2.qty);
+        if (!ub[key]) ub[key] = {};
+        ub[key][unit] = (ub[key][unit] || 0) + r2.qty;
+      });
       const stMap = {}; allStores().forEach(s2 => { stMap[s2.id] = s2.name; });
       const items = allSkus().map(k => {
         const rows = agg.filter(x => x.sku_id === k.id && x.q > 0).map(x => {
           const avg = Math.round(x.a / x.q);
+          const bd = Object.entries(ub[k.id + '|' + x.store_id] || {})
+            .map(([unit2, q2]) => ({ unit: +unit2, qty: q2 }))
+            .sort((a2, b2) => b2.qty - a2.qty).slice(0, 6);
           return { storeId: x.store_id, name: stMap[x.store_id] || x.store_id, qty: x.q, amount: x.a, avg,
-            diffPct: k.price > 0 ? (avg - k.price) / k.price * 100 : 0 };
+            diffPct: k.price > 0 ? (avg - k.price) / k.price * 100 : 0, unitBreakdown: bd };
         });
         const up = rows.some(r2 => r2.diffPct >= 2), dn = rows.some(r2 => r2.diffPct <= -2);
         return { skuId: k.id, name: k.name, category: k.category, storeId: k.storeId, base: k.price,
