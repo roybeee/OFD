@@ -701,7 +701,7 @@ function vConf(){
       <td><input id="pa_${st.id}" type="password" placeholder="${L.hasKeys?'저장됨·변경 시 입력':'x-access-key'}" style="width:128px;padding:5px 7px;font-size:12px"></td>
       <td><input id="ps_${st.id}" type="password" placeholder="${L.hasKeys?'저장됨·변경 시 입력':'x-secret-key'}" style="width:128px;padding:5px 7px;font-size:12px"></td>
       <td><input type="checkbox" id="px_${st.id}" ${(L.storeId?L.active:true)?'checked':''}></td>
-      <td style="white-space:nowrap"><button class="btn ghost sm" data-psave="${st.id}">저장</button> ${L.storeId?`<button class="btn sm" data-psync="${st.id}">동기화</button>`:''}</td></tr>`;}).join('')}
+      <td style="white-space:nowrap"><button class="btn ghost sm" data-psave="${st.id}">저장</button> ${L.storeId?`<button class="btn sm" data-psync="${st.id}">동기화</button> <button class="btn ghost sm" data-pbf="${st.id}">30일 백필</button>`:''}</td></tr>`;}).join('')}
     </tbody></table>
     ${posConf.unmatched&&posConf.unmatched.length?`<div style="margin-top:12px"><b style="font-size:12px;color:var(--warn)">미매칭 POS 품목 — 매핑 시 과거분 소급 재계산</b>
       <table><thead><tr><th>POS 품목명</th><th class="num">수량</th><th class="num">금액</th><th>SKU 매핑</th><th></th></tr></thead><tbody>
@@ -984,6 +984,13 @@ function bind(){
       alert('동기화 완료 — '+r.date+'\n주문행 '+r.lines+' · 매출 '+won(r.revenue)+'원'+(r.unmatched.length?'\n미매칭: '+r.unmatched.join(', '):''));
       posConf={loaded:false};anData=null;await refresh();render();}
     catch(e){alert('동기화 실패: '+((e.data&&e.data.reason)||'연결 오류'));posConf={loaded:false};render();}});
+  $.querySelectorAll('[data-pbf]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('최근 30일 매출을 POS에서 일괄 수집합니다. 기존 폐기수량은 보존됩니다. 진행합니까?'))return;
+    b.textContent='백필 중…';b.disabled=true;
+    try{const r=await api('POST','/api/pos/backfill/'+b.dataset.pbf,{days:30});
+      alert('백필 완료 — '+r.days+'일\n총매출 '+won(r.revenue)+'원 · 오류 '+r.errors+'건');
+      posConf={loaded:false};anData=null;await refresh();render();}
+    catch(e){alert('백필 실패: '+((e.data&&e.data.reason)||'연결 오류'));posConf={loaded:false};render();}});
   $.querySelectorAll('[data-pmap]').forEach(b=>b.onclick=async()=>{
     const i=+b.dataset.pmap;const item=posConf.unmatched[i];
     const skuId=$.querySelector('#al_i'+i).value;

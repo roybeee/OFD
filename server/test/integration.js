@@ -326,6 +326,16 @@ async function main() {
   const kp1 = _test.kstParts('2026-08-01T15:00:00Z'), kp2 = _test.kstParts('2026-08-01T15:00:00');
   log('T16 KST 변환: 15:00Z→익일 00시 / 무오프셋→그대로', kp1.date === '2026-08-02' && kp1.hour === 0 && kp2.date === '2026-08-01' && kp2.hour === 15);
 
+  /* ===== U. POS 기간 백필 ===== */
+  r = await call('sa', 'POST', '/api/pos/backfill/s2', { days: 3 });
+  log('U1 영업: 백필 403', r.status === 403);
+  r = await call('op2', 'POST', '/api/pos/backfill/s2', { days: 3 });
+  let expBf = 0;
+  for (let i = 2; i >= 0; i--) { const d = addD(t, -i); expBf += (day(d) === 0 || day(d) === 6) ? 471000 : 235500; }
+  log('U2 백필 3일: 일자·매출 합계 정확', r.status === 200 && r.data.results.length === 3 && r.data.revenue === expBf && r.data.errors === 0);
+  chk = await call('m', 'GET', '/api/bootstrap');
+  log('U3 백필 감사 요약 1건 기록', chk.data.audit.some(a2 => a2.act.includes('POS 백필')));
+
   /* ===== R. UI ===== */
   const ui = await fetch(BASE + '/');
   const uiText = await ui.text();

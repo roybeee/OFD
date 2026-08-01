@@ -312,7 +312,7 @@ function rebuildClosingFromPos(storeId, date) {
   const items = rows.map(r => ({ skuId: r.sku_id, sold: r.q | 0, waste: 0 })).filter(i => i.sold > 0);
   if (items.length) upsertClosing(storeId, date, items, 'import'); /* 폐기수량 보존 */
 }
-async function syncStoreDay(storeId, date, actorName) {
+async function syncStoreDay(storeId, date, actorName, quiet) {
   const link = db.prepare('SELECT * FROM pos_links WHERE store_id=? AND del=0 AND active=1').get(storeId);
   if (!link) throw new Error('NO_LINK');
   const drv = providers[link.provider];
@@ -335,7 +335,7 @@ async function syncStoreDay(storeId, date, actorName) {
     const res = { date, lines: lines.length, matchedQty: matched, unmatched: [...missSet], revenue };
     db.prepare('UPDATE pos_links SET last_sync=?, last_result=?, mt=? WHERE store_id=?')
       .run(now(), 'OK ' + date + ' 매출 ' + revenue.toLocaleString('ko-KR') + '원' + (missSet.size ? ' · 미매칭 ' + missSet.size + '종' : ''), now(), storeId);
-    audit(actorName || '스케줄러', 'POS 동기화', ((db.prepare('SELECT name FROM stores WHERE id=?').get(storeId) || {}).name || storeId) + ' ' + date + ' (' + lines.length + '행)');
+    if (!quiet) audit(actorName || '스케줄러', 'POS 동기화', ((db.prepare('SELECT name FROM stores WHERE id=?').get(storeId) || {}).name || storeId) + ' ' + date + ' (' + lines.length + '행)');
     return res;
   } catch (e) { try { db.exec('ROLLBACK'); } catch (e2) {} throw e; }
 }
@@ -840,6 +840,21 @@ const server = http.createServer(async (req, res) => {
       const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) ? body.date : kstToday();
       try { const r2 = await syncStoreDay(m[1], date, actor); return send(res, 200, r2); }
       catch (e) { return err(res, 502, 'SYNC_FAIL', { reason: e.message || String(e) }); }
+    }
+    if ((m = p.match(/^\/api\/pos\/backfill\/([\w-]+)$/)) && req.method === 'POST') {
+      if (deny('pos')) return;
+      const days = Math.min(60, Math.max(1, (body.days | 0) || 30));
+      const t0 = kstToday();
+      const results = []; let revenue = 0, errors = 0;
+      for (let i = days - 1; i >= 0; i--) {
+        const d = addDays(t0, -i);
+        try { const r2 = await syncStoreDay(m[1], d, actor, true); results.push({ date: d, revenue: r2.revenue, lines: r2.lines }); revenue += r2.revenue; }
+        catch (e) { errors++; results.push({ date: d, error: e.message || String(e) });
+          if (e.message === 'NO_LINK' || e.message === 'BAD_PROVIDER' || e.message === 'KEY_DECRYPT_FAIL') break; }
+        await sleep(120); /* 매장별 호출량 제한 준수 */
+      }
+      audit(actor, 'POS 백필', ((db.prepare('SELECT name FROM stores WHERE id=?').get(m[1]) || {}).name || m[1]) + ' ' + days + '일 — 매출 ' + revenue.toLocaleString('ko-KR') + '원, 오류 ' + errors + '건');
+      return send(res, 200, { days, revenue, errors, results });
     }
     if (p === '/api/pos/unmatched' && req.method === 'GET') {
       if (deny('pos')) return;
