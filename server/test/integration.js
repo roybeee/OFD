@@ -600,7 +600,9 @@ async function main() {
     const oid = o.data.id;
     log('AH1 발주 입고일 지정', o.status === 200);
     chk = await call('ad', 'GET', '/api/waste?storeId=s2&date=' + satD);
-    log('AH2 출고 전에는 입고 없음', chk.data.hasOrder === false);
+    log('AH2 출고 전 입고 없음 → 폐기·로스율 null(N/A)', chk.data.hasOrder === false
+      && chk.data.totals.wasteRate === null
+      && chk.data.items.every(x => x.received === null && x.waste === null && x.wasteRate === null && x.lossAmount === null));
     for (const st of ['승인', '입금확인', '출고']) await call('op2', 'POST', '/api/orders/' + oid + '/advance', {});
     chk = await call('ad', 'GET', '/api/waste?storeId=s2&date=' + satD);
     const w1 = chk.data.items.find(x => x.skuId === 'k2');

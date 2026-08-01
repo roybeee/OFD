@@ -564,21 +564,23 @@ function vSales(){
     const T=W.totals;
     return `<div class="panel"><div class="panel-h"><h2>폐기 자동 산출 — ${esc(salesDate)}</h2>
       <span class="meta">${W.hasOrder?'입고: 출고·완료 발주 기준':'해당 일자 입고(발주) 없음'} · ${W.hasPos?'판매: POS 실측':'판매: POS 데이터 없음'}</span></div>
-      ${W.hasOrder?`<div class="kpis">
-        <div class="kpi"><div class="k">입고</div><div class="v">${won(T.received)}<em>개</em></div></div>
-        <div class="kpi"><div class="k">판매</div><div class="v">${won(T.sold)}<em>개</em></div></div>
-        <div class="kpi"><div class="k">폐기</div><div class="v">${won(T.waste)}<em>개</em></div><div class="s">폐기율 ${T.wasteRate===null?'-':T.wasteRate.toFixed(1)+'%'}</div></div>
-        <div class="kpi"><div class="k">로스 금액</div><div class="v">${won(T.lossAmount)}<em>원</em></div><div class="s">공급가 기준</div></div>
+      ${(()=>{const NA='<span style="color:var(--dimmer);font-weight:700">N/A</span>';
+        const naV='<span style="color:var(--dimmer)">N/A</span>';
+        return `<div class="kpis">
+        <div class="kpi"><div class="k">입고</div><div class="v">${W.hasOrder?won(T.received)+'<em>개</em>':naV}</div><div class="s">${W.hasOrder?'출고·완료 발주 기준':'입고 미반영'}</div></div>
+        <div class="kpi"><div class="k">판매</div><div class="v">${W.hasPos?won(T.sold)+'<em>개</em>':naV}</div><div class="s">${W.hasPos?'POS 실측':'POS 데이터 없음'}</div></div>
+        <div class="kpi"><div class="k">폐기</div><div class="v">${W.hasOrder?won(T.waste)+'<em>개</em>':naV}</div><div class="s">폐기율 ${W.hasOrder&&T.wasteRate!==null?T.wasteRate.toFixed(1)+'%':'N/A'}</div></div>
+        <div class="kpi"><div class="k">로스 금액</div><div class="v">${W.hasOrder?won(T.lossAmount)+'<em>원</em>':naV}</div><div class="s">${W.hasOrder?'공급가 기준':'입고 확정 후 산출'}</div></div>
       </div>
-      <table><thead><tr><th>품목</th><th class="num">입고</th><th class="num">판매</th><th class="num">폐기</th><th class="num">폐기율</th><th class="num">로스</th></tr></thead><tbody>
+      ${W.hasOrder?'':`<div class="note">이 날짜에 <b>출고·완료 상태의 발주</b>가 없어 입고 수량을 알 수 없습니다 — 폐기·로스율은 <b>N/A</b>로 표기됩니다. 발주 탭에서 해당 입고일 발주를 출고 처리하면 자동 계산됩니다.</div>`}
+      ${W.items.length?`<table><thead><tr><th>품목</th><th class="num">입고</th><th class="num">판매</th><th class="num">폐기</th><th class="num">폐기율</th><th class="num">로스</th></tr></thead><tbody>
       ${W.items.map(x=>`<tr><td style="font-weight:700">${esc(x.name)}${x.over?` <span class="pill pl-warn" style="background:var(--warnsoft);color:var(--warn)">판매 초과 ${x.over}</span>`:''}</td>
-        <td class="num">${x.received===null?'<span style="color:var(--dimmer)">-</span>':won(x.received)}</td>
+        <td class="num">${x.received===null?NA:won(x.received)}</td>
         <td class="num">${won(x.sold)}</td>
-        <td class="num" style="font-weight:800;color:${x.waste?'var(--risk)':'var(--dim)'}">${x.waste===null?'-':won(x.waste)}</td>
-        <td class="num" style="color:var(--dim)">${x.wasteRate===null?'-':x.wasteRate.toFixed(1)+'%'}</td>
-        <td class="num" style="color:var(--dim)">${x.lossAmount===null?'-':won(x.lossAmount)+'원'}</td></tr>`).join('')}
-      </tbody></table>`
-      :`<div class="note">이 날짜에 <b>출고·완료 상태의 발주</b>가 없어 입고 수량을 알 수 없습니다. 발주 탭에서 해당 입고일의 발주를 출고 처리하면 폐기가 자동 계산됩니다.</div>`}
+        <td class="num" style="font-weight:800;color:${x.waste?'var(--risk)':'var(--dim)'}">${x.waste===null?NA:won(x.waste)}</td>
+        <td class="num" style="color:var(--dim)">${x.wasteRate===null?NA:x.wasteRate.toFixed(1)+'%'}</td>
+        <td class="num" style="color:var(--dim)">${x.lossAmount===null?NA:won(x.lossAmount)+'원'}</td></tr>`).join('')}
+      </tbody></table>`:''}`;})()}
     </div>`;})()}
   <div class="panel">
     <div class="row">
