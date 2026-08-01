@@ -181,6 +181,67 @@ let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
 let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
 let anOpen=new Set();
 let stEdit=null;
+let stSel=[],stGeo={},nvLoading=false;
+function havM(a,b){const R=6371000,rad=x=>x*Math.PI/180;
+  const dLa=rad(b.lat-a.lat),dLo=rad(b.lng-a.lng);
+  const h=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLo/2)*Math.sin(dLo/2);
+  return 2*R*Math.asin(Math.sqrt(h));}
+function stDistText(){
+  if(stSel.length!==2)return '아래 매장 칩 또는 지도 마커를 2곳 선택하면 직선거리가 표시됩니다.';
+  const A=store(stSel[0]),B=store(stSel[1]);
+  const a=stGeo[stSel[0]],b=stGeo[stSel[1]];
+  if(!A||!B)return '';
+  if(!a||!b||a.err||b.err)return A.name+' ↔ '+B.name+' — 좌표 확인 중… (주소가 지오코딩되지 않으면 소재지를 확인하십시오)';
+  const d=havM(a,b);
+  return A.name+' ↔ '+B.name+' 직선거리 '+(d<1000?Math.round(d).toLocaleString()+'m':(d/1000).toFixed(2)+'km ('+Math.round(d).toLocaleString('ko-KR')+'m)');}
+function stToggle(id){const i=stSel.indexOf(id);
+  if(i>=0)stSel.splice(i,1);
+  else{if(stSel.length>=2)stSel=[];stSel.push(id);}
+  render();}
+function initNaverMap(){
+  if(!S||!S.mapKey)return;
+  const el=document.getElementById('nvmap');if(!el)return;
+  if(!window.naver||!window.naver.maps){
+    if(nvLoading)return;nvLoading=true;
+    const sc=document.createElement('script');
+    sc.src='https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId='+encodeURIComponent(S.mapKey)+'&submodules=geocoder';
+    sc.onload=()=>{nvLoading=false;initNaverMap();};
+    sc.onerror=()=>{nvLoading=false;const e2=document.getElementById('nvmap');
+      if(e2)e2.innerHTML='<div style="padding:24px;color:var(--risk);font-weight:700">네이버 지도 로드 실패 — Client ID와 NCP 콘솔의 Web 서비스 URL(https://ofd-workstation.onrender.com) 등록을 확인하십시오.</div>';};
+    document.head.appendChild(sc);return;}
+  S.stores.forEach(st=>{
+    if(stGeo[st.id]||stGeo['_p'+st.id]||!st.addr)return;
+    stGeo['_p'+st.id]=1;
+    naver.maps.Service.geocode({query:st.addr},(status,res)=>{
+      delete stGeo['_p'+st.id];
+      if(status===naver.maps.Service.Status.OK&&res.v2&&res.v2.addresses&&res.v2.addresses[0]){
+        const a=res.v2.addresses[0];stGeo[st.id]={lat:+a.y,lng:+a.x};}
+      else stGeo[st.id]={err:1};
+      if(tab==='stores')render();});});
+  const pts=S.stores.map(st=>({st,g:stGeo[st.id]})).filter(x=>x.g&&!x.g.err);
+  const c=pts.length?{lat:pts.reduce((s2,x)=>s2+x.g.lat,0)/pts.length,lng:pts.reduce((s2,x)=>s2+x.g.lng,0)/pts.length}:{lat:37.5449,lng:127.0559};
+  const map=new naver.maps.Map(el,{center:new naver.maps.LatLng(c.lat,c.lng),zoom:12});
+  const bounds=pts.length>1?new naver.maps.LatLngBounds():null;
+  pts.forEach(({st,g})=>{
+    const pos=new naver.maps.LatLng(g.lat,g.lng);
+    const sel=stSel.includes(st.id);
+    const mk=new naver.maps.Marker({map,position:pos,title:st.name,
+      icon:{content:'<div style="background:'+(sel?'#D96D2B':'#2E2A25')+';color:#fff;padding:4px 9px;border-radius:20px;font-size:11px;font-weight:800;box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap">'+st.name+'</div>',anchor:new naver.maps.Point(30,14)}});
+    naver.maps.Event.addListener(mk,'click',()=>stToggle(st.id));
+    if(bounds)bounds.extend(pos);});
+  if(bounds)map.fitBounds(bounds,{top:50,right:50,bottom:50,left:50});
+  if(stSel.length===2){
+    const a=stGeo[stSel[0]],b=stGeo[stSel[1]];
+    if(a&&b&&!a.err&&!b.err)
+      new naver.maps.Polyline({map,path:[new naver.maps.LatLng(a.lat,a.lng),new naver.maps.LatLng(b.lat,b.lng)],
+        strokeColor:'#D96D2B',strokeWeight:3,strokeStyle:'shortdash'});}}
+function stCsv(){
+  const rows=[['매장명','구분','지역','소재지','전화','오픈일']]
+    .concat(S.stores.map(s=>[s.name,s.type,s.region||'',s.addr||'',s.phone||'',s.openDate||'']));
+  const csv='\uFEFF'+rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download='OFD_매장정보_'+today()+'.csv';a.click();URL.revokeObjectURL(a.href);}
 let prodConf={loaded:false},prodCat='전체',prodScope='전체',prodPriceOpen=new Set(),prodPromo=-1,prodStoreSel=null;
 const CATS=['도넛','링도넛','음료','굿즈','서비스','세트','기타'];
 let csv={raw:'',rows:null,head:null,map:null,preview:null};
@@ -247,6 +308,7 @@ function render(){
   <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</div>
   <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
   bind();
+  if(tab==='stores')setTimeout(initNaverMap,0);
 }
 
 /* ---- setup / gate ---- */
@@ -806,7 +868,8 @@ function vNotice(){
 function vStores(){
   return `
   <div class="head"><div><h1>매장 대장</h1>
-    <p>인근가맹점 현황문서(제7조②) 원천 목록 · 오픈완료 시 자동 추가 · 접속코드는 설정 탭</p></div></div>
+    <p>인근가맹점 현황문서(제7조②) 원천 목록 · 오픈완료 시 자동 추가 · 접속코드는 설정 탭</p></div>
+    <button class="btn ghost" id="stxls">엑셀 저장 (CSV)</button></div>
   ${reveal?`<div class="reveal"><b style="font-size:13px;letter-spacing:0">${esc(reveal.name)}</b> 접속코드: <b>${esc(reveal.code)}</b>
     <div style="font-size:11px;color:var(--dim);margin-top:4px">지금 기록해 점주에게 전달하십시오 — 다시 표시되지 않습니다.</div></div>`:''}
   ${cap('stores')?`<div class="panel"><div class="panel-h"><h2>매장 추가</h2></div>
@@ -838,6 +901,21 @@ function vStores(){
       <td style="white-space:nowrap">${cap('stores')?`<button class="btn ghost sm" data-stedit="${s.id}">수정</button> <button class="btn danger sm" data-stdel="${s.id}">삭제</button>`:''}</td></tr>`).join('')}
     </tbody></table>
     <div class="note">계약서 22개점 vs 상권보고서 26개점 불일치(War Room r9) 해소 전까지, 밀집이 직접 확인한 매장만 등록하십시오.</div>
+  </div>
+  <div class="panel"><div class="panel-h"><h2>매장 지도 — 네이버</h2><span class="meta">마커·칩 2곳 선택 시 직선거리 (상권 중첩 확인용)</span></div>
+    ${S.mapKey?`
+    <div id="nvmap" style="width:100%;height:400px;border-radius:10px;background:#EFEBE3"></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+      ${S.stores.map(s=>`<button class="btn ${stSel.includes(s.id)?'':'ghost '}sm" data-stgeo="${s.id}">${esc(s.name)}${stGeo[s.id]&&stGeo[s.id].err?' ⚠':''}</button>`).join('')}
+      ${stSel.length?`<button class="btn ghost sm" data-stgeoclear="1">선택 해제</button>`:''}
+    </div>
+    <div style="margin-top:8px;font-weight:800;font-size:13px;color:${stSel.length===2?'var(--sig)':'var(--dim)'}">${esc(stDistText())}</div>
+    <div style="font-size:10.5px;color:var(--dimmer);margin-top:4px">직선거리 기준(도보·차량 경로 아님) · 좌표는 소재지 주소의 지오코딩 결과</div>`
+    :`<div class="note" style="border-color:var(--warn)">
+      네이버 지도를 표시하려면 <b>네이버클라우드(ncloud.com) 콘솔 → Maps → Application 등록</b> 후 발급되는 <b>Client ID</b>가 필요합니다.<br>
+      ① Application 등록 시 <b>Web Dynamic Map + Geocoding</b> 사용 설정 ② Web 서비스 URL에 <b>https://ofd-workstation.onrender.com</b> 추가 ③ 아래에 Client ID 저장.
+      ${cap('stores')?`<div class="row" style="margin-top:8px"><div style="flex:0 0 300px"><input id="nvkey" placeholder="네이버 지도 Client ID (ncpKeyId)"></div>
+      <button class="btn sm" id="nvkeysave">저장</button></div>`:''}</div>`}
   </div>`;
 }
 
@@ -1080,6 +1158,14 @@ function bind(){
       openDate:$.querySelector('#st_open').value});
       reveal={name:nm,code:r.code};
       await refresh();render();}catch(e){alert(emsg(e));}});
+  on('#stxls',stCsv);
+  on('#nvkeysave',async()=>{
+    const k2=$.querySelector('#nvkey').value.trim();
+    if(!k2)return alert('Client ID를 입력하십시오.');
+    try{await api('POST','/api/config/navermap',{key:k2});await refresh();render();}
+    catch(e){alert(emsg(e));}});
+  $.querySelectorAll('[data-stgeo]').forEach(b=>b.onclick=()=>stToggle(b.dataset.stgeo));
+  $.querySelectorAll('[data-stgeoclear]').forEach(b=>b.onclick=()=>{stSel=[];render();});
   $.querySelectorAll('[data-stedit]').forEach(b=>b.onclick=()=>{stEdit=b.dataset.stedit;render();});
   $.querySelectorAll('[data-stcancel]').forEach(b=>b.onclick=()=>{stEdit=null;render();});
   $.querySelectorAll('[data-stsave]').forEach(b=>b.onclick=async()=>{

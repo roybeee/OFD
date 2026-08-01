@@ -572,6 +572,24 @@ async function main() {
   r = await call('op2', 'PATCH', '/api/stores/nope', { region: 'x' });
   log('AF7 없는 매장 404', r.status === 404);
 
+  /* ===== AG. 전화 형식화·지도 키 ===== */
+  r = await call('op2', 'PATCH', '/api/stores/s77', { phone: '01085558525' });
+  log('AG1 휴대폰 11자리 자동 형식', r.status === 200 && r.data.store.phone === '010-8555-8525');
+  r = await call('op2', 'PATCH', '/api/stores/s77', { phone: '0221234567' });
+  log('AG2 서울 02 10자리', r.data.store.phone === '02-2123-4567');
+  r = await call('op2', 'PATCH', '/api/stores/s77', { phone: '15885535' });
+  log('AG3 대표번호 8자리', r.data.store.phone === '1588-5535');
+  r = await call('op2', 'PATCH', '/api/stores/s77', { phone: '031-8071-7363' });
+  log('AG4 이미 형식화된 값 유지', r.data.store.phone === '031-8071-7363');
+  r = await call('sa', 'POST', '/api/config/navermap', { key: 'x' });
+  log('AG5 영업: 지도 키 403', r.status === 403);
+  r = await call('op2', 'POST', '/api/config/navermap', { key: 'testNcpKey123' });
+  chk = await call('m', 'GET', '/api/bootstrap');
+  log('AG6 지도 키 저장·부트스트랩 노출', r.status === 200 && chk.data.mapKey === 'testNcpKey123');
+  r = await call('op2', 'POST', '/api/config/navermap', { key: '' });
+  chk = await call('m', 'GET', '/api/bootstrap');
+  log('AG7 키 해제', chk.data.mapKey === '');
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

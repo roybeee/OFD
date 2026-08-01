@@ -110,6 +110,28 @@ function audit(actor, action, detail) {
     .run(uid('g'), now(), actor, action, detail || '');
 }
 
+function fmtPhone(v) { /* 한국 전화번호 자동 형식화 — 규칙 밖 입력은 원문 유지 */
+  const t = String(v || '').trim();
+  const d = t.replace(/[^0-9]/g, '');
+  if (!d) return '';
+  if (d.startsWith('02')) {
+    if (d.length === 9) return '02-' + d.slice(2, 5) + '-' + d.slice(5);
+    if (d.length === 10) return '02-' + d.slice(2, 6) + '-' + d.slice(6);
+  } else if (d.startsWith('0')) {
+    if (d.length === 10) return d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6);
+    if (d.length === 11) return d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7);
+  } else if (d.length === 8 && /^1[0-9]{3}/.test(d)) {
+    return d.slice(0, 4) + '-' + d.slice(4);
+  }
+  return t;
+}
+try { /* 기존 매장 전화번호 일괄 정규화 (멱등) */
+  db.prepare('SELECT id, phone FROM stores').all().forEach(r => {
+    const f = fmtPhone(r.phone);
+    if (f !== (r.phone || '')) db.prepare('UPDATE stores SET phone=? WHERE id=?').run(f, r.id);
+  });
+} catch (e) {}
+
 /* ---------------- 부서 권한 (서버 강제) ---------------- */
 const DEPTS = { master: '마스터', admin: '관리', ops: '운영', sales: '영업' };
 const CATS = ['도넛', '링도넛', '음료', '굿즈', '서비스', '세트', '기타'];
@@ -667,6 +689,7 @@ const server = http.createServer(async (req, res) => {
         if (hasCap(HU, 'leads')) base.leads = allLeads();
         if (hasCap(HU, 'orders') || hasCap(HU, 'settle')) base.orders = ordersOf(null);
         if (hasCap(HU, 'closings') || hasCap(HU, 'settle')) base.sales = closingsOf(null);
+        { const mk = db.prepare("SELECT v FROM config WHERE k='naver_map_key'").get(); base.mapKey = mk ? mk.v : ''; }
         if (hasCap(HU, 'auditv')) base.audit = db.prepare('SELECT * FROM audit ORDER BY ts DESC LIMIT 200').all()
           .map(a => ({ ts: a.ts, who: a.actor, act: a.action + (a.detail ? ' — ' + a.detail : '') }));
         if (hasCap(HU, 'users')) base.users = allUsers();
@@ -873,9 +896,17 @@ const server = http.createServer(async (req, res) => {
       const id = uid('s'); const code = genCode();
       db.prepare('INSERT INTO stores(id,name,type,region,addr,phone,open_date,code_hash,mt) VALUES(?,?,?,?,?,?,?,?,?)')
         .run(id, String(body.name).trim(), body.type === '직영' ? '직영' : '가맹', String(body.region || ''),
-          String(body.addr || ''), String(body.phone || ''), od0, pwHash(code), now());
+          String(body.addr || ''), fmtPhone(body.phone), od0, pwHash(code), now());
       audit(actor, '매장 등록', String(body.name).trim());
       return send(res, 200, { id, code });
+    }
+    if (p === '/api/config/navermap' && req.method === 'POST') {
+      if (deny('stores')) return;
+      const key = String(body.key || '').trim();
+      if (key) db.prepare("INSERT INTO config(k,v) VALUES('naver_map_key',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(key);
+      else db.prepare("DELETE FROM config WHERE k='naver_map_key'").run();
+      audit(actor, '네이버 지도 키 ' + (key ? '설정' : '해제'), key ? key.slice(0, 6) + '…' : '');
+      return send(res, 200, { ok: true });
     }
     if ((m = p.match(/^\/api\/stores\/([\w-]+)$/)) && req.method === 'PATCH') {
       if (deny('stores')) return;
@@ -899,7 +930,7 @@ const server = http.createServer(async (req, res) => {
       }
       const rg2 = body.region !== undefined ? String(body.region).trim() : (r0.region || '');
       const ad2 = body.addr !== undefined ? String(body.addr).trim() : (r0.addr || '');
-      const ph2 = body.phone !== undefined ? String(body.phone).trim() : (r0.phone || '');
+      const ph2 = body.phone !== undefined ? fmtPhone(body.phone) : (r0.phone || '');
       if (rg2 !== (r0.region || '')) chg.push('지역');
       if (ad2 !== (r0.addr || '')) chg.push('소재지');
       if (ph2 !== (r0.phone || '')) chg.push('전화');
