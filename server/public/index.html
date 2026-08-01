@@ -755,7 +755,11 @@ function vProd(){
         ${u2.suggest?`<div style="font-size:10px;font-weight:400;color:var(--ok)">제안: ${esc(u2.suggest.name)} (유사도 ${u2.suggest.score}%)</div>`:`<div style="font-size:10px;font-weight:400;color:var(--dimmer)">유사 SKU 없음</div>`}</td>
       <td style="font-size:11px;color:var(--dim)">${(u2.stores||[]).map(st=>esc(st.name)).join(', ')||'-'}</td>
       <td class="num">${won(u2.qty)}</td><td class="num">${won(u2.amount)}원</td>
-      <td><select id="al_i${i}"><option value="">— SKU 선택 —</option>${S.skus.filter(k=>!k.storeId).map(k=>`<option value="${k.id}" ${u2.suggest&&u2.suggest.skuId===k.id?'selected':''}>${esc(k.name)}</option>`).join('')}</select></td>
+      <td><select id="al_i${i}"><option value="">— SKU 선택 —</option>
+        <optgroup label="본사 공통">${S.skus.filter(k=>!k.storeId).map(k=>`<option value="${k.id}" ${u2.suggest&&u2.suggest.skuId===k.id?'selected':''}>${esc(k.name)}</option>`).join('')}</optgroup>
+        ${(u2.stores||[]).map(st=>{const own=S.skus.filter(k=>k.storeId===st.storeId);
+          return own.length?`<optgroup label="${esc(st.name)} 전용">${own.map(k=>`<option value="${k.id}">${esc(k.name)}</option>`).join('')}</optgroup>`:'';}).join('')}
+      </select></td>
       <td style="white-space:nowrap"><button class="btn sm" data-pmap="${i}">매핑</button> <button class="btn ghost sm" data-ppro="${i}">${prodPromo===i?'닫기':'SKU로 추가'}</button></td></tr>`
       +(prodPromo===i?`<tr style="background:#FAF7F1"><td colspan="6"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding:4px 0">
         <div><label>SKU명</label><input id="pp_name" value="${esc(u2.name.replace(/\s*\([^)]*\)\s*$/,''))}" style="width:150px"></div>
@@ -766,7 +770,7 @@ function vProd(){
     </tbody></table>`:`<div style="font-size:11px;color:var(--ok);font-weight:700">미매칭 품목 없음</div>`}
     ${prodConf.aliases&&prodConf.aliases.length?`<div style="margin-top:12px"><b style="font-size:12px">매핑된 별칭 (통합 내역 — 해제 시 소급 원복)</b>
       <table><thead><tr><th>POS 품목명(원본)</th><th>→ SKU</th><th class="num">누적 수량</th><th class="num">누적 금액</th><th></th></tr></thead><tbody>
-      ${prodConf.aliases.map((a2,i)=>`<tr><td style="font-weight:700">${a2.names&&a2.names.length?esc(a2.names.join(', ')):esc(a2.alias)}</td>
+      ${prodConf.aliases.map((a2,i)=>`<tr><td style="font-weight:700">${a2.names&&a2.names.length?esc(a2.names.join(', ')):esc(a2.base||a2.alias)}${a2.storeName?` <span class="pill pl-dim">${esc(a2.storeName)}만</span>`:''}</td>
         <td>${esc(a2.skuName)}</td><td class="num">${won(a2.qty)}</td><td class="num">${won(a2.amount)}원</td>
         <td><button class="btn danger sm" data-adel="${i}">해제</button></td></tr>`).join('')}
       </tbody></table></div>`:''}
@@ -1212,7 +1216,7 @@ function bind(){
   {const ps=$.querySelector('#prod_store');if(ps)ps.onchange=()=>{prodStoreSel=ps.value;render();};}
   $.querySelectorAll('[data-adel]').forEach(b=>b.onclick=async()=>{
     const a2=prodConf.aliases[+b.dataset.adel];
-    if(!confirm('"'+(a2.names&&a2.names.length?a2.names.join(', '):a2.alias)+'" → '+a2.skuName+' 통합을 해제합니다.\n해당 매출은 미매칭으로 돌아가고 마감도 소급 원복됩니다.'))return;
+    if(!confirm('"'+(a2.names&&a2.names.length?a2.names.join(', '):(a2.base||a2.alias))+'"'+(a2.storeName?' ('+a2.storeName+' 전용)':'')+' → '+a2.skuName+' 통합을 해제합니다.\n해당 매출은 미매칭으로 돌아가고 마감도 소급 원복됩니다.'))return;
     try{const r=await api('DELETE','/api/pos/alias/'+encodeURIComponent(a2.alias));
       alert('해제 완료 — '+r.rebuilt+'개 매장·일자 재계산');
       prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
@@ -1236,9 +1240,11 @@ function bind(){
     if(!skuId)return alert('매핑할 SKU를 먼저 선택하십시오.');
     if(!confirm('"'+item.name+'" 을(를) 선택한 SKU로 통합합니다. 과거분까지 소급 재계산됩니다.'))return;
     try{const r=await api('POST','/api/pos/alias',{alias:item.name,skuId});
-      alert('매핑 완료 — '+r.rebuilt+'개 매장·일자 소급 재계산');
+      alert('매핑 완료'+(r.scoped?' (해당 매장에만 적용)':'')+' — '+r.rebuilt+'개 매장·일자 소급 재계산');
       prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
-    catch(e){alert(emsg(e));}});
+    catch(e){
+      if(e.data&&e.data.error==='NOT_SOLD_AT_STORE')alert('이 품목은 '+e.data.store+'에서 판매 이력이 없어 그 매장 전용 SKU로는 매핑할 수 없습니다.');
+      else alert(emsg(e));}});
 }
 
 /* ---- boot ---- */

@@ -515,6 +515,24 @@ async function main() {
       && st3.unitBreakdown[0].unit === 4200 && st3.unitBreakdown[0].qty === st3.qty);
   }
 
+  /* ===== AD. 전용 SKU 매핑 스코프 ===== */
+  r = await call('ad', 'POST', '/api/skus', { name: '독산한정쿠키', price: 3000, category: '기타', storeId: 's2' });
+  const exSku = r.data.skuId;
+  r = await call('ad', 'POST', '/api/pos/alias', { alias: '신메뉴딸기', skuId: exSku });
+  log('AD1 전용 SKU 매핑: scoped 적용', r.status === 200 && r.data.scoped === true && r.data.rebuilt === berryDates.length);
+  chk = await call('ad', 'GET', '/api/pos/aliases');
+  {
+    const al2 = chk.data.aliases.find(a2 => a2.skuId === exSku);
+    log('AD2 별칭 목록: 매장 스코프 표기·수량 매장분만', !!al2 && al2.storeId === 's2' && al2.qty === berryQty);
+  }
+  r = await call('ad', 'POST', '/api/pos/alias', { alias: '없는품목xyz', skuId: exSku });
+  log('AD3 미판매 품목의 전용 매핑 차단 400', r.status === 400 && r.data.error === 'NOT_SOLD_AT_STORE');
+  r = await call('ad', 'DELETE', '/api/pos/alias/' + encodeURIComponent('신메뉴딸기@@s2'));
+  log('AD4 스코프 별칭 해제', r.status === 200 && r.data.rebuilt === berryDates.length);
+  chk = await call('ad', 'GET', '/api/pos/unmatched');
+  log('AD5 해제 후 미매칭 복귀', chk.data.items.some(x => x.name === '신메뉴딸기' && x.qty === berryQty));
+  await call('ad', 'DELETE', '/api/skus/' + exSku);
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

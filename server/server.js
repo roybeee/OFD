@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS pos_events(id TEXT PRIMARY KEY, ts INTEGER, type TEXT
 `);
 try { db.exec('ALTER TABLE skus ADD COLUMN category TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE skus ADD COLUMN store_id TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE sku_aliases ADD COLUMN store_id TEXT'); } catch (e) {}
 
 /* ---------------- utils ---------------- */
 const uid = p => p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
@@ -344,7 +345,11 @@ function resolveSku(rawName, storeId) {
   }
   const glob = pool.find(k => !k.storeId && normName(k.name) === n);
   if (glob) return glob.id;
-  const al = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=?').get(n);
+  if (storeId) {
+    const alS = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=?').get(aliasKey(n, storeId));
+    if (alS) return alS.sku_id;
+  }
+  const al = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=? AND (store_id IS NULL OR store_id=\'\')').get(n);
   return al ? al.sku_id : null;
 }
 function rebuildClosingFromPos(storeId, date) {
@@ -379,15 +384,20 @@ async function syncStoreDay(storeId, date, actorName, quiet) {
     return res;
   } catch (e) { try { db.exec('ROLLBACK'); } catch (e2) {} throw e; }
 }
-function reapplyAlias(aliasNorm, skuId) {
+const aliasKey = (n, storeId) => storeId ? n + '@@' + storeId : n; /* 매장 전용 SKU 매핑은 그 매장에만 적용 */
+function reapplyAlias(aliasNorm, skuId, storeId) {
   const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
     .map(r => r.raw_name).filter(n => normName(n) === aliasNorm);
-  const upd = db.prepare('UPDATE pos_sales SET sku_id=? WHERE raw_name=?');
+  const upd = storeId
+    ? db.prepare('UPDATE pos_sales SET sku_id=? WHERE raw_name=? AND store_id=?')
+    : db.prepare('UPDATE pos_sales SET sku_id=? WHERE raw_name=?');
+  const sel = storeId
+    ? db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=? AND store_id=?')
+    : db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?');
   const affected = new Set();
   names.forEach(n => {
-    upd.run(skuId, n);
-    db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?').all(n)
-      .forEach(a => affected.add(a.store_id + '|' + a.date));
+    if (storeId) { upd.run(skuId, n, storeId); sel.all(n, storeId).forEach(a => affected.add(a.store_id + '|' + a.date)); }
+    else { upd.run(skuId, n); sel.all(n).forEach(a => affected.add(a.store_id + '|' + a.date)); }
   });
   [...affected].forEach(k => { const [s2, d] = k.split('|'); rebuildClosingFromPos(s2, d); });
   return affected.size;
@@ -945,9 +955,9 @@ const server = http.createServer(async (req, res) => {
       const kid = uid('k');
       db.prepare('INSERT INTO skus(id,name,price,supply,category,store_id,mt) VALUES(?,?,?,?,?,?,?)')
         .run(kid, name, price, supply, category, storeId, now());
-      db.prepare('INSERT INTO sku_aliases(alias,sku_id,mt) VALUES(?,?,?) ON CONFLICT(alias) DO UPDATE SET sku_id=excluded.sku_id, mt=excluded.mt')
-        .run(normName(rawName), kid, now());
-      const n = reapplyAlias(normName(rawName), kid);
+      db.prepare('INSERT INTO sku_aliases(alias,sku_id,store_id,mt) VALUES(?,?,?,?) ON CONFLICT(alias) DO UPDATE SET sku_id=excluded.sku_id, store_id=excluded.store_id, mt=excluded.mt')
+        .run(aliasKey(normName(rawName), storeId), kid, storeId, now());
+      const n = reapplyAlias(normName(rawName), kid, storeId);
       audit(actor, 'SKU 승격', rawName + ' → ' + name + ' ' + price.toLocaleString('ko-KR') + '원 (' + n + '개 매장일 소급)');
       return send(res, 200, { ok: true, skuId: kid, name, price, supply, rebuilt: n });
     }
@@ -986,17 +996,23 @@ const server = http.createServer(async (req, res) => {
       if (!kRow) return err(res, 404, 'NOT_FOUND');
       db.prepare('UPDATE skus SET del=1, mt=? WHERE id=?').run(now(), m[1]);
       /* 연쇄 정리: 이 SKU로 통합된 별칭 해제 → 해당 POS 매출 미매칭 원복 → 마감 소급 재계산 */
-      const als = db.prepare('SELECT alias FROM sku_aliases WHERE sku_id=?').all(m[1]).map(a2 => a2.alias);
+      const als = db.prepare('SELECT alias, store_id FROM sku_aliases WHERE sku_id=?').all(m[1]);
       const affected = new Set();
       als.forEach(al => {
-        db.prepare('DELETE FROM sku_aliases WHERE alias=?').run(al);
+        db.prepare('DELETE FROM sku_aliases WHERE alias=?').run(al.alias);
+        const base2 = al.store_id ? al.alias.slice(0, al.alias.lastIndexOf('@@')) : al.alias;
         const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
-          .map(r2 => r2.raw_name).filter(nm => normName(nm) === al);
-        const upd = db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=?');
+          .map(r2 => r2.raw_name).filter(nm => normName(nm) === base2);
         names.forEach(nm => {
-          upd.run(nm);
-          db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?').all(nm)
-            .forEach(a3 => affected.add(a3.store_id + '|' + a3.date));
+          if (al.store_id) {
+            db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=? AND store_id=?').run(nm, al.store_id);
+            db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=? AND store_id=?').all(nm, al.store_id)
+              .forEach(a3 => affected.add(a3.store_id + '|' + a3.date));
+          } else {
+            db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=?').run(nm);
+            db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?').all(nm)
+              .forEach(a3 => affected.add(a3.store_id + '|' + a3.date));
+          }
         });
       });
       [...affected].forEach(k2 => { const [sid, d] = k2.split('|'); rebuildClosingFromPos(sid, d); });
@@ -1118,40 +1134,67 @@ const server = http.createServer(async (req, res) => {
       if (denyAny(['pos', 'skus'])) return;
       const alias = normName(body.alias || '');
       const skuId = String(body.skuId || '');
-      const kRow = db.prepare('SELECT name FROM skus WHERE id=? AND del=0').get(skuId);
+      const kRow = db.prepare('SELECT name, store_id FROM skus WHERE id=? AND del=0').get(skuId);
       if (!alias || !kRow) return err(res, 400, 'ALIAS_INVALID');
-      db.prepare('INSERT INTO sku_aliases(alias,sku_id,mt) VALUES(?,?,?) ON CONFLICT(alias) DO UPDATE SET sku_id=excluded.sku_id, mt=excluded.mt')
-        .run(alias, skuId, now());
-      const n = reapplyAlias(alias, skuId);
-      audit(actor, 'POS 품목 매핑', String(body.alias) + ' → ' + kRow.name + ' (' + n + '개 매장일 재계산)');
-      return send(res, 200, { ok: true, rebuilt: n });
+      const scope = kRow.store_id || null;
+      if (scope) { /* 전용 SKU: 해당 매장에서 실제 팔린 품목만 매핑 허용 */
+        const soldHere = db.prepare('SELECT DISTINCT raw_name FROM pos_sales WHERE store_id=?').all(scope)
+          .some(r2 => normName(r2.raw_name) === alias);
+        if (!soldHere) return err(res, 400, 'NOT_SOLD_AT_STORE',
+          { store: (db.prepare('SELECT name FROM stores WHERE id=?').get(scope) || {}).name || scope });
+      }
+      db.prepare('INSERT INTO sku_aliases(alias,sku_id,store_id,mt) VALUES(?,?,?,?) ON CONFLICT(alias) DO UPDATE SET sku_id=excluded.sku_id, store_id=excluded.store_id, mt=excluded.mt')
+        .run(aliasKey(alias, scope), skuId, scope, now());
+      const n = reapplyAlias(alias, skuId, scope);
+      audit(actor, 'POS 품목 매핑', String(body.alias) + ' → ' + kRow.name + (scope ? ' [매장 전용]' : '') + ' (' + n + '개 매장일 재계산)');
+      return send(res, 200, { ok: true, rebuilt: n, scoped: !!scope });
     }
     if (p === '/api/pos/aliases' && req.method === 'GET') {
       if (denyAny(['pos', 'skus'])) return;
       const skuMap = {}; allSkus().forEach(k => { skuMap[k.id] = k.name; });
-      const list = db.prepare('SELECT alias, sku_id FROM sku_aliases ORDER BY rowid DESC').all().map(a => {
+      const stMap2 = {}; allStores().forEach(s2 => { stMap2[s2.id] = s2.name; });
+      const list = db.prepare('SELECT alias, sku_id, store_id FROM sku_aliases ORDER BY rowid DESC').all().map(a => {
+        const base = a.store_id ? a.alias.slice(0, a.alias.lastIndexOf('@@')) : a.alias;
         const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
-          .map(r => r.raw_name).filter(nm => normName(nm) === a.alias);
+          .map(r => r.raw_name).filter(nm => normName(nm) === base);
         let qty = 0, amount = 0;
-        names.forEach(nm => { const st2 = db.prepare('SELECT COALESCE(SUM(qty),0) q, COALESCE(SUM(amount),0) a FROM pos_sales WHERE raw_name=?').get(nm); qty += st2.q; amount += st2.a; });
-        return { alias: a.alias, skuId: a.sku_id, skuName: skuMap[a.sku_id] || '(삭제된 SKU)', names, qty, amount };
+        names.forEach(nm => {
+          const st2 = a.store_id
+            ? db.prepare('SELECT COALESCE(SUM(qty),0) q, COALESCE(SUM(amount),0) a FROM pos_sales WHERE raw_name=? AND store_id=?').get(nm, a.store_id)
+            : db.prepare('SELECT COALESCE(SUM(qty),0) q, COALESCE(SUM(amount),0) a FROM pos_sales WHERE raw_name=?').get(nm);
+          qty += st2.q; amount += st2.a;
+        });
+        return { alias: a.alias, base, storeId: a.store_id || null, storeName: a.store_id ? (stMap2[a.store_id] || a.store_id) : null,
+          skuId: a.sku_id, skuName: skuMap[a.sku_id] || '(삭제된 SKU)', names, qty, amount };
       });
       return send(res, 200, { aliases: list });
     }
     if ((m = p.match(/^\/api\/pos\/alias\/(.+)$/)) && req.method === 'DELETE') {
       if (denyAny(['pos', 'skus'])) return;
-      const alias = normName(decodeURIComponent(m[1]));
-      const ex = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=?').get(alias);
+      const rawKey = decodeURIComponent(m[1]);
+      const at = rawKey.lastIndexOf('@@');
+      const scope2 = at >= 0 ? rawKey.slice(at + 2) : null;
+      const alias = at >= 0 ? normName(rawKey.slice(0, at)) : normName(rawKey);
+      const key2 = aliasKey(alias, scope2);
+      const ex = db.prepare('SELECT sku_id FROM sku_aliases WHERE alias=?').get(key2);
       if (!ex) return err(res, 404, 'NOT_FOUND');
-      db.prepare('DELETE FROM sku_aliases WHERE alias=?').run(alias);
+      db.prepare('DELETE FROM sku_aliases WHERE alias=?').run(key2);
       const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
         .map(r => r.raw_name).filter(nm => normName(nm) === alias);
       const affected = new Set();
-      const upd = db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=?');
+      const upd = scope2
+        ? db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=? AND store_id=?')
+        : db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=?');
       names.forEach(nm => {
-        upd.run(nm);
-        db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?').all(nm)
-          .forEach(a2 => affected.add(a2.store_id + '|' + a2.date));
+        if (scope2) {
+          upd.run(nm, scope2);
+          db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=? AND store_id=?').all(nm, scope2)
+            .forEach(a2 => affected.add(a2.store_id + '|' + a2.date));
+        } else {
+          upd.run(nm);
+          db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?').all(nm)
+            .forEach(a2 => affected.add(a2.store_id + '|' + a2.date));
+        }
       });
       [...affected].forEach(k2 => { const [sid, d] = k2.split('|'); rebuildClosingFromPos(sid, d); });
       audit(actor, 'POS 품목 매핑 해제', alias + ' (' + affected.size + '개 매장일 재계산)');
