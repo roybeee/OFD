@@ -408,6 +408,66 @@ function computeAnalytics(storeId, from, to) {
     mix: mixArr, unmatchedAmount: mixArr.filter(x => !x.matched).reduce((a, x) => a + x.amount, 0) };
 }
 
+function weekStartMon(d) { // 월요일 시작 주
+  const dt = new Date(d + 'T00:00:00Z'); const w = dt.getUTCDay();
+  dt.setUTCDate(dt.getUTCDate() - (w === 0 ? 6 : w - 1));
+  return dt.toISOString().slice(0, 10);
+}
+function computeSalesReport(from, to, unit, storeIds, skuSel) {
+  const skuMap = {}; allSkus().forEach(k => { skuMap[k.id] = k; });
+  const stores = allStores().filter(st => !storeIds || storeIds.includes(st.id));
+  const bucketOf = d => unit === 'month' ? d.slice(0, 7) : unit === 'week' ? weekStartMon(d) : d;
+  const buckets = {}; const srcMap = {};
+  const ensure = (bk, sid) => {
+    if (!buckets[bk]) buckets[bk] = { perStore: {}, total: { amount: 0, qty: 0 } };
+    if (!buckets[bk].perStore[sid]) buckets[bk].perStore[sid] = { amount: 0, qty: 0 };
+    return buckets[bk];
+  };
+  for (const st of stores) {
+    const pos = db.prepare('SELECT date, sku_id, qty, amount FROM pos_sales WHERE store_id=? AND date>=? AND date<=?').all(st.id, from, to);
+    if (pos.length) {
+      srcMap[st.id] = 'pos';
+      for (const r of pos) {
+        if (skuSel && !skuSel.has(r.sku_id || '__unmatched')) continue;
+        const b = ensure(bucketOf(r.date), st.id);
+        b.perStore[st.id].amount += r.amount; b.perStore[st.id].qty += r.qty;
+        b.total.amount += r.amount; b.total.qty += r.qty;
+      }
+    } else {
+      srcMap[st.id] = 'closings'; /* POS 미연동 매장 폴백: 마감 × 정가 */
+      closingsOf(st.id).forEach(c => {
+        if (c.date < from || c.date > to) return;
+        c.items.forEach(i => {
+          const k = skuMap[i.skuId]; if (!k) return;
+          if (skuSel && !skuSel.has(i.skuId)) return;
+          const b = ensure(bucketOf(c.date), st.id);
+          const amt = k.price * i.sold;
+          b.perStore[st.id].amount += amt; b.perStore[st.id].qty += i.sold;
+          b.total.amount += amt; b.total.qty += i.sold;
+        });
+      });
+    }
+  }
+  const rows = Object.keys(buckets).sort().reverse().map(bk => ({
+    bucket: bk,
+    label: unit === 'week' ? bk.slice(5).replace('-', '/') + '~' + addDays(bk, 6).slice(5).replace('-', '/')
+      : unit === 'month' ? bk : bk,
+    perStore: buckets[bk].perStore, total: buckets[bk].total
+  }));
+  const grand = { amount: 0, qty: 0 }; const perStoreTotal = {};
+  rows.forEach(r => {
+    grand.amount += r.total.amount; grand.qty += r.total.qty;
+    Object.keys(r.perStore).forEach(sid => {
+      if (!perStoreTotal[sid]) perStoreTotal[sid] = { amount: 0, qty: 0 };
+      perStoreTotal[sid].amount += r.perStore[sid].amount;
+      perStoreTotal[sid].qty += r.perStore[sid].qty;
+    });
+  });
+  return { from, to, unit,
+    stores: stores.map(st => ({ storeId: st.id, name: st.name, type: st.type, source: srcMap[st.id] || '-' })),
+    rows, perStoreTotal, grand };
+}
+
 /* ---------------- 시드 ---------------- */
 function seed(demo) {
   const M = now();
@@ -925,6 +985,20 @@ const server = http.createServer(async (req, res) => {
       let from = /^\d{4}-\d{2}-\d{2}$/.test(u.searchParams.get('from') || '') ? u.searchParams.get('from') : addDays(to, -29);
       if (Math.round((new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 864e5) > 92) from = addDays(to, -91);
       return send(res, 200, computeAnalytics(sid, from, to));
+    }
+
+    /* ---- 매출현황 리포트 (관리/마스터) ---- */
+    if (p === '/api/salesreport' && req.method === 'GET') {
+      if (deny('settle')) return;
+      const to = /^\d{4}-\d{2}-\d{2}$/.test(u.searchParams.get('to') || '') ? u.searchParams.get('to') : kstToday();
+      let from = /^\d{4}-\d{2}-\d{2}$/.test(u.searchParams.get('from') || '') ? u.searchParams.get('from') : addDays(to, -29);
+      if (Math.round((new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 864e5) > 366) from = addDays(to, -365);
+      const unitQ = u.searchParams.get('unit');
+      const unit = unitQ === 'week' || unitQ === 'month' ? unitQ : 'day';
+      const storesQ = (u.searchParams.get('stores') || '').split(',').map(x => x.trim()).filter(Boolean);
+      const skusQ = (u.searchParams.get('skus') || '').split(',').map(x => x.trim()).filter(Boolean);
+      return send(res, 200, computeSalesReport(from, to, unit,
+        storesQ.length ? storesQ : null, skusQ.length ? new Set(skusQ) : null));
     }
 
     /* ---- 백업 (마스터) ---- */

@@ -365,6 +365,36 @@ async function main() {
   chk = await call('m', 'GET', '/api/bootstrap');
   log('W3 설치 이벤트 감사 기록', chk.data.audit.some(a2 => a2.who === '토스플레이스 웹훅' && a2.act.includes('7777001')));
 
+  /* ===== X. 매출현황 리포트 ===== */
+  r = await call('sa', 'GET', '/api/salesreport');
+  log('X1 영업: 리포트 403', r.status === 403);
+  r = await call('op2', 'GET', '/api/salesreport');
+  log('X2 운영: 리포트 403(need settle)', r.status === 403 && r.data.need === 'settle');
+  r = await call('ad', 'GET', '/api/salesreport?from=' + satD + '&to=' + satD + '&unit=day&stores=s2');
+  log('X3 일별·단일매장: 471,000 / 100개 / POS', r.status === 200 && r.data.rows.length === 1
+    && r.data.rows[0].total.amount === 471000 && r.data.rows[0].total.qty === 100
+    && r.data.stores[0].source === 'pos');
+  const syncedAmt = {}; [satD, monD, addD(t, -2), addD(t, -1), t].forEach(d => {
+    syncedAmt[d] = (day(d) === 0 || day(d) === 6) ? 471000 : 235500; });
+  const wFrom = addD(satD, -6);
+  let expWeek = 0;
+  Object.keys(syncedAmt).forEach(d => { if (d >= wFrom && d <= satD) expWeek += syncedAmt[d]; });
+  r = await call('ad', 'GET', '/api/salesreport?from=' + wFrom + '&to=' + satD + '&unit=week&stores=s2');
+  log('X4 주별 합계 = 일별 합산과 일치', r.status === 200 && r.data.grand.amount === expWeek);
+  r = await call('ad', 'GET', '/api/salesreport?from=' + satD + '&to=' + satD + '&unit=day&stores=s2&skus=k2');
+  log('X5 품목 필터(k2): 174,000 / 30개', r.data.grand.amount === 174000 && r.data.grand.qty === 30);
+  r = await call('ad', 'GET', '/api/salesreport?from=' + satD + '&to=' + satD + '&unit=day&stores=s2&skus=k3');
+  chk = await call('ad', 'GET', '/api/salesreport?from=' + satD + '&to=' + satD + '&unit=day&stores=s2&skus=__unmatched');
+  log('X6 별칭 소급 반영: k3 45,000 · 미매칭 0', r.data.grand.amount === 45000 && chk.data.grand.amount === 0);
+  r = await call('ad', 'GET', '/api/salesreport?from=' + t + '&to=' + t + '&unit=day&stores=s77');
+  log('X7 마감 폴백 매장: 52,000 / closings', r.data.grand.amount === 52000 && r.data.stores[0].source === 'closings');
+  {
+    const dRange = 'from=' + monD + '&to=' + satD + '&stores=s2';
+    const rd = await call('ad', 'GET', '/api/salesreport?' + dRange + '&unit=day');
+    const rm = await call('ad', 'GET', '/api/salesreport?' + dRange + '&unit=month');
+    log('X8 월별 합계 = 일별 합계', rd.data.grand.amount === rm.data.grand.amount && rd.data.grand.qty === rm.data.grand.qty);
+  }
+
   /* ===== R. UI ===== */
   const ui = await fetch(BASE + '/');
   const uiText = await ui.text();

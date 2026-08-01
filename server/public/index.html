@@ -178,6 +178,7 @@ const emsg=e=>(e&&e.data&&EMSG[e.data.error])||'요청을 처리하지 못했습
 let PH='boot',ST0=null,S=null,tab='dash';
 let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoading=false;
 let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
+let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
 let csv={raw:'',rows:null,head:null,map:null,preview:null};
 let reveal=null; /* {name, code} 1회 노출 */
 let setupCodes=null;
@@ -219,7 +220,7 @@ function tabsFor(){
   if(cap('leads'))T.push(['pipe','영업']);
   if(cap('orders'))T.push(['orders','발주']);
   if(cap('closings'))T.push(['sales','매출']);
-  if(cap('settle'))T.push(['settle','정산'],['an','분석']);
+  if(cap('settle'))T.push(['settle','정산'],['an','분석'],['rep','매출현황']);
   T.push(['notice','공지'],['stores','매장'],['conf','설정']);
   return T;}
 function render(){
@@ -239,7 +240,7 @@ function render(){
     </div>
   </div>
   <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</div>
-  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
+  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
   bind();
 }
 
@@ -596,6 +597,67 @@ function vAn(){
       <td class="num">${won(x2.qty)}</td><td class="num">${won(x2.amount)}원</td>
       <td><div style="display:flex;align-items:center;gap:7px"><div style="flex:1;background:#F1EDE5;border-radius:4px;height:9px;overflow:hidden"><div style="width:${Math.min(100,x2.share).toFixed(1)}%;height:100%;background:${x2.matched?'var(--sig)':'var(--warn)'}"></div></div><span style="font-size:11px;color:var(--dim);min-width:44px;text-align:right">${x2.share.toFixed(1)}%</span></div></td></tr>`).join('')}
     </tbody></table></div>`;
+}
+
+function vRep(){
+  if(!repTo){repTo=today();repFrom=addD(repTo,-29);}
+  if(!repStores)repStores=new Set(S.stores.map(s=>s.id));
+  if(!repSkus)repSkus=new Set([...S.skus.map(k=>k.id),'__unmatched']);
+  const allSku=repSkus.size===S.skus.length+1;
+  const key=[repUnit,repFrom,repTo,[...repStores].sort().join('|'),allSku?'ALL':[...repSkus].sort().join('|')].join('#');
+  const head=`
+  <div class="head"><div><h1>매출현황</h1><p>${repFrom} ~ ${repTo} · POS 실측 우선(미연동 매장은 마감×정가) · 데이터가 있는 기간만 표시</p></div>
+    <div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap">
+      <div style="display:flex;gap:5px">${[['day','일별'],['week','주별'],['month','월별']].map(x=>`<button class="btn ${repUnit===x[0]?'':'ghost '}sm" data-repunit="${x[0]}">${x[1]}</button>`).join('')}</div>
+      <div style="display:flex;gap:5px">${[7,30,90].map(d=>`<button class="btn ghost sm" data-reppre="${d}">${d}일</button>`).join('')}</div>
+      <div><label>시작</label><input type="date" id="rep_from" value="${repFrom}" style="padding:6px 8px"></div>
+      <div><label>종료</label><input type="date" id="rep_to" value="${repTo}" style="padding:6px 8px"></div>
+      <div style="display:flex;gap:5px">${[['amount','금액'],['qty','수량']].map(x=>`<button class="btn ${repMetric===x[0]?'':'ghost '}sm" data-repmet="${x[0]}">${x[1]}</button>`).join('')}</div>
+    </div></div>
+  <div class="panel">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;font-weight:800;color:var(--dim);min-width:34px">매장</span>
+      <button class="btn ghost sm" data-repallst="1">전체</button>
+      ${S.stores.map(st=>`<button class="btn ${repStores.has(st.id)?'':'ghost '}sm" data-repst="${st.id}">${esc(st.name)}</button>`).join('')}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;font-weight:800;color:var(--dim);min-width:34px">품목</span>
+      <button class="btn ghost sm" data-repallsk="1">전체</button>
+      ${S.skus.map(k=>`<button class="btn ${repSkus.has(k.id)?'':'ghost '}sm" data-repsk="${k.id}">${esc(k.name)}</button>`).join('')}
+      <button class="btn ${repSkus.has('__unmatched')?'':'ghost '}sm" data-repsk="__unmatched">미매칭(기타)</button>
+    </div>
+  </div>`;
+  if(!repData||repData._key!==key){
+    if(!repLoading){repLoading=true;
+      const q='/api/salesreport?from='+repFrom+'&to='+repTo+'&unit='+repUnit
+        +'&stores='+encodeURIComponent([...repStores].join(','))
+        +(allSku?'':'&skus='+encodeURIComponent([...repSkus].join(',')));
+      api('GET',q).then(r=>{r._key=key;repData=r;repLoading=false;render();})
+        .catch(()=>{repLoading=false;repData={_key:key,err:true};render();});}
+    return head+'<div class="empty">집계 중…</div>';
+  }
+  const D=repData;
+  if(D.err)return head+'<div class="empty">집계에 실패했습니다.</div>';
+  const M=repMetric, unitLbl=M==='amount'?'원':'개';
+  const cell=v=>v?won(v[M]):'<span style="color:var(--dimmer)">–</span>';
+  return head+`
+  <div class="kpis">
+    <div class="kpi"><div class="k">기간 합계 (${unitLbl==='원'?'매출':'수량'})</div><div class="v">${won(D.grand[M])}<em>${unitLbl}</em></div><div class="s">${D.unit==='day'?'일별':D.unit==='week'?'주별':'월별'} · ${D.rows.length}개 구간</div></div>
+    <div class="kpi"><div class="k">선택 매장</div><div class="v">${D.stores.length}<em>곳</em></div><div class="s">POS ${D.stores.filter(s=>s.source==='pos').length} · 마감 ${D.stores.filter(s=>s.source==='closings').length}</div></div>
+    <div class="kpi"><div class="k">구간 평균</div><div class="v">${won(D.rows.length?Math.round(D.grand[M]/D.rows.length):0)}<em>${unitLbl}</em></div><div class="s">데이터 있는 구간 기준</div></div>
+  </div>
+  <div class="panel"><div class="panel-h"><h2>기간 × 매장</h2><span class="meta">단위: ${unitLbl}</span></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>기간</th>
+      ${D.stores.map(s=>`<th class="num">${esc(s.name)}<div style="font-weight:400;font-size:9.5px;color:var(--dimmer)">${s.source==='pos'?'POS 실측':s.source==='closings'?'마감 기준':'-'}</div></th>`).join('')}
+      <th class="num" style="border-left:2px solid var(--line)">합계</th></tr></thead><tbody>
+    ${D.rows.length?D.rows.map(r=>`<tr><td style="font-weight:700;white-space:nowrap">${esc(r.label)}</td>
+      ${D.stores.map(s=>`<td class="num">${cell(r.perStore[s.storeId])}</td>`).join('')}
+      <td class="num" style="font-weight:800;border-left:2px solid var(--line)">${won(r.total[M])}</td></tr>`).join('')
+      :`<tr><td colspan="${D.stores.length+2}" style="text-align:center;color:var(--dimmer);padding:20px">선택한 조건에 데이터가 없습니다</td></tr>`}
+    </tbody>${D.rows.length?`<tfoot><tr style="background:#F4F0E8"><td style="font-weight:800">합계</td>
+      ${D.stores.map(s=>`<td class="num" style="font-weight:800">${cell(D.perStoreTotal[s.storeId])}</td>`).join('')}
+      <td class="num" style="font-weight:800;border-left:2px solid var(--line)">${won(D.grand[M])}</td></tr></tfoot>`:''}
+    </table></div></div>`;
 }
 
 function noticeList(limit){
@@ -973,6 +1035,20 @@ function bind(){
   const anS=$.querySelector('#an_store');
   if(anS)anS.onchange=()=>{anStore=anS.value;anData=null;render();};
   $.querySelectorAll('[data-anp]').forEach(b=>b.onclick=()=>{anDays=+b.dataset.anp;anData=null;render();});
+  $.querySelectorAll('[data-repunit]').forEach(b=>b.onclick=()=>{repUnit=b.dataset.repunit;repData=null;render();});
+  $.querySelectorAll('[data-reppre]').forEach(b=>b.onclick=()=>{repTo=today();repFrom=addD(repTo,-(+b.dataset.reppre-1));repData=null;render();});
+  $.querySelectorAll('[data-repmet]').forEach(b=>b.onclick=()=>{repMetric=b.dataset.repmet;render();});
+  const rf=$.querySelector('#rep_from'),rt=$.querySelector('#rep_to');
+  if(rf)rf.onchange=()=>{if(/^\d{4}-\d{2}-\d{2}$/.test(rf.value)){repFrom=rf.value;repData=null;render();}};
+  if(rt)rt.onchange=()=>{if(/^\d{4}-\d{2}-\d{2}$/.test(rt.value)){repTo=rt.value;repData=null;render();}};
+  $.querySelectorAll('[data-repst]').forEach(b=>b.onclick=()=>{const id=b.dataset.repst;
+    if(repStores.has(id)){if(repStores.size>1)repStores.delete(id);}else repStores.add(id);
+    repData=null;render();});
+  $.querySelectorAll('[data-repallst]').forEach(b=>b.onclick=()=>{repStores=new Set(S.stores.map(s=>s.id));repData=null;render();});
+  $.querySelectorAll('[data-repsk]').forEach(b=>b.onclick=()=>{const id=b.dataset.repsk;
+    if(repSkus.has(id)){if(repSkus.size>1)repSkus.delete(id);}else repSkus.add(id);
+    repData=null;render();});
+  $.querySelectorAll('[data-repallsk]').forEach(b=>b.onclick=()=>{repSkus=new Set([...S.skus.map(k=>k.id),'__unmatched']);repData=null;render();});
   $.querySelectorAll('[data-psave]').forEach(b=>b.onclick=async()=>{
     const sid=b.dataset.psave;
     try{await api('PUT','/api/pos/links/'+sid,{
