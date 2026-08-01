@@ -460,6 +460,11 @@ async function main() {
   r = await call('ad', 'PATCH', '/api/skus/k1', { category: '도넛' });
   chk = await call('ad', 'GET', '/api/bootstrap');
   log('AB2 카테고리 지정 저장', r.status === 200 && chk.data.skus.find(k => k.id === 'k1').category === '도넛');
+  r = await call('ad', 'PATCH', '/api/skus/k2', { category: '링도넛' });
+  chk = await call('ad', 'GET', '/api/bootstrap');
+  log('AB2b 링도넛 카테고리 허용', r.status === 200 && chk.data.skus.find(k => k.id === 'k2').category === '링도넛');
+  r = await call('ad', 'PATCH', '/api/skus/k2', { category: '없는분류' });
+  log('AB2c 미정의 카테고리 거부 400', r.status === 400 && r.data.error === 'BAD_CATEGORY');
   r = await call('ad', 'POST', '/api/skus', { name: '수제쿠키', price: 3000, category: '기타', storeId: 's77' });
   log('AB3 매장 전용 SKU 생성', r.status === 200);
   chk = await call('own2', 'GET', '/api/bootstrap');

@@ -111,7 +111,7 @@ function audit(actor, action, detail) {
 
 /* ---------------- 부서 권한 (서버 강제) ---------------- */
 const DEPTS = { master: '마스터', admin: '관리', ops: '운영', sales: '영업' };
-const CATS = ['도넛', '음료', '굿즈', '서비스', '세트', '기타'];
+const CATS = ['도넛', '링도넛', '음료', '굿즈', '서비스', '세트', '기타'];
 const CAP = {
   leads:   ['master', 'sales'],            // 가맹 영업 파이프라인
   orders:  ['master', 'ops'],              // 발주 상태 전이·반려·대리 발주
