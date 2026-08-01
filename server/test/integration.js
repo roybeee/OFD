@@ -533,6 +533,28 @@ async function main() {
   log('AD5 해제 후 미매칭 복귀', chk.data.items.some(x => x.name === '신메뉴딸기' && x.qty === berryQty));
   await call('ad', 'DELETE', '/api/skus/' + exSku);
 
+  /* ===== AE. SKU 삭제 → 미매칭 원복 (이름 직결분 포함) ===== */
+  {
+    const before = await call('ad', 'GET', '/api/analytics?storeId=s2&from=' + satD + '&to=' + satD);
+    const k1qty = before.data.mix.find(x => x.skuId === 'k1').qty;
+    r = await call('ad', 'DELETE', '/api/skus/k1');
+    log('AE1 이름 직결 매출도 원복 대상', r.status === 200 && r.data.restoredQty > 0 && r.data.rebuilt > 0);
+    chk = await call('ad', 'GET', '/api/pos/unmatched');
+    const um5 = chk.data.items.find(x => x.name === '우유크림도넛');
+    log('AE2 삭제 SKU가 미매칭 목록으로 복귀', !!um5 && um5.qty >= k1qty);
+    chk = await call('own2', 'GET', '/api/bootstrap');
+    {
+      const cs = chk.data.sales.find(c => c.date === satD);
+      const k1row = cs.items.find(i => i.skuId === 'k1');
+      log('AE3 마감 판매수량 0으로 원복·폐기 보존·타 품목 유지',
+        (!k1row || (k1row.sold === 0 && k1row.waste === 4)) && cs.items.some(i => i.skuId === 'k2' && i.sold > 0));
+    }
+    r = await call('ad', 'POST', '/api/skus/promote', { rawName: '우유크림도넛', price: 4200, category: '도넛' });
+    log('AE4 재등록 시 원상 복구', r.status === 200 && r.data.rebuilt > 0);
+    chk = await call('ad', 'GET', '/api/analytics?storeId=s2&from=' + satD + '&to=' + satD);
+    log('AE5 분석 수량 복원', chk.data.mix.find(x => x.name === '우유크림도넛').qty === k1qty);
+  }
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

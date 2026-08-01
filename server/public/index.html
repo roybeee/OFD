@@ -1089,9 +1089,9 @@ function bind(){
       category:catEl?catEl.value:undefined,storeId:scEl&&scEl.value?scEl.value:undefined});
       prodConf={loaded:false};await refresh();render();}catch(e){alert(emsg(e));}});
   $.querySelectorAll('[data-kdel]').forEach(b=>b.onclick=async()=>{
-    if(!confirm('이 SKU를 삭제합니다.\n이 SKU로 통합된 POS 별칭이 있으면 함께 해제되어 해당 매출은 미매칭으로 돌아가고, 마감도 소급 재계산됩니다.'))return;
+    if(!confirm('이 SKU를 삭제합니다.\n\n연결된 POS 매출은 전부 [미매칭 POS 품목]으로 돌아가고(별칭도 해제), 마감·분석·매출현황이 소급 재계산됩니다.\n다시 등록하려면 미매칭 목록에서 매핑하거나 [SKU로 추가]를 사용하십시오.'))return;
     try{const r=await api('DELETE','/api/skus/'+b.dataset.kdel);
-      if(r.unmapped)alert('삭제 완료 — 별칭 '+r.unmapped+'건 해제 · '+r.rebuilt+'개 매장·일자 소급 원복');
+      if(r.unmapped||r.restoredQty)alert('삭제 완료 — 미매칭으로 원복 '+won(r.restoredQty||0)+'개'+(r.unmapped?' · 별칭 '+r.unmapped+'건 해제':'')+' · '+r.rebuilt+'개 매장·일자 소급 재계산');
       prodConf={loaded:false};anData=null;repData=null;await refresh();render();}catch(e){alert(emsg(e));}});
   on('#chpw',async()=>{
     try{await api('POST','/api/password',{old:$.querySelector('#p_old').value,

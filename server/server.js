@@ -1015,9 +1015,14 @@ const server = http.createServer(async (req, res) => {
           }
         });
       });
+      /* 이름 직결 매칭분(별칭 없이 SKU명이 POS 품목명과 일치해 잡힌 매출)도 미매칭으로 원복 */
+      const direct = db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE sku_id=?').all(m[1]);
+      const restoredQty = db.prepare('SELECT COALESCE(SUM(qty),0) q FROM pos_sales WHERE sku_id=?').get(m[1]).q;
+      db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE sku_id=?').run(m[1]);
+      direct.forEach(a3 => affected.add(a3.store_id + '|' + a3.date));
       [...affected].forEach(k2 => { const [sid, d] = k2.split('|'); rebuildClosingFromPos(sid, d); });
-      audit(actor, 'SKU 삭제', kRow.name + (als.length ? ' (별칭 ' + als.length + '건 해제 · ' + affected.size + '개 매장일 소급)' : ''));
-      return send(res, 200, { ok: true, unmapped: als.length, rebuilt: affected.size });
+      audit(actor, 'SKU 삭제', kRow.name + ' (별칭 ' + als.length + '건 해제 · 미매칭 원복 ' + restoredQty + '개 · ' + affected.size + '개 매장일 소급)');
+      return send(res, 200, { ok: true, unmapped: als.length, rebuilt: affected.size, restoredQty });
     }
 
     /* ---- 정산 (관리) ---- */
