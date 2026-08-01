@@ -781,7 +781,7 @@ function vConf(){
           ${u2.suggest?`<div style="font-size:10px;font-weight:400;color:var(--ok)">제안: ${esc(u2.suggest.name)} (유사도 ${u2.suggest.score}%)</div>`:`<div style="font-size:10px;font-weight:400;color:var(--dimmer)">유사 SKU 없음 — 직접 선택 또는 SKU 추가</div>`}</td>
         <td class="num">${won(u2.qty)}</td><td class="num">${won(u2.amount)}원</td>
         <td><select id="al_i${i}"><option value="">— SKU 선택 —</option>${S.skus.map(k=>`<option value="${k.id}" ${u2.suggest&&u2.suggest.skuId===k.id?'selected':''}>${esc(k.name)}</option>`).join('')}</select></td>
-        <td><button class="btn sm" data-pmap="${i}">매핑</button></td></tr>`).join('')}
+        <td style="white-space:nowrap"><button class="btn sm" data-pmap="${i}">매핑</button>${cap('skus')?` <button class="btn ghost sm" data-ppro="${i}">SKU로 추가</button>`:''}</td></tr>`).join('')}
       </tbody></table></div>`:`<div style="margin-top:10px;font-size:11px;color:var(--ok);font-weight:700">미매칭 품목 없음</div>`}
     ${posConf.aliases&&posConf.aliases.length?`<div style="margin-top:12px"><b style="font-size:12px">매핑된 별칭 (통합 내역 — 해제 시 과거분 소급 원복)</b>
       <table><thead><tr><th>POS 품목명(원본)</th><th>→ SKU</th><th class="num">누적 수량</th><th class="num">누적 금액</th><th></th></tr></thead><tbody>
@@ -999,8 +999,10 @@ function bind(){
     try{await api('POST','/api/skus',{name:nm,price:pr,supply:+$.querySelector('#k_supply').value||0});
       await refresh();render();}catch(e){alert(emsg(e));}});
   $.querySelectorAll('[data-kdel]').forEach(b=>b.onclick=async()=>{
-    if(!confirm('SKU를 삭제합니까? 과거 기록에는 남습니다.'))return;
-    try{await api('DELETE','/api/skus/'+b.dataset.kdel);await refresh();render();}catch(e){alert(emsg(e));}});
+    if(!confirm('이 SKU를 삭제합니다.\n이 SKU로 통합된 POS 별칭이 있으면 함께 해제되어 해당 매출은 미매칭으로 돌아가고, 마감도 소급 재계산됩니다.'))return;
+    try{const r=await api('DELETE','/api/skus/'+b.dataset.kdel);
+      if(r.unmapped)alert('삭제 완료 — 별칭 '+r.unmapped+'건 해제 · '+r.rebuilt+'개 매장·일자 소급 원복');
+      posConf={loaded:false};anData=null;repData=null;await refresh();render();}catch(e){alert(emsg(e));}});
   on('#chpw',async()=>{
     try{await api('POST','/api/password',{old:$.querySelector('#p_old').value,
       new:$.querySelector('#p_new').value});alert('변경되었습니다.');await refresh();render();}
@@ -1090,6 +1092,19 @@ function bind(){
       else alert('진단 실패 ['+(r.step||'')+']\n'+(r.detail||'')+(r.hint?'\n\n→ '+r.hint:''));}
     catch(e){alert(emsg(e));}
     posConf={loaded:false};render();});
+  $.querySelectorAll('[data-ppro]').forEach(b=>b.onclick=async()=>{
+    const item=posConf.unmatched[+b.dataset.ppro];
+    const inferred=item.qty>0?Math.round(item.amount/item.qty/100)*100:0;
+    const pv=prompt('"'+item.name.replace(/\s*\([^)]*\)\s*$/,'')+'" 을(를) 신규 SKU로 추가합니다.\n소비자가(원) — POS 실판매 평균에서 추론된 값입니다. 수정 가능:',inferred||'');
+    if(pv===null)return;
+    const price=parseInt(String(pv).replace(/[^0-9]/g,''),10);
+    if(!price)return alert('소비자가를 숫자로 입력하십시오.');
+    try{const r=await api('POST','/api/skus/promote',{rawName:item.name,price});
+      alert('추가·매핑 완료 — '+r.name+' '+won(r.price)+'원 (공급가 '+won(r.supply)+'원)\n'+r.rebuilt+'개 매장·일자 소급 반영');
+      posConf={loaded:false};anData=null;repData=null;await refresh();render();}
+    catch(e){
+      if(e.data&&e.data.error==='SKU_EXISTS')alert('동일 이름의 SKU("'+e.data.name+'")가 이미 있습니다.\n드롭다운에서 선택해 [매핑]을 사용하십시오.');
+      else alert(emsg(e));}});
   $.querySelectorAll('[data-adel]').forEach(b=>b.onclick=async()=>{
     const a2=posConf.aliases[+b.dataset.adel];
     if(!confirm('"'+(a2.names&&a2.names.length?a2.names.join(', '):a2.alias)+'" → '+a2.skuName+' 통합을 해제합니다.\n해당 매출은 미매칭으로 돌아가고 마감도 소급 원복됩니다.'))return;

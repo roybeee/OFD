@@ -883,11 +883,45 @@ const server = http.createServer(async (req, res) => {
       audit(actor, 'SKU 추가', name);
       return send(res, 200, { ok: true });
     }
+    if (p === '/api/skus/promote' && req.method === 'POST') { /* 미매칭 → SKU 원클릭 승격+매핑 */
+      if (deny('skus')) return;
+      const rawName = String(body.rawName || '').trim();
+      const name = rawName.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      const price = Math.max(0, body.price | 0);
+      if (!name || !price) return err(res, 400, 'NAME_PRICE_REQUIRED');
+      const dup = allSkus().find(k => normKey(k.name) === normKey(name));
+      if (dup) return err(res, 409, 'SKU_EXISTS', { skuId: dup.id, name: dup.name });
+      const supply = body.supply ? Math.max(0, body.supply | 0) : Math.round(price * 0.48);
+      const kid = uid('k');
+      db.prepare('INSERT INTO skus(id,name,price,supply,mt) VALUES(?,?,?,?,?)').run(kid, name, price, supply, now());
+      db.prepare('INSERT INTO sku_aliases(alias,sku_id,mt) VALUES(?,?,?) ON CONFLICT(alias) DO UPDATE SET sku_id=excluded.sku_id, mt=excluded.mt')
+        .run(normName(rawName), kid, now());
+      const n = reapplyAlias(normName(rawName), kid);
+      audit(actor, 'SKU 승격', rawName + ' → ' + name + ' ' + price.toLocaleString('ko-KR') + '원 (' + n + '개 매장일 소급)');
+      return send(res, 200, { ok: true, skuId: kid, name, price, supply, rebuilt: n });
+    }
     if ((m = p.match(/^\/api\/skus\/([\w-]+)$/)) && req.method === 'DELETE') {
       if (deny('skus')) return;
+      const kRow = db.prepare('SELECT name FROM skus WHERE id=? AND del=0').get(m[1]);
+      if (!kRow) return err(res, 404, 'NOT_FOUND');
       db.prepare('UPDATE skus SET del=1, mt=? WHERE id=?').run(now(), m[1]);
-      audit(actor, 'SKU 삭제', m[1]);
-      return send(res, 200, { ok: true });
+      /* 연쇄 정리: 이 SKU로 통합된 별칭 해제 → 해당 POS 매출 미매칭 원복 → 마감 소급 재계산 */
+      const als = db.prepare('SELECT alias FROM sku_aliases WHERE sku_id=?').all(m[1]).map(a2 => a2.alias);
+      const affected = new Set();
+      als.forEach(al => {
+        db.prepare('DELETE FROM sku_aliases WHERE alias=?').run(al);
+        const names = db.prepare('SELECT DISTINCT raw_name FROM pos_sales').all()
+          .map(r2 => r2.raw_name).filter(nm => normName(nm) === al);
+        const upd = db.prepare('UPDATE pos_sales SET sku_id=NULL WHERE raw_name=?');
+        names.forEach(nm => {
+          upd.run(nm);
+          db.prepare('SELECT DISTINCT store_id, date FROM pos_sales WHERE raw_name=?').all(nm)
+            .forEach(a3 => affected.add(a3.store_id + '|' + a3.date));
+        });
+      });
+      [...affected].forEach(k2 => { const [sid, d] = k2.split('|'); rebuildClosingFromPos(sid, d); });
+      audit(actor, 'SKU 삭제', kRow.name + (als.length ? ' (별칭 ' + als.length + '건 해제 · ' + affected.size + '개 매장일 소급)' : ''));
+      return send(res, 200, { ok: true, unmapped: als.length, rebuilt: affected.size });
     }
 
     /* ---- 정산 (관리) ---- */

@@ -432,6 +432,28 @@ async function main() {
   r = await call('ad', 'GET', '/api/analytics?storeId=s2&from=' + satD + '&to=' + satD);
   log('Y7 분석 원복: 미매칭 45,000 재표시', r.data.unmatchedAmount === 45000);
 
+  /* ===== AA. SKU 승격·연쇄 삭제 ===== */
+  r = await call('op2', 'POST', '/api/skus/promote', { rawName: '신메뉴딸기', price: 4500 });
+  log('AA1 운영: 승격 403(need skus)', r.status === 403 && r.data.need === 'skus');
+  r = await call('ad', 'POST', '/api/skus/promote', { rawName: '신메뉴딸기', price: 4500 });
+  const proId = r.data.skuId;
+  log('AA2 승격: SKU 생성+매핑+소급', r.status === 200 && r.data.name === '신메뉴딸기'
+    && r.data.supply === 2160 && r.data.rebuilt === berryDates.length);
+  chk = await call('op2', 'GET', '/api/pos/unmatched');
+  log('AA3 승격 후 미매칭 소거', !chk.data.items.some(x => x.name === '신메뉴딸기'));
+  chk = await call('own2', 'GET', '/api/bootstrap');
+  log('AA4 마감 소급: 신 SKU sold 10', chk.data.sales.find(c => c.date === satD).items.find(i => i.skuId === proId).sold === 10);
+  r = await call('ad', 'POST', '/api/skus/promote', { rawName: '신메뉴딸기 (S)', price: 4500 });
+  log('AA5 동일 이름 재승격 409', r.status === 409 && r.data.error === 'SKU_EXISTS');
+  r = await call('ad', 'DELETE', '/api/skus/' + proId);
+  log('AA6 연쇄 삭제: 별칭 1건 해제·소급 원복', r.status === 200 && r.data.unmapped === 1 && r.data.rebuilt === berryDates.length);
+  chk = await call('op2', 'GET', '/api/pos/unmatched');
+  const um3 = chk.data.items.find(x => x.name === '신메뉴딸기');
+  log('AA7 삭제 후 미매칭 복귀·수량 보존', !!um3 && um3.qty === berryQty);
+  chk = await call('own2', 'GET', '/api/bootstrap');
+  log('AA8 마감 원복·폐기 유지', !chk.data.sales.find(c => c.date === satD).items.find(i => i.skuId === proId)
+    && chk.data.sales.find(c => c.date === satD).items.find(i => i.skuId === 'k1').waste === 4);
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);
