@@ -694,7 +694,7 @@ function vConf(){
 
   ${cap('pos')?(posConf.loaded?`<div class="panel"><div class="panel-h"><h2>POS 연동 — 토스플레이스</h2>${''}</div>
     ${(posConf.events&&posConf.events.length)?`<div class="reveal" style="background:var(--infosoft);border-color:var(--info)">
-      <b style="font-size:13px;letter-spacing:0">토스 웹훅 감지 — 앱이 설치된 매장 ID</b>
+      <b style="font-size:13px;letter-spacing:0">토스 웹훅 감지 — 이 앱으로 이벤트가 수신된 매장 ID</b>
       ${posConf.events.map(e=>`<div style="margin-top:4px">merchantId <b>${esc(e.merchantId)}</b> <span style="font-size:10.5px;color:var(--dim)">${new Date(e.ts).toISOString().slice(5,16).replace('T',' ')}Z · ${esc(e.type)}</span></div>`).join('')}
       <div style="font-size:11px;color:var(--dim);margin-top:6px">이 값이 입력한 merchantId와 다르면, 아래 해당 매장 행의 merchantId를 이 값으로 교체 후 저장하십시오.</div></div>`:''}
     <div class="panel-h" style="margin-top:-4px"><span></span><span class="meta">키는 AES-256-GCM 암호화 저장 · 30분마다 오늘·어제 자동 동기화 · 재동기화 시 전량 재계산(취소 반영)</span></div>

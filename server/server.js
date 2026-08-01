@@ -822,7 +822,7 @@ const server = http.createServer(async (req, res) => {
         storeId: L.store_id, provider: L.provider, merchantId: L.merchant_id || '',
         active: !!L.active, hasKeys: !!(L.access_key_enc && L.secret_key_enc),
         lastSync: L.last_sync || null, lastResult: L.last_result || '' }));
-      const events = db.prepare("SELECT ts, type, merchant_id FROM pos_events WHERE type LIKE 'app.installation%' ORDER BY ts DESC LIMIT 5").all()
+      const events = db.prepare("SELECT merchant_id, MAX(ts) ts, MAX(type) type FROM pos_events WHERE merchant_id != '' GROUP BY merchant_id ORDER BY ts DESC LIMIT 5").all()
         .map(e => ({ ts: e.ts, type: e.type, merchantId: e.merchant_id }));
       return send(res, 200, { links: rows, events });
     }

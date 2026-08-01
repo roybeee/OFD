@@ -354,8 +354,14 @@ async function main() {
       body: JSON.stringify({ id: 'evt-1', type: 'app.installation.created.v1', merchantId: 7777001, app: 'ofd-workstation' }) });
     log('W1 웹훅: X-OFD 없이 수신 200', wr.status === 200);
   }
+  {
+    const wr2 = await fetch(BASE + '/api/webhooks/tossplace', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'evt-2', type: 'order.order.completed.v1', merchantId: 7777002, app: 'ofd-workstation' }) });
+    log('W1b 주문 이벤트 수신 200', wr2.status === 200);
+  }
   r = await call('op2', 'GET', '/api/pos/links');
-  log('W2 설치 이벤트 merchantId 노출', Array.isArray(r.data.events) && r.data.events.some(e => e.merchantId === '7777001'));
+  log('W2 이벤트 merchantId 노출(설치+주문)', Array.isArray(r.data.events) && r.data.events.some(e => e.merchantId === '7777001') && r.data.events.some(e => e.merchantId === '7777002'));
   chk = await call('m', 'GET', '/api/bootstrap');
   log('W3 설치 이벤트 감사 기록', chk.data.audit.some(a2 => a2.who === '토스플레이스 웹훅' && a2.act.includes('7777001')));
 
