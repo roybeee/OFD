@@ -181,7 +181,7 @@ let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
 let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
 let anOpen=new Set();
 let stEdit=null;
-let stSel=[],stGeo={},nvLoading=false;
+let stSel=[],stGeo={},nvLoading=false,nvErr='',nvReady=false,nvKeyEdit=false;
 function havM(a,b){const R=6371000,rad=x=>x*Math.PI/180;
   const dLa=rad(b.lat-a.lat),dLo=rad(b.lng-a.lng);
   const h=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLo/2)*Math.sin(dLo/2);
@@ -198,29 +198,48 @@ function stToggle(id){const i=stSel.indexOf(id);
   if(i>=0)stSel.splice(i,1);
   else{if(stSel.length>=2)stSel=[];stSel.push(id);}
   render();}
+function nvShowErr(msg){
+  nvErr=msg;const e2=document.getElementById('nvmap');
+  if(e2)e2.innerHTML='<div style="padding:20px;font-size:12.5px;line-height:1.7;color:var(--risk);font-weight:700">'+msg+'</div>';}
+window.navermap_authFailure=function(){
+  nvShowErr('네이버 지도 인증 실패 (authFailure)<br><span style="color:var(--dim);font-weight:400">'
+    +'다음을 확인하십시오:<br>'
+    +'① NCP 콘솔 Maps → Application → 해당 앱 → <b>Web 서비스 URL</b>에 <b>https://ofd-workstation.onrender.com</b> 이 [+추가]까지 눌러 등록되어 있는지<br>'
+    +'② 입력한 값이 <b>Client ID</b>가 맞는지 (Client Secret 아님)<br>'
+    +'③ Application 수정 화면에서 <b>Dynamic Map</b>이 체크되어 있는지<br>'
+    +'수정 후 아래 [키 변경]으로 다시 저장하거나 페이지를 새로고침하십시오.</span>');};
 function initNaverMap(){
   if(!S||!S.mapKey)return;
   const el=document.getElementById('nvmap');if(!el)return;
-  if(!window.naver||!window.naver.maps){
+  if(nvErr){nvShowErr(nvErr);return;}
+  if(!window.naver||!window.naver.maps||!window.naver.maps.Map){
     if(nvLoading)return;nvLoading=true;
+    el.innerHTML='<div style="padding:20px;color:var(--dim);font-size:12px">네이버 지도 불러오는 중…</div>';
     const sc=document.createElement('script');
     sc.src='https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId='+encodeURIComponent(S.mapKey)+'&submodules=geocoder';
-    sc.onload=()=>{nvLoading=false;initNaverMap();};
-    sc.onerror=()=>{nvLoading=false;const e2=document.getElementById('nvmap');
-      if(e2)e2.innerHTML='<div style="padding:24px;color:var(--risk);font-weight:700">네이버 지도 로드 실패 — Client ID와 NCP 콘솔의 Web 서비스 URL(https://ofd-workstation.onrender.com) 등록을 확인하십시오.</div>';};
+    sc.onload=()=>{nvLoading=false;
+      setTimeout(()=>{if(!window.naver||!window.naver.maps||!window.naver.maps.Map){
+        nvShowErr('지도 스크립트는 받았으나 초기화되지 않았습니다 — 인증 실패일 가능성이 높습니다. Web 서비스 URL 등록과 Client ID를 확인하십시오.');return;}
+        nvReady=true;initNaverMap();},120);};
+    sc.onerror=()=>{nvLoading=false;
+      nvShowErr('네이버 지도 스크립트를 불러오지 못했습니다 (네트워크 차단 또는 잘못된 Client ID). 사내망·확장프로그램 차단 여부와 키를 확인하십시오.');};
     document.head.appendChild(sc);return;}
   S.stores.forEach(st=>{
     if(stGeo[st.id]||stGeo['_p'+st.id]||!st.addr)return;
     stGeo['_p'+st.id]=1;
-    naver.maps.Service.geocode({query:st.addr},(status,res)=>{
-      delete stGeo['_p'+st.id];
-      if(status===naver.maps.Service.Status.OK&&res.v2&&res.v2.addresses&&res.v2.addresses[0]){
-        const a=res.v2.addresses[0];stGeo[st.id]={lat:+a.y,lng:+a.x};}
-      else stGeo[st.id]={err:1};
-      if(tab==='stores')render();});});
+    try{
+      naver.maps.Service.geocode({query:st.addr},(status,res)=>{
+        delete stGeo['_p'+st.id];
+        if(status===naver.maps.Service.Status.OK&&res.v2&&res.v2.addresses&&res.v2.addresses[0]){
+          const a=res.v2.addresses[0];stGeo[st.id]={lat:+a.y,lng:+a.x};}
+        else stGeo[st.id]={err:1,msg:'주소 변환 실패'};
+        if(tab==='stores')render();});
+    }catch(e){delete stGeo['_p'+st.id];stGeo[st.id]={err:1,msg:'Geocoding 미사용 설정'};}});
   const pts=S.stores.map(st=>({st,g:stGeo[st.id]})).filter(x=>x.g&&!x.g.err);
   const c=pts.length?{lat:pts.reduce((s2,x)=>s2+x.g.lat,0)/pts.length,lng:pts.reduce((s2,x)=>s2+x.g.lng,0)/pts.length}:{lat:37.5449,lng:127.0559};
-  const map=new naver.maps.Map(el,{center:new naver.maps.LatLng(c.lat,c.lng),zoom:12});
+  let map;
+  try{map=new naver.maps.Map(el,{center:new naver.maps.LatLng(c.lat,c.lng),zoom:pts.length?12:11});}
+  catch(e){nvShowErr('지도 생성 실패: '+(e&&e.message?e.message:e));return;}
   const bounds=pts.length>1?new naver.maps.LatLngBounds():null;
   pts.forEach(({st,g})=>{
     const pos=new naver.maps.LatLng(g.lat,g.lng);
@@ -229,7 +248,7 @@ function initNaverMap(){
       icon:{content:'<div style="background:'+(sel?'#D96D2B':'#2E2A25')+';color:#fff;padding:4px 9px;border-radius:20px;font-size:11px;font-weight:800;box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap">'+st.name+'</div>',anchor:new naver.maps.Point(30,14)}});
     naver.maps.Event.addListener(mk,'click',()=>stToggle(st.id));
     if(bounds)bounds.extend(pos);});
-  if(bounds)map.fitBounds(bounds,{top:50,right:50,bottom:50,left:50});
+  if(bounds)map.fitBounds(bounds,{top:60,right:60,bottom:60,left:60});
   if(stSel.length===2){
     const a=stGeo[stSel[0]],b=stGeo[stSel[1]];
     if(a&&b&&!a.err&&!b.err)
@@ -910,7 +929,10 @@ function vStores(){
       ${stSel.length?`<button class="btn ghost sm" data-stgeoclear="1">선택 해제</button>`:''}
     </div>
     <div style="margin-top:8px;font-weight:800;font-size:13px;color:${stSel.length===2?'var(--sig)':'var(--dim)'}">${esc(stDistText())}</div>
-    <div style="font-size:10.5px;color:var(--dimmer);margin-top:4px">직선거리 기준(도보·차량 경로 아님) · 좌표는 소재지 주소의 지오코딩 결과</div>`
+    <div style="font-size:10.5px;color:var(--dimmer);margin-top:4px">직선거리 기준(도보·차량 경로 아님) · 좌표는 소재지 주소의 지오코딩 결과 · Client ID ${esc(String(S.mapKey).slice(0,6))}…
+      ${cap('stores')?`<button class="btn ghost sm" id="nvkeyedit" style="margin-left:6px">키 변경</button>`:''}</div>
+    ${nvKeyEdit?`<div class="row" style="margin-top:8px"><div style="flex:0 0 300px"><input id="nvkey" placeholder="새 Client ID (ncpKeyId)"></div>
+      <button class="btn sm" id="nvkeysave">저장</button> <button class="btn ghost sm" id="nvkeycancel">취소</button></div>`:''}`
     :`<div class="note" style="border-color:var(--warn)">
       네이버 지도를 표시하려면 <b>네이버클라우드(ncloud.com) 콘솔 → Maps → Application 등록</b> 후 발급되는 <b>Client ID</b>가 필요합니다.<br>
       ① Application 등록 시 <b>Web Dynamic Map + Geocoding</b> 사용 설정 ② Web 서비스 URL에 <b>https://ofd-workstation.onrender.com</b> 추가 ③ 아래에 Client ID 저장.
@@ -1159,10 +1181,15 @@ function bind(){
       reveal={name:nm,code:r.code};
       await refresh();render();}catch(e){alert(emsg(e));}});
   on('#stxls',stCsv);
+  on('#nvkeyedit',()=>{nvKeyEdit=true;render();});
+  on('#nvkeycancel',()=>{nvKeyEdit=false;render();});
   on('#nvkeysave',async()=>{
     const k2=$.querySelector('#nvkey').value.trim();
     if(!k2)return alert('Client ID를 입력하십시오.');
-    try{await api('POST','/api/config/navermap',{key:k2});await refresh();render();}
+    try{await api('POST','/api/config/navermap',{key:k2});
+      nvErr='';nvKeyEdit=false;stGeo={};
+      if(window.naver)try{delete window.naver;}catch(e2){window.naver=undefined;}
+      await refresh();location.reload();}
     catch(e){alert(emsg(e));}});
   $.querySelectorAll('[data-stgeo]').forEach(b=>b.onclick=()=>stToggle(b.dataset.stgeo));
   $.querySelectorAll('[data-stgeoclear]').forEach(b=>b.onclick=()=>{stSel=[];render();});
