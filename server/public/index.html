@@ -146,6 +146,22 @@ html,body{margin:0;padding:0;background:#EFEAE1}
 #app .daily-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--sig)}
 #app .daily-legend i.weekend{background:var(--deep)}
 #app .daily-legend i.average{width:13px;height:0;border-top:1.5px dashed var(--info);border-radius:0;background:none}
+#app .backfill-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 10px;padding-top:15px;border-top:1px solid var(--line)}
+#app .backfill-head b{display:block;font-size:14px}
+#app .backfill-head span{display:block;font-size:10.5px;color:var(--dim);margin-top:2px;line-height:1.45}
+#app .backfill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:9px}
+#app .backfill-card{border:1px solid var(--line);border-radius:9px;padding:11px;background:#FAF8F4;min-width:0}
+#app .backfill-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+#app .backfill-card-h b{font-size:13px}#app .backfill-card-h small{display:block;color:var(--dim);font-size:9.5px;margin-top:2px}
+#app .bf-status{font-size:9px;font-weight:800;padding:3px 7px;border-radius:999px;background:#EEEAE2;color:var(--dim);white-space:nowrap}
+#app .bf-status.running,#app .bf-status.queued{background:var(--infosoft);color:var(--info)}
+#app .bf-status.done{background:var(--oksoft);color:var(--ok)}
+#app .bf-status.interrupted{background:var(--warnsoft);color:#8B5A0A}
+#app .backfill-progress{height:7px;background:#EDE7DD;border-radius:99px;overflow:hidden;margin-top:9px}
+#app .backfill-progress i{display:block;height:100%;background:var(--sig);border-radius:99px}
+#app .backfill-meta{font-size:10px;color:var(--dim);line-height:1.5;margin-top:5px;min-height:30px}
+#app .backfill-error{color:var(--risk);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#app .backfill-actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
 #app .note{font-size:11px;color:var(--dim);line-height:1.6;background:#F7F3EB;
   border-left:2.5px solid var(--sig);padding:10px 12px;border-radius:0 7px 7px 0;margin-top:11px}
 #app .empty{color:var(--dimmer);font-size:12px;padding:18px 0;text-align:center}
@@ -249,6 +265,7 @@ html,body{margin:0;padding:0;background:#EFEAE1}
 @media(max-width:760px){#app .main{padding:13px}#app .kb-col{min-width:180px}#app .sess{margin-left:0;width:100%}
   #app .daily-summary{grid-template-columns:1fr 1fr}#app .daily-stat.selected{grid-column:1/-1}
   #app .daily-day:not(.selected) .daily-bar-value:not(.peak){display:none}
+  #app .backfill-head{align-items:flex-start}#app .backfill-grid{grid-template-columns:1fr}#app .backfill-actions .btn{flex:1}
   #app .open-view .head h1{font-size:22px}#app .open-kpis{gap:8px}#app .open-kpis .kpi{padding:13px;min-height:98px}
   #app .open-toolbar{align-items:stretch}#app .open-search{min-width:100%}#app .open-delay-toggle{flex:1}#app .open-result{margin-left:0}
   #app .open-detail-header{margin:0 -13px 14px;padding:14px 13px 16px;gap:14px}#app .open-detail-title h1{font-size:24px}
@@ -483,12 +500,12 @@ async function refresh(){S=await api('GET','/api/bootstrap');if(!salesDate)sales
 
 /* ---- render ---- */
 function tabsFor(){
-  if(!isHQ())return[['dash','대시보드'],['orders','발주'],['sales','매출 마감'],['an','분석'],['notice','공지']];
+  if(!isHQ())return[['dash','대시보드'],['orders','발주'],['sales','매출 마감'],['an','매출 분석'],['notice','공지']];
   const T=[['dash','대시보드']];
   if(cap('leads'))T.push(['pipe','영업']);
   if(cap('orders'))T.push(['orders','발주']);
   if(cap('closings'))T.push(['sales','매출']);
-  if(cap('settle'))T.push(['settle','정산'],['an','분석'],['rep','매출현황']);
+  if(cap('settle'))T.push(['settle','정산'],['an','매출 분석'],['rep','매출현황']);
   if(cap('skus'))T.push(['prod','상품 관리']);
   if(cap('stores'))T.push(['open','오픈']);
   T.push(['notice','공지'],['stores','매장'],['conf','설정']);
@@ -1325,10 +1342,11 @@ function vStores(){
 
 function vConf(){
   const logs=S.audit||[];
+  const bfLabel={queued:'실행 대기',running:'처리 중',done:'완료',interrupted:'중단됨'};
   if(cap('pos')&&!posConf.loaded&&!posConf.loading){posConf.loading=true;
     api('GET','/api/pos/links')
-      .then(a=>{posConf={loaded:true,links:a.links,events:a.events||[]};render();})
-      .catch(()=>{posConf={loaded:true,links:[],events:[]};render();});}
+      .then(a=>{posConf={loaded:true,links:a.links,events:a.events||[],jobs:a.jobs||[]};render();})
+      .catch(()=>{posConf={loaded:true,links:[],events:[],jobs:[]};render();});}
   return `
   <div class="head"><div><h1>설정 — ${esc(S.me.deptLabel)}</h1><p>부서 권한에 해당하는 항목만 표시됩니다 (서버 검증)</p></div></div>
   ${reveal?`<div class="reveal"><b style="font-size:13px;letter-spacing:0">${esc(reveal.name)}</b> 접속코드: <b>${esc(reveal.code)}</b>
@@ -1378,9 +1396,23 @@ function vConf(){
       <td><input id="pa_${st.id}" type="password" placeholder="${L.hasKeys?'저장됨·변경 시 입력':'x-access-key'}" style="width:128px;padding:5px 7px;font-size:12px"></td>
       <td><input id="ps_${st.id}" type="password" placeholder="${L.hasKeys?'저장됨·변경 시 입력':'x-secret-key'}" style="width:128px;padding:5px 7px;font-size:12px"></td>
       <td><input type="checkbox" id="px_${st.id}" ${(L.storeId?L.active:true)?'checked':''}></td>
-      <td style="white-space:nowrap"><button class="btn ghost sm" data-psave="${st.id}">저장</button> ${L.storeId?`<button class="btn ghost sm" data-ptest="${st.id}">진단</button> <button class="btn sm" data-psync="${st.id}">동기화</button> <button class="btn ghost sm" data-pbf="${st.id}">30일 백필</button>`:''}</td></tr>`;}).join('')}
+      <td style="white-space:nowrap"><button class="btn ghost sm" data-psave="${st.id}">저장</button> ${L.storeId?`<button class="btn ghost sm" data-ptest="${st.id}">진단</button> <button class="btn sm" data-psync="${st.id}">동기화</button>`:''}</td></tr>`;}).join('')}
     </tbody></table>
 
+
+    <div class="backfill-head"><div><b>과거 매출 백필</b><span>수동 실행 전용 — 매장별 버튼을 누를 때만 1회 작동하며 화면은 자동 갱신되지 않습니다.</span></div>
+      <button class="btn ghost sm" id="pbf_refresh">백필 상태 새로고침</button></div>
+    <div class="backfill-grid">${S.stores.map(st=>{const L=(posConf.links||[]).find(x2=>x2.storeId===st.id)||{};
+      const J=(posConf.jobs||[]).find(x2=>x2.storeId===st.id);const active=J&&(J.status==='queued'||J.status==='running');
+      const ready=!!(L.storeId&&L.active),pct=J&&J.totalDays?Math.min(100,Math.round(J.completedDays/J.totalDays*100)):0;
+      return `<div class="backfill-card"><div class="backfill-card-h"><div><b>${esc(st.name)}</b><small>${ready?'POS 연동 활성':'POS 연동 후 사용'}</small></div>
+        ${J?`<span class="bf-status ${J.status}">${bfLabel[J.status]||esc(J.status)}</span>`:'<span class="bf-status">이력 없음</span>'}</div>
+        ${J?`<div class="backfill-progress"><i style="width:${pct}%"></i></div>
+          <div class="backfill-meta">${J.years}년 · ${J.from} ~ ${J.to}<br>${won(J.completedDays)} / ${won(J.totalDays)}일 (${pct}%) · 누적 ${won(J.revenue)}원 · 오류 ${J.errors}건
+          ${J.lastError?`<div class="backfill-error" title="${esc(J.lastError)}">${esc(J.lastError)}</div>`:''}</div>`
+          :'<div class="backfill-meta">가져올 기간을 선택하면 백그라운드에서 월 단위로 수집합니다.</div>'}
+        <div class="backfill-actions">${[[1,'1년 백필'],[3,'3년 백필'],[5,'5년 백필']].map(([y,label])=>`<button class="btn ${y===5?'':'ghost '}sm" data-pbf="${st.id}" data-years="${y}" ${!ready||active?'disabled':''}>${label}</button>`).join('')}</div>
+      </div>`;}).join('')}</div>
 
     <div class="note">토스플레이스 개발자센터(developers.tossplace.com)에서 앱을 만들고 발급받은 API 키와 매장 ID를 입력하십시오. 완료(COMPLETED) 주문만 집계하며, 폐기수량은 점주 마감 입력을 그대로 보존합니다. mock 제공자는 키 없이 파이프라인을 시연·검증하는 용도입니다.</div>
   </div>`:`<div class="panel"><div class="empty">POS 연동 정보 불러오는 중…</div></div>`):''}
@@ -1849,13 +1881,18 @@ function bind(){
       alert('삭제 완료 — 매장 '+r.counts.stores+' · 마감 '+r.counts.closings+' · 리드 '+r.counts.leads+' · 발주 '+r.counts.orders+' · 공지 '+r.counts.notices);
       posConf={loaded:false};anData=null;repData=null;anStore=null;repStores=null;await refresh();render();}
     catch(e){alert(emsg(e));}});
+  on('#pbf_refresh',()=>{posConf={loaded:false};render();});
   $.querySelectorAll('[data-pbf]').forEach(b=>b.onclick=async()=>{
-    if(!confirm('최근 30일 매출을 POS에서 일괄 수집합니다. 기존 폐기수량은 보존됩니다. 진행합니까?'))return;
-    b.textContent='백필 중…';b.disabled=true;
-    try{const r=await api('POST','/api/pos/backfill/'+b.dataset.pbf,{days:30});
-      alert('백필 완료 — '+r.days+'일\n총매출 '+won(r.revenue)+'원 · 오류 '+r.errors+'건');
-      posConf={loaded:false};anData=null;await refresh();render();}
-    catch(e){alert('백필 실패: '+((e.data&&e.data.reason)||'연결 오류'));posConf={loaded:false};render();}});
+    const years=+b.dataset.years,st=store(b.dataset.pbf)||{};
+    if(!confirm((st.name||'선택 매장')+'의 최근 '+years+'년 매출을 POS에서 수동으로 1회 수집합니다.\n기존 판매 데이터는 일자별로 재계산하고 폐기수량은 보존합니다. 진행합니까?'))return;
+    b.textContent='시작 중…';b.disabled=true;
+    try{const r=await api('POST','/api/pos/backfill/'+b.dataset.pbf,{years});
+      alert((r.resumed?'백필 작업을 재개했습니다.':'백필 작업을 시작했습니다.')+'\n'+r.job.from+' ~ '+r.job.to+'\n\n진행 상황은 [백필 상태 새로고침] 버튼으로 확인하십시오.');
+      posConf={loaded:false};anData=null;render();}
+    catch(e){
+      alert(e.data&&e.data.error==='BACKFILL_ACTIVE'?'이 매장은 이미 백필 작업이 진행 중입니다.':
+        '백필 시작 실패: '+((e.data&&e.data.reason)||emsg(e)));
+      posConf={loaded:false};render();}});
   $.querySelectorAll('[data-pmap]').forEach(b=>b.onclick=async()=>{
     const i=+b.dataset.pmap;const item=prodConf.unmatched[i];
     const skuId=$.querySelector('#al_i'+i).value;

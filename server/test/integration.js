@@ -2,7 +2,8 @@
 'use strict';
 process.env.DB_PATH = '/tmp/ofd_t2_' + Date.now() + '.db';
 process.env.PORT = '8899';
-const { server, _test } = require('../server.js');
+process.env.POS_BACKFILL_RUNNER = '0';
+const { server, db, _test } = require('../server.js');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
@@ -339,6 +340,30 @@ async function main() {
   log('U2 백필 3일: 일자·매출 합계 정확', r.status === 200 && r.data.results.length === 3 && r.data.revenue === expBf && r.data.errors === 0);
   chk = await call('m', 'GET', '/api/bootstrap');
   log('U3 백필 감사 요약 1건 기록', chk.data.audit.some(a2 => a2.act.includes('POS 백필')));
+  r = await call('op2', 'GET', '/api/pos/backfills');
+  log('U4 수동 백필 전 작업 없음', r.status === 200 && Array.isArray(r.data.jobs) && r.data.jobs.length === 0);
+  r = await call('op2', 'POST', '/api/pos/backfill/s2', { years: 2, days: 1 });
+  log('U5 백필은 1·3·5년만 허용', r.status === 400 && r.data.error === 'BACKFILL_YEARS');
+  const bf5 = typeof _test.backfillBounds === 'function' ? _test.backfillBounds(t, 5, '2020-01-01') : null;
+  log('U6 5개년 경계·월 단위 분할', !!bf5 && bf5.years === 5 && bf5.from <= addD(t, -(365 * 5 - 2))
+    && bf5.to === t && bf5.totalDays >= 1825 && bf5.totalDays <= 1827 && bf5.chunks.length >= 60 && bf5.chunks.length <= 61);
+  r = await call('op2', 'POST', '/api/pos/backfill/s2', { years: 1, days: 1 });
+  const manualJob = r.data && r.data.job;
+  log('U7 1년 수동 백필 작업 생성(즉시 응답)', r.status === 202 && manualJob && manualJob.storeId === 's2'
+    && manualJob.years === 1 && manualJob.status === 'queued' && manualJob.manual === true);
+  r = await call('op2', 'POST', '/api/pos/backfill/s2', { years: 3, days: 1 });
+  log('U8 같은 매장 중복 백필 차단', r.status === 409 && r.data.error === 'BACKFILL_ACTIVE');
+  r = await call('sa', 'GET', '/api/pos/backfills');
+  log('U9 영업 계정 작업 상태 조회 403', r.status === 403);
+  r = await call('op2', 'GET', '/api/pos/backfills');
+  const savedJob = r.data && r.data.jobs && r.data.jobs.find(j => manualJob && j.id === manualJob.id);
+  log('U10 수동 작업 상태 저장·자동 반복 없음', r.status === 200 && r.data.jobs.length === 1 && savedJob
+    && savedJob.status === 'queued' && savedJob.completedDays === 0 && savedJob.totalDays >= 365);
+  db.prepare("UPDATE pos_backfills SET status='interrupted',from_date=?,to_date=?,next_date=? WHERE id=?")
+    .run(addD(t, -400), addD(t, -35), addD(t, -300), manualJob.id);
+  r = await call('op2', 'POST', '/api/pos/backfill/s2', { years: 1 });
+  log('U11 날짜가 바뀐 뒤에도 같은 기간 버튼으로 중단 작업 재개', r.status === 202 && r.data.resumed === true
+    && r.data.job.id === manualJob.id && r.data.job.from === addD(t, -400) && r.data.job.status === 'queued');
 
   /* ===== V. POS 연결 진단 ===== */
   r = await call('sa', 'POST', '/api/pos/test/s2', {});
@@ -782,6 +807,9 @@ async function main() {
   log('R5 일별 매출: 평균선·최고/선택 요약·날짜별 접근 가능한 막대',
     ['daily-chart-scroll', 'daily-average-line', 'daily-bar-value', '최고 매출', '선택일'].every(x => uiText.includes(x))
     && uiText.includes('data-anday="${d.date}"') && uiText.includes('aria-label="${d.date}'));
+  log('R6 분석 탭명·매장별 수동 1·3·5년 백필 UI',
+    !uiText.includes("['an','분석']") && uiText.includes("['an','매출 분석']")
+    && ['1년 백필', '3년 백필', '5년 백필', '백필 상태 새로고침', '수동 실행'].every(x => uiText.includes(x)));
 
   const pass = R.filter(Boolean).length;
   console.log('\n' + pass + '/' + R.length + ' integration checks passed');
