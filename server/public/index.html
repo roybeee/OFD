@@ -819,7 +819,7 @@ function vAn(){
     <p>${from} ~ ${to} · 토스플레이스 실측(POS) 우선, 미연동 시 마감×정가 기준</p></div>
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
       ${hq?`<div style="min-width:150px"><label>매장</label><select id="an_store">${S.stores.map(st=>`<option value="${st.id}" ${st.id===sid?'selected':''}>${esc(st.name)}</option>`).join('')}</select></div>`:''}
-      <div style="display:flex;gap:5px">${[7,30,90].map(d=>`<button class="btn ${anDays===d?'':'ghost '}sm" data-anp="${d}">${d}일</button>`).join('')}</div>
+      <div style="display:flex;gap:5px">${[1,7,30,90].map(d=>`<button class="btn ${anDays===d?'':'ghost '}sm" data-anp="${d}">${d===1?'당일':d+'일'}</button>`).join('')}</div>
     </div></div>`;
   if(!anData||anData.storeId!==sid||anData.from!==from||anData.to!==to){
     if(!anLoading){anLoading=true;
