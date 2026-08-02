@@ -10,6 +10,25 @@ export const pathCapability: Record<string, string> = {
   '/driver/today': 'driver.deliveries.read',
 };
 
+function normalizedBasePath(basePath: string) {
+  const value = `/${basePath}`.replace(/\/+/g, '/').replace(/\/$/, '');
+  return value === '/' ? '' : value;
+}
+
+export function logicalPathFromLocation(pathname: string, basePath: string) {
+  const base = normalizedBasePath(basePath);
+  if (!base) return pathname || '/';
+  if (pathname === base) return '/';
+  return pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : pathname;
+}
+
+export function browserPathFor(logicalPath: string, basePath: string) {
+  const base = normalizedBasePath(basePath);
+  const path = logicalPath.startsWith('/') ? logicalPath : `/${logicalPath}`;
+  if (!base || path === base || path.startsWith(`${base}/`)) return path;
+  return `${base}${path}`;
+}
+
 export function canAccessPath(path: string, capabilities: string[], explicitDemo = false) {
   return explicitDemo || capabilities.includes(pathCapability[path]);
 }

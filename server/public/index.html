@@ -38,6 +38,11 @@ html,body{margin:0;padding:0;background:#EFEAE1}
   white-space:nowrap;font-weight:600;transition:.13s}
 #app .tabs button:hover{color:var(--ink)}
 #app .tabs button.on{color:var(--sig);border-bottom-color:var(--sig);font-weight:800}
+#app .tabs a{display:flex;align-items:center;gap:5px;border-bottom:2.5px solid transparent;
+  padding:11px 12px;font-size:13px;color:var(--dim);white-space:nowrap;font-weight:700;text-decoration:none}
+#app .tabs a:hover{color:var(--ink)}
+#app .tabs a.v2{color:var(--deep);background:var(--soft)}
+#app .tabs a.v2 small{font-size:8px;color:#fff;background:var(--sig);border-radius:999px;padding:2px 5px}
 #app .main{flex:1;overflow-y:auto;padding:20px;min-width:0}
 #app .head{display:flex;justify-content:space-between;align-items:flex-end;
   margin-bottom:15px;gap:14px;flex-wrap:wrap}
@@ -646,6 +651,7 @@ function render(){
   if(PH==='gate')return renderGate();
   if(PH!=='app'||!S){$.innerHTML='<div class="boot">불러오는 중…</div>';return;}
   const TB=tabsFor();
+  const v2Href=isHQ()?'/v2/hq/orders?demo=1':'/v2/store/orders?demo=1';
   if(!TB.find(x=>x[0]===tab))tab='dash';
   $.innerHTML=`
   <div class="top">
@@ -657,7 +663,7 @@ function render(){
       <button class="btn ghost sm" id="logout">로그아웃</button>
     </div>
   </div>
-  <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</div>
+  <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}<a class="v2" href="${v2Href}">통합 발주·정산 <small>V2</small></a></div>
   <div class="main">${({dash:vDash,guide:vGuide,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,open:vOpen,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
   bind();
   if(tab==='stores')setTimeout(initNaverMap,0);
@@ -721,6 +727,15 @@ function renderGate(){
         <button class="btn" id="g_st" style="width:100%">점주 모드 진입</button></div>
     </div>
     <div class="note" style="margin-top:14px">모든 인증·권한은 서버에서 검증되며 접속 시도는 감사 로그에 기록됩니다. 인증 시도는 분당 횟수가 제한됩니다.</div>
+    <div class="panel" style="margin-top:14px;text-align:center">
+      <div style="font-weight:800;margin-bottom:4px">통합 발주·정산 V2 파일럿</div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:10px">발주서 수취부터 배송·정산·세금계산서까지 역할별 전체 흐름을 데모 데이터로 확인합니다.</div>
+      <div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap">
+        <a class="btn" href="/v2/store/orders?demo=1">점주 화면</a>
+        <a class="btn ghost" href="/v2/hq/orders?demo=1">본사 화면</a>
+        <a class="btn ghost" href="/v2/driver/today?demo=1">배송기사 화면</a>
+      </div>
+    </div>
   </div></div>`;
   $.querySelector('#g_hq').onclick=async()=>{
     try{await api('POST','/api/auth/hq',{username:$.querySelector('#g_un').value.trim(),

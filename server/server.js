@@ -16,6 +16,7 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'ofd.db');
 const SECURE = process.env.SECURE_COOKIES === '1';
 const SESSION_HOURS = +(process.env.SESSION_HOURS || 12);
 const PUB = path.join(__dirname, 'public');
+const V2PUB = path.join(PUB, 'v2');
 const STORE_GUIDE_FILE = path.join(__dirname, 'data', 'store-operation-guide.json');
 
 /* 매장 운영 가이드는 공개 정적 파일이 아니라 서버 내부 승인본으로만 보관·제공한다. */
@@ -865,10 +866,54 @@ function readBody(req) {
 }
 const setupNeeded = () => db.prepare('SELECT COUNT(*) c FROM users WHERE del=0').get().c === 0;
 
+const V2_MIME = {
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.woff2': 'font/woff2',
+};
+const V2_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+function serveV2File(res, file, immutable = false) {
+  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
+  const type = V2_MIME[path.extname(file).toLowerCase()];
+  if (!type) return false;
+  res.writeHead(200, {
+    'Content-Type': type,
+    'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-store',
+    'Content-Security-Policy': V2_CSP,
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(fs.readFileSync(file));
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   const p = u.pathname;
   try {
+    if (req.method === 'GET' && (p === '/v2' || p === '/v2/')) {
+      res.writeHead(302, { Location: '/v2/store/orders?demo=1', 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+    if (req.method === 'GET' && /^\/v2\/assets\/[A-Za-z0-9._-]+$/.test(p)) {
+      if (serveV2File(res, path.join(V2PUB, 'assets', path.basename(p)), true)) return;
+      return err(res, 404, 'NOT_FOUND');
+    }
+    if (req.method === 'GET' && ['/v2/manifest.webmanifest', '/v2/ofd-mark.svg', '/v2/sw.js'].includes(p)) {
+      if (serveV2File(res, path.join(V2PUB, path.basename(p)))) return;
+      return err(res, 404, 'NOT_FOUND');
+    }
+    if (req.method === 'GET' && /^\/v2\/(store|hq|driver)\/[a-z0-9-]+$/.test(p)) {
+      if (serveV2File(res, path.join(V2PUB, 'index.html'))) return;
+      return err(res, 404, 'NO_V2_UI');
+    }
+    if (p.startsWith('/v2/')) return err(res, 404, 'NOT_FOUND');
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
       const f = path.join(PUB, 'index.html');
       if (!fs.existsSync(f)) return err(res, 404, 'NO_UI');

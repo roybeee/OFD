@@ -848,6 +848,22 @@ async function main() {
   log('R8 매장 운영 가이드: 미검수 알레르기 정보를 공란으로 오인하지 않게 표시',
     uiText.includes("const allergensHidden=hidden.includes('allergens')")
     && uiText.includes('알레르기 · 본사 확인 중'));
+  log('R9 통합 발주·정산 V2: 기존 메뉴에서 역할별 실서비스 경로로 연결',
+    uiText.includes('통합 발주·정산')
+    && uiText.includes("isHQ()?'/v2/hq/orders?demo=1':'/v2/store/orders?demo=1'"));
+  const v2 = await fetch(BASE + '/v2/store/orders?demo=1');
+  const v2Hq = await fetch(BASE + '/v2/hq/orders?demo=1');
+  const v2Driver = await fetch(BASE + '/v2/driver/today?demo=1');
+  const v2Text = await v2.text();
+  const v2Asset = (v2Text.match(/src="([^"]+\.js)"/) || [])[1];
+  log('R10 V2 SPA: 점주·본사·기사 직접 경로에서 배포 셸 제공',
+    v2.status === 200 && v2Hq.status === 200 && v2Driver.status === 200
+    && v2Text.includes('<div id="root"></div>')
+    && typeof v2Asset === 'string' && v2Asset.startsWith('/v2/assets/'));
+  const v2Js = v2Asset ? await fetch(BASE + v2Asset) : null;
+  log('R11 V2 정적 자산: 올바른 MIME·장기 캐시로 제공', v2Js && v2Js.status === 200
+    && (v2Js.headers.get('content-type') || '').includes('javascript')
+    && (v2Js.headers.get('cache-control') || '').includes('immutable'));
 
   const pass = R.filter(Boolean).length;
   console.log('\n' + pass + '/' + R.length + ' integration checks passed');

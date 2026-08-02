@@ -1,5 +1,7 @@
-const CACHE = 'ofd-workstation-v2-shell-1';
-const SHELL = ['/', '/manifest.webmanifest', '/ofd-mark.svg'];
+const CACHE = 'ofd-workstation-v2-shell-2';
+const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, '');
+const FALLBACK = `${BASE}/store/orders?demo=1`;
+const SHELL = [FALLBACK, `${BASE}/manifest.webmanifest`, `${BASE}/ofd-mark.svg`];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
@@ -19,5 +21,5 @@ self.addEventListener('fetch', (event) => {
     const copy = response.clone();
     caches.open(CACHE).then((cache) => cache.put(request, copy));
     return response;
-  }).catch(() => caches.match(request).then((cached) => cached || caches.match('/'))));
+  }).catch(() => caches.match(request).then((cached) => cached || caches.match(FALLBACK))));
 });
