@@ -912,6 +912,7 @@ function vOpen(){
   <div class="head"><div><h1>${esc(pr.name)} <span class="pill ${pr.status==='완료'?'pl-sig':pr.status==='보류'?'pl-warn':'pl-info'}">${pr.status}</span></h1>
     <p>${pr.mode} · ${pr.stype} · 오픈 예정 ${pr.openDate} (${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)})${pr.storeId?' · 매장 등록됨':''}</p></div>
     <div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap">
+      <div><label>단계</label><select id="op_status" style="padding:6px 8px">${['상담중','진행','보류','완료'].map(s2=>`<option ${pr.status===s2?'selected':''}>${s2}</option>`).join('')}</select></div>
       <div><label>오픈일 변경</label><input type="date" id="op_date" value="${pr.openDate}" style="padding:6px 8px"></div>
       <button class="btn ghost sm" id="op_back">← 목록</button>
     </div></div>
@@ -969,27 +970,45 @@ function vOpen(){
       <div style="flex:0 0 150px"><label>오픈 예정일</label><input type="date" id="opn_date"></div>
       <div style="flex:0 0 130px"><label>운영 방식</label><select id="opn_mode"><option>가맹</option><option>운영대행</option></select></div>
       <div style="flex:0 0 130px"><label>매장 유형</label><select id="opn_stype"><option>테이블형</option><option>포장형</option></select></div>
+      <div style="flex:0 0 110px"><label>시작 단계</label><select id="opn_st"><option>상담중</option><option>진행</option></select></div>
       <div style="display:flex;align-items:flex-end;gap:6px"><button class="btn" id="opn_go">생성</button><button class="btn ghost" id="opn_cancel">취소</button></div>
     </div>
     <div class="note">운영 방식은 담당 표기(가맹점/운영대행)를, 매장 유형은 전용 체크 항목(머신·디자인물 구성 등)을 결정합니다.</div></div>`:''}
-  ${P.length?P.map(pr=>{
-    const dday=Math.round((new Date(pr.openDate+'T00:00:00Z')-new Date(opList.today+'T00:00:00Z'))/864e5);
-    const pct=pr.total?Math.round(pr.done/pr.total*100):0;
-    return `<div class="panel" style="cursor:pointer" data-opsel="${pr.id}">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <b style="font-size:15px">${esc(pr.name)}</b>
-        <span class="pill ${pr.status==='완료'?'pl-sig':pr.status==='보류'?'pl-warn':'pl-info'}">${pr.status}</span>
-        <span style="font-size:12px;color:var(--dim)">${pr.mode} · ${pr.stype} · 오픈 ${pr.openDate}</span>
-        <span class="pill ${dday<=7&&pr.status==='진행'?'pl-warn':'pl-dim'}">${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)}</span>
-        ${pr.overdue?`<span class="pill" style="background:var(--warnsoft);color:var(--risk)">지연 ${pr.overdue}건</span>`:''}
-        <span style="flex:1"></span>
-        <span style="font-size:12px;font-weight:800">${pr.done}/${pr.total} (${pct}%)</span>
-      </div>
-      <div style="background:#F1EDE5;border-radius:4px;height:9px;overflow:hidden;margin-top:8px"><div style="width:${pct}%;height:100%;background:${pr.overdue?'var(--warn)':'var(--sig)'}"></div></div>
-      <div style="display:flex;gap:10px;margin-top:6px;font-size:10.5px;color:var(--dim);flex-wrap:wrap">
-        ${Object.entries(pr.phases).map(([k,v])=>v.t?`<span>${k} ${v.d}/${v.t}</span>`:'').join('')}
-      </div></div>`;}).join('')
-  :'<div class="empty">진행 중인 오픈 프로젝트가 없습니다 — [+ 새 오픈 프로젝트]로 시작하십시오.</div>'}`;
+  ${(()=>{
+    const COLS=['상담중','진행','보류','완료'];
+    const byCol={};COLS.forEach(c=>byCol[c]=[]);
+    P.forEach(pr=>{(byCol[pr.status]||byCol['진행']).push(pr);});
+    if(!P.length)return '<div class="empty">오픈 프로젝트가 없습니다 — [+ 새 오픈 프로젝트]로 시작하십시오.</div>';
+    const card=pr=>{
+      const dday=Math.round((new Date(pr.openDate+'T00:00:00Z')-new Date(opList.today+'T00:00:00Z'))/864e5);
+      const dtxt=dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday);
+      const pct=pr.total?Math.round(pr.done/pr.total*100):0;
+      return `<div style="background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(46,42,37,.04)" data-opsel="${pr.id}">
+        <div style="display:flex;align-items:center;gap:6px">
+          <b style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.name)}</b>
+          <select data-opst="${pr.id}" style="font-size:10.5px;padding:2px 4px;border-radius:6px;border:1px solid var(--line)">${COLS.map(s2=>`<option ${pr.status===s2?'selected':''}>${s2}</option>`).join('')}</select>
+        </div>
+        <div style="font-size:10.5px;color:var(--dim);margin-top:3px">${pr.mode} · ${pr.stype} · 오픈 ${pr.openDate}</div>
+        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;align-items:center">
+          <span class="pill ${dday<=7&&pr.status==='진행'?'pl-warn':'pl-dim'}">${dtxt}</span>
+          ${pr.overdue?`<span class="pill" style="background:var(--warnsoft);color:var(--risk)">지연 ${pr.overdue}건</span>`:''}
+          <span style="flex:1"></span>
+          <span style="font-size:11px;font-weight:800">${pr.done}/${pr.total} · ${pct}%</span>
+        </div>
+        <div style="background:#F1EDE5;border-radius:4px;height:7px;overflow:hidden;margin-top:6px"><div style="width:${pct}%;height:100%;background:${pr.overdue?'var(--warn)':'var(--sig)'}"></div></div>
+      </div>`;};
+    return `<div style="display:flex;gap:12px;align-items:flex-start;overflow-x:auto;padding-bottom:6px">
+      ${COLS.filter(c=>c!=='보류'||byCol['보류'].length).map(c=>`
+      <div style="flex:1;min-width:235px">
+        <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;padding:0 2px">
+          <b style="font-size:13px">${c}</b><span class="pill pl-dim">${byCol[c].length}</span>
+          ${c==='진행'&&byCol[c].some(x=>x.overdue)?`<span class="pill" style="background:var(--warnsoft);color:var(--risk)">지연 ${byCol[c].reduce((a,x)=>a+x.overdue,0)}</span>`:''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${byCol[c].length?byCol[c].map(card).join(''):`<div style="border:1.5px dashed var(--line);border-radius:11px;padding:16px;text-align:center;font-size:11px;color:var(--dimmer)">비어 있음</div>`}
+        </div>
+      </div>`).join('')}
+    </div>`;})()}`;
 }
 function noticeList(limit){
   const ns=S.notices;
@@ -1519,9 +1538,19 @@ function bind(){
     const nm=$.querySelector('#opn_name').value.trim(),dt=$.querySelector('#opn_date').value;
     if(!nm||!dt)return alert('매장명과 오픈 예정일을 입력하십시오.');
     try{const r=await api('POST','/api/open',{name:nm,openDate:dt,
-      mode:$.querySelector('#opn_mode').value,stype:$.querySelector('#opn_stype').value});
+      mode:$.querySelector('#opn_mode').value,stype:$.querySelector('#opn_stype').value,
+      status:$.querySelector('#opn_st').value});
       opNew=false;opSel=r.id;opReload();}catch(e){alert(emsg(e));}});
-  $.querySelectorAll('[data-opsel]').forEach(el=>el.onclick=()=>{opSel=el.dataset.opsel;opDet=null;render();});
+  $.querySelectorAll('[data-opsel]').forEach(el=>el.onclick=e=>{
+    if(e.target.closest('select'))return;
+    opSel=el.dataset.opsel;opDet=null;render();});
+  $.querySelectorAll('[data-opst]').forEach(sel=>sel.onchange=async()=>{
+    try{await api('PATCH','/api/open/'+sel.dataset.opst,{status:sel.value});opList=null;render();}
+    catch(e){alert(emsg(e));render();}});
+  {const os=$.querySelector('#op_status');
+   if(os)os.onchange=async()=>{
+     try{await api('PATCH','/api/open/'+opSel,{status:os.value});opDet=null;opList=null;render();}
+     catch(e){alert(emsg(e));render();}};}
   on('#op_back',()=>{opSel=null;opDet=null;opList=null;render();});
   on('#op_del',async()=>{
     if(!confirm('이 오픈 프로젝트를 삭제합니까? 체크 기록은 감사 로그에 남습니다.'))return;

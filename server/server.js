@@ -1477,9 +1477,10 @@ const server = http.createServer(async (req, res) => {
       const stype = body.stype === '포장형' ? '포장형' : '테이블형';
       if (!name) return err(res, 400, 'NAME_REQUIRED');
       if (!isDate(od)) return err(res, 400, 'BAD_DATE');
+      const st0 = ['상담중', '진행'].includes(body.status) ? body.status : '상담중';
       const pid = uid('op');
       db.prepare('INSERT INTO open_projects(id,name,open_date,mode,stype,status,memo,mt) VALUES(?,?,?,?,?,?,?,?)')
-        .run(pid, name, od, mode, stype, '진행', String(body.memo || ''), now());
+        .run(pid, name, od, mode, stype, st0, String(body.memo || ''), now());
       const ins = db.prepare('INSERT INTO open_tasks(id,project_id,phase,grp,title,detail,owner,off,sort) VALUES(?,?,?,?,?,?,?,?,?)');
       let n = 0;
       OPEN_TPL.forEach((t2, i) => {
@@ -1487,7 +1488,7 @@ const server = http.createServer(async (req, res) => {
         ins.run(uid('ot'), pid, t2.ph, t2.g, t2.t, t2.d || '', t2.o, t2.off !== undefined ? t2.off : OPEN_OFF[t2.ph], (i + 1) * 10);
         n++;
       });
-      audit(actor, '오픈 프로젝트 생성', name + ' — ' + od + ' 오픈 · ' + mode + ' · ' + stype + ' · 체크리스트 ' + n + '건');
+      audit(actor, '오픈 프로젝트 생성', name + ' — ' + od + ' 오픈 · ' + mode + ' · ' + stype + ' · ' + st0 + ' · 체크리스트 ' + n + '건');
       return send(res, 200, { id: pid, tasks: n });
     }
     if ((m = p.match(/^\/api\/open\/([\w-]+)$/)) && req.method === 'GET') {
@@ -1514,7 +1515,7 @@ const server = http.createServer(async (req, res) => {
         if (!isDate(String(body.openDate))) return err(res, 400, 'BAD_DATE');
         od = String(body.openDate);
       }
-      const st2 = ['진행', '보류', '완료'].includes(body.status) ? body.status : pr.status;
+      const st2 = ['상담중', '진행', '보류', '완료'].includes(body.status) ? body.status : pr.status;
       db.prepare('UPDATE open_projects SET open_date=?, status=?, memo=?, mt=? WHERE id=?')
         .run(od, st2, body.memo !== undefined ? String(body.memo) : pr.memo, now(), m[1]);
       if (od !== pr.open_date) audit(actor, '오픈일 변경', pr.name + ' ' + pr.open_date + ' → ' + od + ' (전 항목 마감일 자동 재계산)');

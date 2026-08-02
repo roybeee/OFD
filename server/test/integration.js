@@ -660,7 +660,7 @@ async function main() {
   /* ===== AJ. 오픈 프로세스 ===== */
   r = await call('sa', 'POST', '/api/open', { name: 'X점', openDate: addD(t, 30) });
   log('AJ1 영업: 오픈 403', r.status === 403);
-  r = await call('op2', 'POST', '/api/open', { name: '판교점', openDate: addD(t, 28), mode: '가맹', stype: '테이블형' });
+  r = await call('op2', 'POST', '/api/open', { name: '판교점', openDate: addD(t, 28), mode: '가맹', stype: '테이블형', status: '진행' });
   const opId = r.data.id;
   log('AJ2 프로젝트 생성: 템플릿 자동 생성(테이블형 전용 포함·포장형 제외)', r.status === 200 && r.data.tasks >= 45);
   r = await call('op2', 'GET', '/api/open/' + opId);
@@ -699,6 +699,27 @@ async function main() {
   }
   chk = await call('op2', 'GET', '/api/open');
   log('AJ12 프로젝트 완료 상태 전환', chk.data.projects.find(x => x.id === opId).status === '완료');
+
+  /* ===== AK. 칸반 단계 ===== */
+  r = await call('op2', 'POST', '/api/open', { name: '상담테스트점', openDate: addD(t, -5), mode: '가맹', stype: '포장형' });
+  const okId = r.data.id;
+  chk = await call('op2', 'GET', '/api/open');
+  {
+    const pj = chk.data.projects.find(x => x.id === okId);
+    log('AK1 기본 단계 상담중·지연 미집계', pj.status === '상담중' && pj.overdue === 0);
+  }
+  r = await call('op2', 'PATCH', '/api/open/' + okId, { status: '진행' });
+  chk = await call('op2', 'GET', '/api/open');
+  log('AK2 진행 전환 시 지연 집계 시작', r.status === 200
+    && chk.data.projects.find(x => x.id === okId).overdue > 0);
+  r = await call('op2', 'PATCH', '/api/open/' + okId, { status: '없는단계' });
+  chk = await call('op2', 'GET', '/api/open');
+  log('AK3 미정의 단계 무시', chk.data.projects.find(x => x.id === okId).status === '진행');
+  r = await call('op2', 'PATCH', '/api/open/' + okId, { status: '보류' });
+  chk = await call('op2', 'GET', '/api/open');
+  log('AK4 보류 전환·지연 정지', chk.data.projects.find(x => x.id === okId).status === '보류'
+    && chk.data.projects.find(x => x.id === okId).overdue === 0);
+  await call('op2', 'DELETE', '/api/open/' + okId);
 
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
