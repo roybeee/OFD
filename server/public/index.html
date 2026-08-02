@@ -260,8 +260,126 @@ html,body{margin:0;padding:0;background:#EFEAE1}
 #app .open-detail-dday b{font-size:25px;line-height:1.2;letter-spacing:0;margin-top:3px}
 #app .open-detail-control label{font-size:11px;margin-bottom:5px}
 #app .open-detail-control select,#app .open-detail-control input{height:42px;font-size:14px;border-color:#CFC6BA}
+#app .guide-view{max-width:1320px;margin:0 auto}
+#app .guide-hero{position:relative;overflow:hidden;background:linear-gradient(125deg,#29251F 0%,#40382E 68%,#653016 100%);
+  color:#fff;border-radius:16px;padding:25px 27px;margin-bottom:14px;box-shadow:0 8px 24px rgba(62,48,37,.12)}
+#app .guide-hero:after{content:"";position:absolute;width:190px;height:190px;right:-52px;top:-87px;
+  border:36px solid rgba(242,107,33,.23);border-radius:50%;pointer-events:none}
+#app .guide-hero-copy{position:relative;z-index:1;max-width:760px}
+#app .guide-eyebrow{font-size:11px;font-weight:800;letter-spacing:.08em;color:#FFAE78;margin-bottom:6px}
+#app .guide-hero h1{font-size:25px;line-height:1.3;letter-spacing:-.035em}
+#app .guide-hero p{font-size:13px;line-height:1.65;color:#E7DED3;margin-top:7px}
+#app .guide-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+#app .guide-meta span{display:inline-flex;align-items:center;min-height:27px;padding:4px 9px;border-radius:999px;
+  border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.09);font-size:10.5px;color:#F8F3EC;font-weight:700}
+#app .guide-note{position:relative;z-index:1;margin-top:14px;padding:9px 11px;border-radius:8px;
+  background:rgba(253,235,221,.12);border-left:3px solid #F26B21;color:#F6EDE5;font-size:11px;line-height:1.55}
+#app .guide-quick{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-bottom:14px}
+#app .guide-quick button{min-height:116px;text-align:left;background:var(--sur);border:1px solid var(--line);border-radius:12px;
+  padding:14px;cursor:pointer;color:var(--ink);transition:transform .13s,border-color .13s,box-shadow .13s}
+#app .guide-quick button:hover,#app .guide-quick button:focus-visible,#app .guide-quick button.on{
+  border-color:#F3A16F;box-shadow:0 4px 14px rgba(80,54,35,.09);transform:translateY(-1px);outline:none}
+#app .guide-quick button.on{background:var(--soft)}
+#app .guide-quick-icon{display:block;font-size:22px;line-height:1;margin-bottom:10px}
+#app .guide-quick b{display:block;font-size:13.5px;line-height:1.35}
+#app .guide-quick small{display:block;margin-top:4px;font-size:10.5px;line-height:1.5;color:var(--dim);font-weight:500}
+#app .guide-tools{position:sticky;top:-20px;z-index:12;background:rgba(250,247,242,.96);backdrop-filter:blur(8px);
+  padding:13px 0 10px;margin-bottom:3px}
+#app .guide-search-row{display:flex;align-items:flex-end;gap:9px;flex-wrap:wrap}
+#app .guide-search{position:relative;flex:1;min-width:260px}
+#app .guide-search label{font-size:11px;color:var(--ink);margin-bottom:5px}
+#app .guide-search input{height:45px;padding:9px 50px 9px 13px;border-color:#CEC5B9;font-size:14px;background:#fff}
+#app .guide-search input:focus{outline:3px solid rgba(242,107,33,.22);border-color:var(--sig)}
+#app .guide-search-clear{position:absolute;right:1px;bottom:1px;width:43px;height:43px;border:0;background:#F2EEE8;
+  border-radius:7px;color:var(--dim);font-size:17px;cursor:pointer}
+#app .guide-role-wrap{min-width:280px}
+#app .guide-role-wrap>span{display:block;font-size:11px;color:var(--ink);font-weight:700;margin-bottom:5px}
+#app .guide-role-list,#app .guide-section-list{display:flex;gap:5px;overflow-x:auto;scrollbar-width:thin;padding-bottom:1px}
+#app .guide-role-list button,#app .guide-section-list button{flex:0 0 auto;min-height:45px;padding:8px 11px;border:1px solid var(--line);
+  border-radius:8px;background:#fff;color:var(--dim);font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+#app .guide-role-list button:hover,#app .guide-role-list button:focus-visible,#app .guide-role-list button.on,
+#app .guide-section-list button:hover,#app .guide-section-list button:focus-visible,#app .guide-section-list button.on{
+  border-color:var(--sig);color:var(--deep);outline:none}
+#app .guide-role-list button.on,#app .guide-section-list button.on{background:var(--soft);font-weight:800}
+#app .guide-section-list{margin-top:8px}
+#app .guide-section-list button{min-height:44px;padding:7px 11px;border-radius:999px}
+#app .guide-layout{display:grid;grid-template-columns:226px minmax(0,1fr);gap:13px;align-items:start}
+#app .guide-index{position:sticky;top:128px;background:var(--sur);border:1px solid var(--line);border-radius:11px;padding:12px}
+#app .guide-index h2{font-size:12px;margin:2px 4px 8px}
+#app .guide-index button{display:flex;align-items:center;gap:8px;width:100%;min-height:41px;padding:8px 9px;
+  border:0;border-radius:7px;background:transparent;color:var(--dim);text-align:left;font-size:11.5px;font-weight:700;cursor:pointer}
+#app .guide-index button:hover,#app .guide-index button:focus-visible,#app .guide-index button.on{background:#F6F1EA;color:var(--deep);outline:none}
+#app .guide-index button.on{background:var(--soft)}
+#app .guide-index .gi-icon{width:23px;text-align:center;font-size:15px}
+#app .guide-index .gi-count{margin-left:auto;color:var(--dimmer);font-size:10px}
+#app .guide-results{min-width:0}
+#app .guide-results-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 1px 9px}
+#app .guide-results-head h2{font-size:14px}
+#app .guide-results-head p{font-size:10.5px;color:var(--dim)}
+#app .guide-article{background:var(--sur);border:1px solid var(--line);border-radius:11px;margin-bottom:8px;overflow:hidden}
+#app .guide-article>button{display:flex;align-items:flex-start;gap:11px;width:100%;min-height:72px;padding:13px 14px;
+  border:0;background:#fff;color:var(--ink);text-align:left;cursor:pointer}
+#app .guide-article>button:hover,#app .guide-article>button:focus-visible{background:#FCFAF7;outline:2px solid rgba(242,107,33,.32);outline-offset:-2px}
+#app .guide-article.open{border-color:#E7B28F;box-shadow:0 3px 10px rgba(61,45,34,.05)}
+#app .guide-article.open>button{background:#FFF9F5}
+#app .guide-article-copy{flex:1;min-width:0}
+#app .guide-article-title{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:14px;font-weight:800;line-height:1.45}
+#app .guide-article-summary{display:block;color:var(--dim);font-size:11.5px;line-height:1.55;margin-top:4px}
+#app .guide-article-meta{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
+#app .guide-article-meta span{font-size:9.5px;font-weight:700;color:#716A5F;background:#F3F0EA;border-radius:999px;padding:3px 7px}
+#app .guide-chevron{flex:0 0 25px;width:25px;height:25px;border-radius:50%;background:#F3EFE9;color:var(--dim);
+  display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;transition:transform .15s}
+#app .guide-article.open .guide-chevron{transform:rotate(180deg);background:var(--soft);color:var(--deep)}
+#app .guide-review{display:inline-flex;align-items:center;background:var(--warnsoft)!important;color:#8B5A0A!important;
+  border:1px solid #ECD49C;border-radius:999px;padding:3px 7px;font-size:9.5px;font-weight:800}
+#app .guide-article-body{border-top:1px solid #F0EAE1;padding:15px 16px 17px;background:#FFFEFC}
+#app .guide-body-intro{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:11px}
+#app .guide-body-intro>div{padding:9px 10px;border-radius:8px;background:#F6F2EC;font-size:11.5px;line-height:1.5;color:#504B43}
+#app .guide-body-intro b{display:block;color:var(--ink);font-size:10px;margin-bottom:3px}
+#app .guide-block{padding:11px 12px;border-radius:9px;background:#F8F5F0;margin-top:8px}
+#app .guide-block h4{font-size:11.5px;margin-bottom:8px}
+#app .guide-steps{list-style:none;counter-reset:guide-step;display:grid;gap:7px}
+#app .guide-steps li{counter-increment:guide-step;position:relative;min-height:28px;padding:5px 0 5px 37px;font-size:12px;line-height:1.55}
+#app .guide-steps li:before{content:counter(guide-step);position:absolute;left:0;top:2px;width:27px;height:27px;
+  display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--sig);color:#fff;font-size:11px;font-weight:800}
+#app .guide-points{padding-left:18px;display:grid;gap:5px}
+#app .guide-points li{font-size:12px;line-height:1.55;padding-left:1px}
+#app .guide-block.criteria{background:var(--oksoft);border-left:3px solid var(--ok)}
+#app .guide-block.warning{background:var(--warnsoft);border-left:3px solid var(--warn)}
+#app .guide-block.dont{background:var(--risksoft);border-left:3px solid var(--risk)}
+#app .guide-block.escalate{background:var(--infosoft);border-left:3px solid var(--info)}
+#app .guide-source{margin-top:11px;font-size:9.5px;color:var(--dimmer);line-height:1.5}
+#app .guide-products-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:18px 1px 8px}
+#app .guide-products-title h2{font-size:14px}
+#app .guide-products-title span{font-size:10.5px;color:var(--dim)}
+#app .guide-products{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+#app .guide-product{background:var(--sur);border:1px solid var(--line);border-radius:10px;padding:13px;min-width:0}
+#app .guide-product-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+#app .guide-product-kind{display:block;color:var(--sig);font-size:9.5px;font-weight:800;margin-bottom:3px}
+#app .guide-product h3{font-size:14px;line-height:1.35}
+#app .guide-product-name-en{font-size:9.5px;color:var(--dimmer);margin-top:2px;overflow-wrap:anywhere}
+#app .guide-product-desc{font-size:11px;line-height:1.55;color:var(--dim);margin-top:8px;min-height:34px}
+#app .guide-product-price{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:10px;
+  padding:9px 10px;border-radius:8px;background:#F6F2EC}
+#app .guide-product-price span{font-size:9.5px;color:var(--dim);font-weight:700}
+#app .guide-product-price b{font-size:14px;color:var(--deep)}
+#app .guide-product-spec{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}
+#app .guide-product-spec div{border:1px solid #EEE8DF;border-radius:7px;padding:7px 8px;font-size:10.5px;color:#504B43;min-width:0}
+#app .guide-product-spec b{display:block;font-size:9px;color:var(--dim);margin-bottom:2px}
+#app .guide-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}
+#app .guide-tags span{font-size:9.5px;background:#F2EEE8;color:#665F55;border-radius:999px;padding:3px 7px}
+#app .guide-review-field{color:#8B5A0A!important;background:var(--warnsoft)!important;border-color:#ECD49C!important;font-weight:800}
+#app .guide-empty{background:var(--sur);border:1px dashed #CFC6BA;border-radius:11px;padding:32px 18px;text-align:center;color:var(--dim)}
+#app .guide-empty b{display:block;font-size:14px;color:var(--ink);margin-bottom:4px}
+#app .guide-empty p{font-size:11.5px}
+#app .guide-loading{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+#app .guide-loading i{height:104px;border-radius:10px;background:linear-gradient(100deg,#EEE9E2 20%,#F8F5F0 38%,#EEE9E2 56%);
+  background-size:220% 100%;animation:guide-shimmer 1.2s infinite}
+@keyframes guide-shimmer{to{background-position-x:-220%}}
 @media(max-width:1080px){#app .open-detail-header{grid-template-columns:1fr}#app .open-detail-schedule{grid-template-columns:112px 120px minmax(160px,1fr)}}
-@media(max-width:900px){#app .open-kpis{grid-template-columns:repeat(2,minmax(150px,1fr))}}
+@media(max-width:1000px){#app .guide-quick{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:900px){#app .open-kpis{grid-template-columns:repeat(2,minmax(150px,1fr))}
+  #app .guide-layout{grid-template-columns:1fr}#app .guide-index{display:none}#app .guide-tools{top:-13px}}
 @media(max-width:760px){#app .main{padding:13px}#app .kb-col{min-width:180px}#app .sess{margin-left:0;width:100%}
   #app .daily-summary{grid-template-columns:1fr 1fr}#app .daily-stat.selected{grid-column:1/-1}
   #app .daily-day:not(.selected) .daily-bar-value:not(.peak){display:none}
@@ -269,7 +387,17 @@ html,body{margin:0;padding:0;background:#EFEAE1}
   #app .open-view .head h1{font-size:22px}#app .open-kpis{gap:8px}#app .open-kpis .kpi{padding:13px;min-height:98px}
   #app .open-toolbar{align-items:stretch}#app .open-search{min-width:100%}#app .open-delay-toggle{flex:1}#app .open-result{margin-left:0}
   #app .open-detail-header{margin:0 -13px 14px;padding:14px 13px 16px;gap:14px}#app .open-detail-title h1{font-size:24px}
-  #app .open-detail-schedule{grid-template-columns:92px 1fr 1.35fr}#app .open-detail-dday{padding:4px 9px}#app .open-detail-dday b{font-size:21px}}
+  #app .open-detail-schedule{grid-template-columns:92px 1fr 1.35fr}#app .open-detail-dday{padding:4px 9px}#app .open-detail-dday b{font-size:21px}
+  #app .guide-hero{padding:20px 17px;border-radius:13px}#app .guide-hero h1{font-size:22px}#app .guide-hero p{font-size:12px}
+  #app .guide-quick{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}#app .guide-quick button{min-height:108px;padding:12px}
+  #app .guide-search{min-width:100%}#app .guide-role-wrap{min-width:100%;width:100%}
+  #app .guide-role-list button{flex:1;min-width:61px;min-height:44px;padding:7px 8px}
+  #app .guide-tools{top:-13px;padding-top:10px}#app .guide-products{grid-template-columns:1fr}
+  #app .guide-article>button{min-height:76px;padding:12px}#app .guide-article-body{padding:13px}
+  #app .guide-body-intro{grid-template-columns:1fr}#app .guide-loading{grid-template-columns:1fr}}
+@media(max-width:420px){#app .guide-quick{grid-template-columns:1fr}#app .guide-quick button{min-height:auto}
+  #app .guide-role-list{display:grid;grid-template-columns:repeat(3,1fr);overflow:visible}#app .guide-role-list button{min-width:0}}
+@media(prefers-reduced-motion:reduce){#app .guide-quick button,#app .guide-chevron{transition:none}#app .guide-loading i{animation:none}}
 </style>
 </head>
 <body>
@@ -299,7 +427,7 @@ async function api(method,path,body){
     headers:Object.assign({'X-OFD':'1'},body!==undefined?{'Content-Type':'application/json'}:{}),
     body:body!==undefined?JSON.stringify(body):undefined});
   let data=null;try{data=await r.json();}catch(e){}
-  if(r.status===401&&path!=='/api/state'){PH='gate';await loadState();render();throw{status:401,data};}
+  if(r.status===401&&path!=='/api/state'){resetGuideState();PH='gate';await loadState();render();throw{status:401,data};}
   if(!r.ok)throw{status:r.status,data};
   return data;
 }
@@ -310,7 +438,7 @@ const EMSG={BAD_LOGIN:'아이디 또는 비밀번호가 일치하지 않습니�
   USERNAME_TAKEN:'이미 사용 중인 아이디입니다.',LAST_MASTER:'마지막 활성 마스터 계정은 변경·삭제할 수 없습니다.',
   DEPT_FORMAT:'부서 값이 올바르지 않습니다.',FORBIDDEN:'이 작업에 대한 부서 권한이 없습니다.'};
 const DEPTS={master:'마스터',admin:'관리',ops:'운영',sales:'영업'};
-const CAPC={leads:['master','sales'],orders:['master','ops'],closings:['master','ops'],
+const CAPC={guide:['master','ops'],leads:['master','sales'],orders:['master','ops'],closings:['master','ops'],
   notices:['master','ops'],stores:['master','ops'],codes:['master','ops'],
   pos:['master','ops'],skus:['master','admin'],settle:['master','admin'],auditv:['master','admin'],
   users:['master'],backup:['master']};
@@ -319,6 +447,8 @@ const emsg=e=>(e&&e.data&&EMSG[e.data.error])||'요청을 처리하지 못했습
 
 /* ---- state ---- */
 let PH='boot',ST0=null,S=null,tab='dash';
+let guideData=null,guideLoading=false,guideErr='',guideSection='all',guideRole='전체',guideQuery='';
+let guideOpen=new Set(),guideSearchTimer=null;
 let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoading=false;
 let anStore=null,anDays=30,anData=null,anLoading=false,anDaySel=null,posConf={loaded:false};
 let repOpen=new Set();
@@ -500,8 +630,9 @@ async function refresh(){S=await api('GET','/api/bootstrap');if(!salesDate)sales
 
 /* ---- render ---- */
 function tabsFor(){
-  if(!isHQ())return[['dash','대시보드'],['orders','발주'],['sales','매출 마감'],['an','매출 분석'],['notice','공지']];
+  if(!isHQ())return[['dash','대시보드'],['guide','매장 운영 가이드'],['orders','발주'],['sales','매출 마감'],['an','매출 분석'],['notice','공지']];
   const T=[['dash','대시보드']];
+  if(cap('guide'))T.push(['guide','매장 운영 가이드']);
   if(cap('leads'))T.push(['pipe','영업']);
   if(cap('orders'))T.push(['orders','발주']);
   if(cap('closings'))T.push(['sales','매출']);
@@ -527,7 +658,7 @@ function render(){
     </div>
   </div>
   <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</div>
-  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,open:vOpen,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
+  <div class="main">${({dash:vDash,guide:vGuide,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,open:vOpen,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
   bind();
   if(tab==='stores')setTimeout(initNaverMap,0);
 }
@@ -594,11 +725,11 @@ function renderGate(){
   $.querySelector('#g_hq').onclick=async()=>{
     try{await api('POST','/api/auth/hq',{username:$.querySelector('#g_un').value.trim(),
       password:$.querySelector('#g_pw').value});
-      PH='app';await refresh();render();}catch(e){alert(emsg(e));}};
+      resetGuideState();PH='app';await refresh();render();}catch(e){alert(emsg(e));}};
   $.querySelector('#g_st').onclick=async()=>{
     try{await api('POST','/api/auth/store',{storeId:$.querySelector('#g_store').value,
       code:$.querySelector('#g_code').value.trim()});
-      PH='app';await refresh();render();}catch(e){alert(emsg(e));}};
+      resetGuideState();PH='app';await refresh();render();}catch(e){alert(emsg(e));}};
 }
 
 /* ---- views ---- */
@@ -648,6 +779,178 @@ function vDash(){
   <div class="panel"><div class="panel-h"><h2>최근 14일 매출</h2></div>
     <div class="bars">${bars.map(b=>`<div class="b"><i style="height:${Math.round(b.rev/mx*88)}px"></i><span>${b.d.slice(8)}</span></div>`).join('')}</div></div>
   ${noticeList(3)}`;
+}
+
+/* ---- beginner-friendly, read-only store guide ---- */
+function resetGuideState(){
+  guideData=null;guideLoading=false;guideErr='';guideSection='all';guideRole='전체';guideQuery='';
+  guideOpen=new Set();clearTimeout(guideSearchTimer);guideSearchTimer=null;
+}
+function guideArr(v){
+  if(Array.isArray(v))return v.filter(Boolean);
+  if(v==null||v==='')return[];
+  return String(v).split(/\s*[,/·]\s*/).filter(Boolean);
+}
+function guideNorm(v){return String(v==null?'':v).toLocaleLowerCase('ko-KR').replace(/[^0-9a-z가-힣]/g,'');}
+function guideHas(query,values){
+  const words=String(query||'').toLocaleLowerCase('ko-KR').trim().split(/\s+/).filter(Boolean);
+  if(!words.length)return true;
+  const hay=values.flatMap(guideArr).join(' ').toLocaleLowerCase('ko-KR');
+  return words.every(w=>hay.includes(w));
+}
+function guideRoleMatches(a){
+  if(guideRole==='전체')return true;
+  const roles=guideArr(a.role);
+  if(!roles.length||roles.some(r=>/공통|전체|전\s*직원|모든\s*직원/.test(r)))return true;
+  return roles.some(r=>String(r).includes(guideRole));
+}
+function guideArticleMatches(a){
+  return guideRoleMatches(a)&&guideHas(guideQuery,[a.title,a.summary,a.when,a.role,a.sourceChapter,a.steps,a.criteria,
+    a.warnings,a.doNot,a.escalation,a.keywords]);
+}
+function guideProductMatches(p){
+  return guideHas(guideQuery,[p.nameKo,p.nameEn,p.kind,p.description,p.allergens,p.temps,p.keywords,p.priceName]);
+}
+function guideSkuFor(p){
+  const target=guideNorm(p.priceName||p.nameKo);
+  if(!target)return null;
+  const found=(S.skus||[]).filter(k=>guideNorm(k.name)===target);
+  if(!found.length)return null;
+  const common=found.filter(k=>!k.storeId);
+  if(isHQ())return common.length===1?common[0]:null;
+  const own=found.filter(k=>k.storeId===S.me.storeId);
+  if(own.length===1)return own[0];
+  if(own.length>1)return null;
+  return common.length===1?common[0]:null;
+}
+function guideListBlock(title,items,cls,ordered){
+  const vals=guideArr(items);if(!vals.length)return'';
+  const tag=ordered?'ol':'ul',listCls=ordered?'guide-steps':'guide-points';
+  return `<section class="guide-block ${cls||''}"><h4>${esc(title)}</h4><${tag} class="${listCls}">
+    ${vals.map(x=>`<li>${esc(x)}</li>`).join('')}</${tag}></section>`;
+}
+function guideArticleCard(a,section,idx){
+  const open=guideOpen.has(a.id),roles=guideArr(a.role),bodyId='guide_article_body_'+idx;
+  const stepTitle=a.type==='script'?'권장 응대 문구':a.type==='checklist'?'확인 순서':'따라 하기';
+  return `<article class="guide-article ${open?'open':''}">
+    <button type="button" data-guide-article="${esc(a.id)}" aria-expanded="${open?'true':'false'}" aria-controls="${bodyId}">
+      <span class="guide-article-copy">
+        <span class="guide-article-title">${esc(a.title)}
+          ${a.reviewStatus==='needs-review'?'<span class="guide-review">본사 확인 중</span>':''}</span>
+        <span class="guide-article-summary">${esc(a.summary)}</span>
+        <span class="guide-article-meta">
+          ${section?`<span>${esc(section.icon)} ${esc(section.title)}</span>`:''}
+          ${a.when?`<span>언제 · ${esc(a.when)}</span>`:''}
+          ${roles.map(r=>`<span>${esc(r)}</span>`).join('')}
+        </span>
+      </span><span class="guide-chevron" aria-hidden="true">⌄</span>
+    </button>
+    ${open?`<div class="guide-article-body" id="${bodyId}">
+      ${(a.when||roles.length)?`<div class="guide-body-intro">
+        ${a.when?`<div><b>언제 확인하나요?</b>${esc(a.when)}</div>`:''}
+        ${roles.length?`<div><b>누가 확인하나요?</b>${roles.map(esc).join(' · ')}</div>`:''}
+      </div>`:''}
+      ${guideListBlock(stepTitle,a.steps,'',true)}
+      ${guideListBlock('이렇게 되면 완료입니다',a.criteria,'criteria',false)}
+      ${guideListBlock('꼭 주의하세요',a.warnings,'warning',false)}
+      ${guideListBlock('이렇게 하지 마세요',a.doNot,'dont',false)}
+      ${guideListBlock('문제가 계속되면',a.escalation,'escalate',false)}
+      ${(a.sourceChapter||guideArr(a.sourceRefs).length)?`<div class="guide-source">출처 · ${esc(a.sourceChapter)}${guideArr(a.sourceRefs).length?' · '+guideArr(a.sourceRefs).map(esc).join(', '):''}</div>`:''}
+    </div>`:''}
+  </article>`;
+}
+function guideProductSpec(p,key,label){
+  const hidden=guideArr(p.hiddenFields).includes(key)||guideArr(p.hiddenFields).includes(label);
+  if(hidden)return `<div class="guide-review-field"><b>${esc(label)}</b>본사 확인 중</div>`;
+  const val=p[key];if(val==null||val==='')return'';
+  return `<div><b>${esc(label)}</b>${esc(val)}</div>`;
+}
+function guideProductCard(p){
+  const k=guideSkuFor(p),price=k&&Number.isFinite(+k.price)&&+k.price>0?won(+k.price)+'원':'가격 확인 필요';
+  const hidden=guideArr(p.hiddenFields),requiredHidden=hidden.includes('required')||hidden.includes('운영 구분');
+  const allergensHidden=hidden.includes('allergens')||hidden.includes('알레르기');
+  const allergens=allergensHidden?[]:guideArr(p.allergens);
+  return `<article class="guide-product">
+    <div class="guide-product-head"><div><span class="guide-product-kind">${esc(p.kind||'메뉴')}</span>
+      <h3>${esc(p.nameKo)}</h3>${p.nameEn?`<div class="guide-product-name-en">${esc(p.nameEn)}</div>`:''}</div>
+      ${p.reviewStatus==='needs-review'?'<span class="guide-review">본사 확인 중</span>':''}</div>
+    ${p.description?`<p class="guide-product-desc">${esc(p.description)}</p>`:''}
+    <div class="guide-product-price"><span>현재 워크스테이션 판매가</span><b>${esc(price)}</b></div>
+    <div class="guide-product-spec">
+      ${guideProductSpec(p,'weight','중량')}${guideProductSpec(p,'calories','열량')}
+    </div>
+    <div class="guide-tags">
+      ${requiredHidden?'<span class="guide-review-field">운영 구분 본사 확인 중</span>':p.required===true?'<span>필수 운영</span>':p.required===false?'<span>선택 운영</span>':''}
+      ${guideArr(p.temps).map(x=>`<span>${esc(x)}</span>`).join('')}
+      ${allergensHidden?'<span class="guide-review-field">알레르기 · 본사 확인 중</span>':allergens.map(x=>`<span>알레르기 · ${esc(x)}</span>`).join('')}
+    </div>
+  </article>`;
+}
+function guideLoadingView(){
+  return `<div class="guide-view"><div class="guide-hero"><div class="guide-hero-copy">
+    <div class="guide-eyebrow">STORE OPERATIONS GUIDE</div><h1>매장 운영 가이드</h1>
+    <p>초보 점주도 바로 찾을 수 있도록 운영 매뉴얼을 정리하고 있습니다.</p></div></div>
+    <div class="guide-loading" role="status" aria-live="polite"><span class="empty">가이드를 불러오는 중…</span><i></i><i></i><i></i></div></div>`;
+}
+function vGuide(){
+  if(!guideData&&!guideLoading&&!guideErr){
+    guideLoading=true;
+    api('GET','/api/store-guide').then(d=>{
+      if(!d||!d.meta||!Array.isArray(d.sections)||!Array.isArray(d.articles)||!Array.isArray(d.products))throw new Error('invalid guide');
+      guideData=d;guideLoading=false;if(tab==='guide')render();
+    }).catch(()=>{guideLoading=false;guideErr='매장 운영 가이드를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.';if(tab==='guide')render();});
+  }
+  if(!guideData){
+    if(guideErr)return `<div class="guide-view"><div class="head"><div><h1>매장 운영 가이드</h1><p>초보 점주를 위한 매장 운영 매뉴얼</p></div></div>
+      <div class="guide-empty" role="alert"><b>가이드를 불러오지 못했습니다</b><p>${esc(guideErr)}</p>
+      <button class="btn" id="guide_retry" style="margin-top:12px">다시 불러오기</button></div></div>`;
+    return guideLoadingView();
+  }
+  const G=guideData,sections=G.sections||[],articles=G.articles||[],products=G.products||[];
+  if(guideSection!=='all'&&!sections.some(s=>s.id===guideSection))guideSection='all';
+  const sectionMap=Object.fromEntries(sections.map(s=>[s.id,s]));
+  const matchedArticles=articles.filter(guideArticleMatches).filter(a=>guideQuery||guideSection==='all'||a.section===guideSection);
+  const showProducts=!!guideQuery||guideSection==='all'||guideSection==='standards';
+  const matchedProducts=showProducts?products.filter(guideProductMatches):[];
+  const total=matchedArticles.length+matchedProducts.length;
+  const selected=sectionMap[guideSection];
+  const sectionCount=id=>articles.filter(a=>a.section===id&&guideRoleMatches(a)).length+(id==='standards'?products.length:0);
+  const roles=['전체','점장','팀장','사원','파트타이머'];
+  const resultTitle=guideQuery?'검색 결과':selected?selected.title:'전체 가이드';
+  return `<div class="guide-view">
+    <section class="guide-hero" aria-labelledby="guide_title"><div class="guide-hero-copy">
+      <div class="guide-eyebrow">STORE OPERATIONS GUIDE</div><h1 id="guide_title">${esc(G.meta.title||'매장 운영 가이드')}</h1>
+      <p>오늘 해야 할 일부터 갑작스러운 문제 대응까지, 필요한 운영 기준을 쉬운 순서로 확인하세요.</p>
+      <div class="guide-meta"><span>승인본 ${esc(G.meta.version||'-')}</span>
+        ${G.meta.sourceUpdatedAt?`<span>기준일 ${esc(G.meta.sourceUpdatedAt)}</span>`:''}<span>읽기 전용</span></div>
+    </div>${G.meta.notice?`<div class="guide-note">${esc(G.meta.notice)}</div>`:''}</section>
+    <nav class="guide-quick" aria-label="빠른 가이드">
+      ${sections.map(s=>`<button type="button" data-guide-section="${esc(s.id)}" class="${guideSection===s.id?'on':''}" aria-pressed="${guideSection===s.id?'true':'false'}">
+        <span class="guide-quick-icon" aria-hidden="true">${esc(s.icon)}</span><b>${esc(s.title)}</b><small>${esc(s.subtitle)}</small></button>`).join('')}
+    </nav>
+    <div class="guide-tools">
+      <div class="guide-search-row"><div class="guide-search"><label for="guide_search">가이드 통합 검색</label>
+        <input type="search" id="guide_search" value="${esc(guideQuery)}" placeholder="예: 오픈, 컴플레인, 보건증, 크림브륄레" autocomplete="off">
+        ${guideQuery?'<button type="button" class="guide-search-clear" id="guide_search_clear" aria-label="검색어 지우기">×</button>':''}</div>
+        <div class="guide-role-wrap"><span id="guide_role_label">내 역할로 좁혀보기</span><div class="guide-role-list" role="group" aria-labelledby="guide_role_label">
+          ${roles.map(r=>`<button type="button" data-guide-role="${r}" class="${guideRole===r?'on':''}" aria-pressed="${guideRole===r?'true':'false'}">${r}</button>`).join('')}
+        </div></div></div>
+      <div class="guide-section-list" aria-label="가이드 분류">
+        <button type="button" data-guide-section="all" class="${guideSection==='all'?'on':''}" aria-pressed="${guideSection==='all'?'true':'false'}">전체 가이드</button>
+        ${sections.map(s=>`<button type="button" data-guide-section="${esc(s.id)}" class="${guideSection===s.id?'on':''}" aria-pressed="${guideSection===s.id?'true':'false'}">${esc(s.icon)} ${esc(s.title)}</button>`).join('')}
+      </div>
+    </div>
+    <div class="guide-layout"><aside class="guide-index" aria-label="전체 가이드 색인"><h2>전체 가이드 색인</h2>
+      <button type="button" data-guide-section="all" class="${guideSection==='all'?'on':''}"><span class="gi-icon">⌂</span>전체<span class="gi-count">${articles.length+products.length}</span></button>
+      ${sections.map(s=>`<button type="button" data-guide-section="${esc(s.id)}" class="${guideSection===s.id?'on':''}"><span class="gi-icon">${esc(s.icon)}</span>${esc(s.title)}<span class="gi-count">${sectionCount(s.id)}</span></button>`).join('')}
+    </aside><main class="guide-results" aria-live="polite">
+      <div class="guide-results-head"><div><h2>${esc(resultTitle)}</h2><p>${guideQuery?`“${esc(guideQuery)}” · `:''}${esc(guideRole)} 역할 기준</p></div><p>${total}개 항목</p></div>
+      ${total?matchedArticles.map((a,i)=>guideArticleCard(a,sectionMap[a.section],i)).join(''):`<div class="guide-empty"><b>찾는 내용이 없습니다</b><p>검색어를 줄이거나 전체 역할·전체 가이드를 선택해 보세요.</p></div>`}
+      ${matchedProducts.length?`<div class="guide-products-title"><h2>메뉴·제품 기준</h2><span>가격은 현재 워크스테이션 상품 기준</span></div>
+        <div class="guide-products">${matchedProducts.map(guideProductCard).join('')}</div>`:''}
+    </main></div>
+    <div class="note">이 화면은 확인용 가이드이며 체크 결과나 진행률을 저장하지 않습니다. 실제 운영 변경과 예외 처리는 본사 운영팀 승인 후 적용하세요.</div>
+  </div>`;
 }
 
 function gateBadge(L){
@@ -1511,7 +1814,23 @@ function bind(){
   $.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reveal=null;render();});
   on('#reload',async()=>{await refresh();render();});
   on('#logout',async()=>{try{await api('POST','/api/auth/logout',{});}catch(e){}
-    PH='gate';await loadState();render();});
+    resetGuideState();PH='gate';await loadState();render();});
+
+  on('#guide_retry',()=>{guideErr='';guideData=null;guideLoading=false;render();});
+  $.querySelectorAll('[data-guide-section]').forEach(b=>b.onclick=()=>{
+    clearTimeout(guideSearchTimer);guideSection=b.dataset.guideSection;guideQuery='';guideOpen=new Set();render();});
+  $.querySelectorAll('[data-guide-role]').forEach(b=>b.onclick=()=>{
+    guideRole=b.dataset.guideRole;render();});
+  $.querySelectorAll('[data-guide-article]').forEach(b=>b.onclick=()=>{
+    const id=b.dataset.guideArticle;
+    if(guideOpen.has(id))guideOpen.delete(id);else guideOpen.add(id);
+    render();});
+  {const gs=$.querySelector('#guide_search');if(gs){
+    gs.oninput=()=>{const value=gs.value;clearTimeout(guideSearchTimer);guideSearchTimer=setTimeout(()=>{
+      guideQuery=value.trim();guideSection='all';render();const next=$.querySelector('#guide_search');
+      if(next){next.focus();next.setSelectionRange(value.length,value.length);}},160);};
+    gs.onkeydown=e=>{if(e.key==='Escape'&&gs.value){e.preventDefault();clearTimeout(guideSearchTimer);guideQuery='';guideSection='all';render();}};}}
+  on('#guide_search_clear',()=>{clearTimeout(guideSearchTimer);guideQuery='';guideSection='all';render();const next=$.querySelector('#guide_search');if(next)next.focus();});
 
   on('#newlead',async()=>{try{const r=await api('POST','/api/leads',{});pSel=r.id;await refresh();render();}catch(e){alert(emsg(e));}});
   $.querySelectorAll('[data-sel]').forEach(c=>c.onclick=e=>{
