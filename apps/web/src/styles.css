@@ -714,7 +714,7 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
   .wizard-buttons { display: grid; grid-template-columns: auto 1fr; }
   .wizard-buttons .button:only-child { grid-column: 1 / -1; }
   .drawer-backdrop { align-items: flex-end; }
-  .review-drawer, .delivery-drawer { width: 100%; height: min(92%,850px); border-radius: 16px 16px 0 0; }
+  .review-drawer, .delivery-drawer { width: 100%; height: min(92%,850px); border-radius: 16px 16px 0 0; animation: rise-in .24s ease; }
   .review-drawer > footer, .delivery-drawer > footer { display: grid; grid-template-columns: 1fr 1.4fr; padding: 10px 12px; }
   .delivery-board { gap: 10px; }
   .dispatch-card { grid-template-columns: 28px minmax(0,1fr); }
