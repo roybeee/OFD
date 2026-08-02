@@ -184,10 +184,36 @@ html,body{margin:0;padding:0;background:#EFEAE1}
 #app .open-progress>i{display:block;height:100%;background:var(--sig);border-radius:5px}
 #app .open-card.overdue .open-progress>i{background:var(--risk)}
 #app .open-empty-column{border:1.5px dashed rgba(86,78,68,.25);border-radius:8px;padding:28px 10px;text-align:center;font-size:13px;color:#8F887C;background:rgba(255,255,255,.38)}
+#app .open-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#app .open-detail-header{background:var(--sur);border-top:1px solid #D9D1C7;border-bottom:1px solid #D9D1C7;
+  padding:18px 20px 20px;margin:0 -20px 16px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px 28px}
+#app .open-detail-nav{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
+#app .open-detail-nav .back{border:0;background:none;color:#655F55;font-size:13px;font-weight:800;cursor:pointer;padding:4px 0}
+#app .open-detail-nav .back:hover{color:var(--sig)}
+#app .open-detail-copy{min-width:0;align-self:center}
+#app .open-detail-eyebrow{font-size:11px;color:var(--sig);font-weight:800;margin-bottom:5px}
+#app .open-detail-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#app .open-detail-title h1{font-size:28px;line-height:1.25;letter-spacing:0;overflow-wrap:anywhere}
+#app .open-detail-status{font-size:12px;font-weight:800;padding:5px 10px;border-radius:5px}
+#app .open-detail-status.consult{background:#F1EDE5;color:#6B6458}
+#app .open-detail-status.active{background:var(--infosoft);color:var(--info)}
+#app .open-detail-status.hold{background:var(--warnsoft);color:#8B5A0A}
+#app .open-detail-status.complete{background:var(--oksoft);color:var(--ok)}
+#app .open-detail-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px}
+#app .open-detail-meta span{background:#F5F2EC;border:1px solid #E2DCD2;border-radius:5px;padding:5px 8px;font-size:13px;color:#575249;font-weight:700}
+#app .open-detail-schedule{display:grid;grid-template-columns:112px 120px 168px;gap:10px;align-items:end}
+#app .open-detail-dday{align-self:stretch;border-left:3px solid var(--sig);padding:5px 12px;display:flex;flex-direction:column;justify-content:center}
+#app .open-detail-dday span{font-size:11px;color:var(--dim);font-weight:700}
+#app .open-detail-dday b{font-size:25px;line-height:1.2;letter-spacing:0;margin-top:3px}
+#app .open-detail-control label{font-size:11px;margin-bottom:5px}
+#app .open-detail-control select,#app .open-detail-control input{height:42px;font-size:14px;border-color:#CFC6BA}
+@media(max-width:1080px){#app .open-detail-header{grid-template-columns:1fr}#app .open-detail-schedule{grid-template-columns:112px 120px minmax(160px,1fr)}}
 @media(max-width:900px){#app .open-kpis{grid-template-columns:repeat(2,minmax(150px,1fr))}}
 @media(max-width:760px){#app .main{padding:13px}#app .kb-col{min-width:180px}#app .sess{margin-left:0;width:100%}
   #app .open-view .head h1{font-size:22px}#app .open-kpis{gap:8px}#app .open-kpis .kpi{padding:13px;min-height:98px}
-  #app .open-toolbar{align-items:stretch}#app .open-search{min-width:100%}#app .open-delay-toggle{flex:1}#app .open-result{margin-left:0}}
+  #app .open-toolbar{align-items:stretch}#app .open-search{min-width:100%}#app .open-delay-toggle{flex:1}#app .open-result{margin-left:0}
+  #app .open-detail-header{margin:0 -13px 14px;padding:14px 13px 16px;gap:14px}#app .open-detail-title h1{font-size:24px}
+  #app .open-detail-schedule{grid-template-columns:92px 1fr 1.35fr}#app .open-detail-dday{padding:4px 9px}#app .open-detail-dday b{font-size:21px}}
 </style>
 </head>
 <body>
@@ -324,6 +350,60 @@ function stCsv(){
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   a.download='OFD_매장정보_'+today()+'.csv';a.click();URL.revokeObjectURL(a.href);}
+
+/* ---- dependency-free XLSX writer (ZIP store + SpreadsheetML) ---- */
+const XENC=new TextEncoder();
+function xesc(v){return String(v==null?'':v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,' ')
+  .replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));}
+function xcrc(bytes){
+  if(!xcrc.tab){xcrc.tab=Array.from({length:256},(_,n)=>{let c=n;for(let k=0;k<8;k++)c=(c&1)?0xEDB88320^(c>>>1):c>>>1;return c>>>0;});}
+  let c=0xFFFFFFFF;for(const b of bytes)c=xcrc.tab[(c^b)&255]^(c>>>8);return(c^0xFFFFFFFF)>>>0;}
+function xzip(files){
+  const local=[],central=[];let off=0;
+  files.forEach(([name,raw])=>{
+    const nm=XENC.encode(name),data=typeof raw==='string'?XENC.encode(raw):raw,crc=xcrc(data);
+    const lh=new Uint8Array(30+nm.length),ld=new DataView(lh.buffer);
+    ld.setUint32(0,0x04034B50,true);ld.setUint16(4,20,true);ld.setUint16(6,0x0800,true);
+    ld.setUint16(12,33,true);ld.setUint32(14,crc,true);ld.setUint32(18,data.length,true);ld.setUint32(22,data.length,true);ld.setUint16(26,nm.length,true);lh.set(nm,30);
+    const ch=new Uint8Array(46+nm.length),cd=new DataView(ch.buffer);
+    cd.setUint32(0,0x02014B50,true);cd.setUint16(4,20,true);cd.setUint16(6,20,true);cd.setUint16(8,0x0800,true);
+    cd.setUint16(14,33,true);cd.setUint32(16,crc,true);cd.setUint32(20,data.length,true);cd.setUint32(24,data.length,true);cd.setUint16(28,nm.length,true);cd.setUint32(42,off,true);ch.set(nm,46);
+    local.push(lh,data);central.push(ch);off+=lh.length+data.length;});
+  const csize=central.reduce((n,b)=>n+b.length,0),end=new Uint8Array(22),ed=new DataView(end.buffer);
+  ed.setUint32(0,0x06054B50,true);ed.setUint16(8,files.length,true);ed.setUint16(10,files.length,true);ed.setUint32(12,csize,true);ed.setUint32(16,off,true);
+  const chunks=[...local,...central,end],out=new Uint8Array(chunks.reduce((n,b)=>n+b.length,0));let p=0;
+  chunks.forEach(b=>{out.set(b,p);p+=b.length;});return out;}
+function xcol(n){let s='';for(;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;}
+function xsheet(rows,widths){
+  const cols=Math.max(1,...rows.map(r=>r.length)),last=xcol(cols)+(rows.length||1);
+  const data=rows.map((row,ri)=>`<row r="${ri+1}">${row.map((v,ci)=>{
+    const ref=xcol(ci+1)+(ri+1),style=ri===0?1:2;
+    return typeof v==='number'&&Number.isFinite(v)?`<c r="${ref}" s="${style}"><v>${v}</v></c>`
+      :`<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xesc(v)}</t></is></c>`;}).join('')}</row>`).join('');
+  const cw=(widths||[]).map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${cw}</cols><sheetData>${data}</sheetData><autoFilter ref="A1:${last}"/></worksheet>`;}
+function xlsx(sheets){
+  const names=sheets.map((s,i)=>(s.name||'Sheet '+(i+1)).replace(/[\\/*?:\[\]]/g,' ').slice(0,31));
+  const types=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`;
+  const root=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const book=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n,i)=>`<sheet name="${xesc(n)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join('')}</sheets></workbook>`;
+  const rels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Arial"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF26B21"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><left style="thin"><color rgb="FFD9D1C7"/></left><right style="thin"><color rgb="FFD9D1C7"/></right><top style="thin"><color rgb="FFD9D1C7"/></top><bottom style="thin"><color rgb="FFD9D1C7"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const files=[['[Content_Types].xml',types],['_rels/.rels',root],['xl/workbook.xml',book],['xl/_rels/workbook.xml.rels',rels],['xl/styles.xml',styles]];
+  sheets.forEach((s,i)=>files.push(['xl/worksheets/sheet'+(i+1)+'.xml',xsheet(s.rows,s.widths)]));return xzip(files);}
+async function opXlsx(){
+  const projects=(opList&&opList.projects)||[],details=await Promise.all(projects.map(p=>api('GET','/api/open/'+p.id)));
+  const day=(opList&&opList.today)||today();
+  const summary=[['프로젝트 ID','매장명','지역','상태','운영 방식','매장 유형','오픈 예정일','D-Day','지연 건수','완료 항목','전체 항목','미완료 항목','진행률(%)','매장 등록','프로젝트 메모']];
+  const tasks=[['프로젝트 ID','항목 ID','매장명','지역','프로젝트 상태','단계','그룹','체크리스트 항목','상세 내용','담당','마감일','완료 여부','지연 여부','완료자','완료 시각(KST)','메모','추가 항목']];
+  details.forEach(d=>{const p=d.project,ts=d.tasks,done=ts.filter(t=>t.done).length,over=ts.filter(t=>t.overdue).length;
+    const dd=diffD(day,p.openDate),dt=dd>0?'D-'+dd:dd===0?'D-DAY':'D+'+(-dd);
+    summary.push([p.id,p.name,p.region||'',p.status,p.mode,p.stype,p.openDate,dt,over,done,ts.length,ts.length-done,ts.length?Math.round(done/ts.length*100):0,p.storeId?'등록':'미등록',p.memo||'']);
+    ts.forEach(t=>tasks.push([p.id,t.id,p.name,p.region||'',p.status,t.phase,t.grp,t.title,t.detail||'',t.ownerLabel,t.due,t.done?'완료':'미완료',t.overdue?'지연':'정상',t.doneBy||'',t.doneAt?new Date(t.doneAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false}):'',t.memo||'',t.custom?'예':'아니오']));});
+  const bytes=xlsx([{name:'프로젝트 현황',rows:summary,widths:[20,20,15,11,13,13,14,11,11,11,11,12,12,12,28]},
+    {name:'전체 체크리스트',rows:tasks,widths:[20,20,20,15,13,12,18,34,46,14,14,12,12,18,22,34,11]}]);
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  a.download='OFD_오픈진행현황_'+today()+'.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 let prodConf={loaded:false},prodCat='전체',prodScope='전체',prodPriceOpen=new Set(),prodPromo=-1,prodStoreSel=null;
 const CATS=['도넛','링도넛','음료','굿즈','서비스','세트','기타'];
 let csv={raw:'',rows:null,head:null,map:null,preview:null};
@@ -964,22 +1044,28 @@ function vOpen(){
   if(opSel&&opDet){
     const pr=opDet.project,T2=opDet.tasks;
     const dday=Math.round((new Date(pr.openDate+'T00:00:00Z')-new Date(opDet.today+'T00:00:00Z'))/864e5);
+    const dtxt=dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday);
     const done=T2.filter(x=>x.done).length,ov=T2.filter(x=>x.overdue).length;
     const pct=T2.length?Math.round(done/T2.length*100):0;
     const flt=x=>opFilter==='전체'?true:opFilter==='미완료'?!x.done:opFilter==='지연'?x.overdue:opFilter==='본사'?x.owner==='hq':x.owner!=='hq';
     const phases=['D-4주차','D-3주차','D-2주차','D-1주차','D-DAY'];
     return `
-  <div class="open-view"><div class="head"><div><h1>${esc(pr.name)} <span class="pill ${pr.status==='완료'?'pl-sig':pr.status==='보류'?'pl-warn':'pl-info'}">${pr.status}</span></h1>
-    <p>${esc(pr.region||'지역 미정')} · ${pr.mode} · ${pr.stype} · 오픈 예정 ${pr.openDate} (${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)})${pr.storeId?' · 매장 등록됨':''}</p></div>
-    <div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap">
-      <div><label>단계</label><select id="op_status" style="padding:6px 8px">${['상담중','진행','보류','완료'].map(s2=>`<option ${pr.status===s2?'selected':''}>${s2}</option>`).join('')}</select></div>
-      <div><label>오픈일 변경</label><input type="date" id="op_date" value="${pr.openDate}" style="padding:6px 8px"></div>
-      <button class="btn ghost sm" id="op_back">← 목록</button>
-    </div></div>
+  <div class="open-view"><header class="open-detail-header">
+    <div class="open-detail-nav"><button class="back" id="op_back">← 오픈 프로젝트 목록</button><button class="btn ghost sm" id="op_xlsx">전체 진행사항 Excel</button></div>
+    <div class="open-detail-copy"><div class="open-detail-eyebrow">OPEN PROJECT</div>
+      <div class="open-detail-title"><h1>${esc(pr.name)}</h1><span class="open-detail-status ${pr.status==='완료'?'complete':pr.status==='보류'?'hold':pr.status==='진행'?'active':'consult'}">${pr.status}</span></div>
+      <div class="open-detail-meta"><span>지역 · ${esc(pr.region||'미정')}</span><span>운영 방식 · ${esc(pr.mode)}</span><span>매장 유형 · ${esc(pr.stype)}</span>${pr.storeId?'<span>매장 등록 완료</span>':''}</div>
+    </div>
+    <div class="open-detail-schedule">
+      <div class="open-detail-dday"><span>${dday>=0?'오픈까지':'오픈 후'}</span><b>${dtxt}</b></div>
+      <div class="open-detail-control"><label for="op_status">프로젝트 단계</label><select id="op_status">${['상담중','진행','보류','완료'].map(s2=>`<option ${pr.status===s2?'selected':''}>${s2}</option>`).join('')}</select></div>
+      <div class="open-detail-control"><label for="op_date">오픈 예정일 변경</label><input type="date" id="op_date" value="${pr.openDate}"></div>
+    </div>
+  </header>
   <div class="kpis">
     <div class="kpi"><div class="k">진행률</div><div class="v">${pct}<em>%</em></div><div class="s">${done} / ${T2.length} 항목</div></div>
     <div class="kpi"><div class="k">지연</div><div class="v" style="color:${ov?'var(--risk)':'var(--ink)'}">${ov}<em>건</em></div><div class="s">마감 경과 · 미완료</div></div>
-    <div class="kpi"><div class="k">D-day</div><div class="v">${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)}</div><div class="s">${pr.openDate} 오픈</div></div>
+    <div class="kpi"><div class="k">미완료 체크리스트</div><div class="v">${T2.length-done}<em>건</em></div><div class="s">${pr.openDate} 오픈 예정</div></div>
   </div>
   <div class="panel">
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
@@ -1048,7 +1134,7 @@ function vOpen(){
     </article>`;};
   return `
   <div class="open-view"><div class="head"><div><h1>오픈 프로젝트</h1><p>신규 매장 준비 현황과 체크리스트 일정을 한눈에 확인합니다.</p></div>
-    <button class="btn" id="op_new">+ 새 오픈 프로젝트</button></div>
+    <div class="open-head-actions"><button class="btn ghost" id="op_xlsx">전체 진행사항 Excel</button><button class="btn" id="op_new">+ 새 오픈 프로젝트</button></div></div>
   ${opNew?`<div class="panel"><div class="panel-h"><h2>새 오픈 프로젝트</h2></div>
     <div class="row" style="align-items:flex-end">
       <div style="flex:2"><label>매장명(프로젝트명)</label><input id="opn_name" placeholder="예: 판교점"></div>
@@ -1602,6 +1688,9 @@ function bind(){
       prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
     catch(e){alert(emsg(e));}});
   on('#op_new',()=>{opNew=true;render();});
+  on('#op_xlsx',async()=>{const b=$.querySelector('#op_xlsx'),label=b.textContent;b.disabled=true;b.textContent='Excel 생성 중…';
+    try{await opXlsx();}catch(e){alert('Excel 파일을 생성하지 못했습니다. 다시 시도하십시오.');}
+    finally{if(b.isConnected){b.disabled=false;b.textContent=label;}}});
   on('#opn_cancel',()=>{opNew=false;render();});
   on('#opn_go',async()=>{
     const nm=$.querySelector('#opn_name').value.trim(),dt=$.querySelector('#opn_date').value;
