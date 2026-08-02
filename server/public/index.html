@@ -17,9 +17,9 @@ html,body{margin:0;padding:0;background:#EFEAE1}
   font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',
     -apple-system,BlinkMacSystemFont,system-ui,'Segoe UI',Roboto,sans-serif;
   background:var(--bg); color:var(--ink); min-height:100vh;
-  font-size:14px; line-height:1.5; letter-spacing:-.01em;
+  font-size:15px; line-height:1.5; letter-spacing:-.01em;
   font-variant-numeric:tabular-nums; display:flex; flex-direction:column;
-  max-width:1240px; margin:0 auto;
+  max-width:1680px; margin:0 auto;
 }
 #app .boot{padding:60px;color:var(--dim);font-size:13px}
 #app .top{background:var(--sur);border-bottom:1px solid var(--line);
@@ -127,7 +127,67 @@ html,body{margin:0;padding:0;background:#EFEAE1}
   display:flex;gap:10px}
 #app .logrow .lt{color:var(--dimmer);white-space:nowrap}
 #app .logrow .lw{font-weight:800;color:var(--deep);white-space:nowrap}
-@media(max-width:760px){#app .main{padding:13px}#app .kb-col{min-width:180px}#app .sess{margin-left:0;width:100%}}
+#app .open-view{font-size:15px}
+#app .open-view .head{align-items:center;margin-bottom:18px}
+#app .open-view .head h1{font-size:25px;letter-spacing:0}
+#app .open-view .head p{font-size:13px;line-height:1.6;max-width:760px}
+#app .open-kpis{grid-template-columns:repeat(4,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+#app .open-kpis .kpi{border-radius:8px;padding:15px 16px;min-height:105px}
+#app .open-kpis .kpi .k{font-size:12px;color:#686257}
+#app .open-kpis .kpi .v{font-size:29px;letter-spacing:0;margin-top:8px}
+#app .open-kpis .kpi .v em{font-size:13px;margin-left:4px}
+#app .open-kpis .kpi .s{font-size:12px;margin-top:8px}
+#app .open-kpis .risk .v{color:var(--risk)}
+#app .open-toolbar{background:var(--sur);border:1px solid #D9D1C7;border-radius:8px;
+  padding:12px 14px;margin-bottom:16px;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+#app .open-search{flex:1;min-width:260px}
+#app .open-search label{font-size:12px;color:#686257;margin-bottom:5px}
+#app .open-search input{height:42px;font-size:15px;padding:9px 12px;border-color:#CFC6BA}
+#app .open-delay-toggle{display:flex;align-items:center;gap:8px;min-height:42px;padding:0 12px;
+  border:1px solid #CFC6BA;border-radius:7px;background:#F8F6F2;color:#4D493F;font-size:14px;font-weight:700;cursor:pointer}
+#app .open-delay-toggle:has(input:checked){border-color:var(--risk);background:var(--risksoft);color:var(--risk)}
+#app .open-delay-toggle input{width:17px;height:17px;accent-color:var(--risk)}
+#app .open-result{margin-left:auto;min-height:42px;display:flex;align-items:center;color:var(--dim);font-size:13px;white-space:nowrap}
+#app .open-result b{font-size:15px;color:var(--ink);margin-right:3px}
+#app .open-board-scroll{overflow-x:auto;padding-bottom:8px}
+#app .open-board{display:grid;grid-template-columns:repeat(4,minmax(260px,1fr));gap:14px;min-width:1120px;align-items:start}
+#app .open-column{border:1.5px solid;border-radius:8px;padding:11px;min-height:360px}
+#app .open-column.consult{background:#F6F4F0;border-color:#D5CEC4}
+#app .open-column.active{background:#EFF6FA;border-color:#AAC8DC}
+#app .open-column.hold{background:#FFF8E9;border-color:#E2C47E}
+#app .open-column.complete{background:#F0F7F2;border-color:#AFCFB7}
+#app .open-column-head{display:flex;align-items:center;gap:8px;padding:3px 3px 12px;margin-bottom:10px;border-bottom:1px solid rgba(70,65,55,.16)}
+#app .open-column-head h2{font-size:16px;letter-spacing:0}
+#app .open-column-head .count{min-width:27px;height:25px;padding:2px 8px;border-radius:13px;background:rgba(255,255,255,.75);
+  border:1px solid rgba(70,65,55,.15);font-size:13px;font-weight:800;text-align:center}
+#app .open-column-head .overdue{margin-left:auto;font-size:12px;font-weight:800;color:var(--risk)}
+#app .open-card-list{display:flex;flex-direction:column;gap:10px}
+#app .open-card{background:var(--sur);border:1px solid #D8D0C5;border-radius:8px;padding:14px;cursor:pointer;
+  box-shadow:0 2px 6px rgba(41,37,31,.06);transition:border-color .12s,box-shadow .12s;outline:none}
+#app .open-card:hover,#app .open-card:focus-visible{border-color:var(--sig);box-shadow:0 3px 10px rgba(41,37,31,.11)}
+#app .open-card-name{font-size:19px;font-weight:800;line-height:1.3;letter-spacing:0;overflow-wrap:anywhere;color:#181B22}
+#app .open-card-region{font-size:13px;color:#5F5A50;margin-top:5px;font-weight:700}
+#app .open-card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:11px}
+#app .open-card-tags span{background:#F3F0EA;border:1px solid #E1DBD1;border-radius:5px;padding:4px 7px;font-size:12px;color:#555047;font-weight:700}
+#app .open-card-date{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:13px;padding-top:11px;border-top:1px solid #EEE9E2}
+#app .open-card-date .date-label{font-size:12px;color:var(--dim)}
+#app .open-card-date time{display:block;font-size:14px;color:var(--ink);font-weight:800;margin-top:2px}
+#app .open-dday{border-radius:5px;padding:5px 8px;background:#EDE9E2;color:#4D493F;font-size:14px;font-weight:800;white-space:nowrap}
+#app .open-dday.soon{background:var(--warnsoft);color:#8B5A0A}
+#app .open-dday.late{background:var(--risksoft);color:var(--risk)}
+#app .open-card-alerts{display:flex;min-height:27px;align-items:center;margin-top:10px}
+#app .open-overdue{font-size:12px;font-weight:800;color:var(--risk);background:var(--risksoft);border:1px solid #EBC1C1;border-radius:5px;padding:4px 7px}
+#app .open-no-overdue{font-size:12px;color:var(--dimmer)}
+#app .open-progress-head{display:flex;justify-content:space-between;gap:8px;margin-top:11px;font-size:12px;color:var(--dim)}
+#app .open-progress-head b{font-size:13px;color:var(--ink)}
+#app .open-progress{height:9px;background:#E9E4DD;border-radius:5px;overflow:hidden;margin-top:6px}
+#app .open-progress>i{display:block;height:100%;background:var(--sig);border-radius:5px}
+#app .open-card.overdue .open-progress>i{background:var(--risk)}
+#app .open-empty-column{border:1.5px dashed rgba(86,78,68,.25);border-radius:8px;padding:28px 10px;text-align:center;font-size:13px;color:#8F887C;background:rgba(255,255,255,.38)}
+@media(max-width:900px){#app .open-kpis{grid-template-columns:repeat(2,minmax(150px,1fr))}}
+@media(max-width:760px){#app .main{padding:13px}#app .kb-col{min-width:180px}#app .sess{margin-left:0;width:100%}
+  #app .open-view .head h1{font-size:22px}#app .open-kpis{gap:8px}#app .open-kpis .kpi{padding:13px;min-height:98px}
+  #app .open-toolbar{align-items:stretch}#app .open-search{min-width:100%}#app .open-delay-toggle{flex:1}#app .open-result{margin-left:0}}
 </style>
 </head>
 <body>
@@ -183,7 +243,7 @@ let anOpen=new Set();
 let stEdit=null;
 let wasteData=null,wasteKey='';
 let agFrom='',agTo='',agQ='',agNoSched=false,agPage=1,agData=null,agKey='';
-let opList=null,opSel=null,opDet=null,opFilter='전체',opNew=false;
+let opList=null,opSel=null,opDet=null,opFilter='전체',opNew=false,opQuery='',opDelayOnly=false,opSearchTimer=null;
 let stSel=[],stGeo={},nvLoading=false,nvErr='',nvReady=false,nvKeyEdit=false;
 function havM(a,b){const R=6371000,rad=x=>x*Math.PI/180;
   const dLa=rad(b.lat-a.lat),dLo=rad(b.lng-a.lng);
@@ -895,8 +955,8 @@ function vProd(){
 function opReload(){opList=null;opDet=null;render();}
 function vOpen(){
   if(opList===null){
-    api('GET','/api/open').then(r=>{opList=r;render();}).catch(()=>{opList={projects:[]};render();});
-    return '<div class="head"><div><h1>오픈</h1></div></div><div class="empty">불러오는 중…</div>';}
+    api('GET','/api/open').then(r=>{opList=r;render();}).catch(()=>{opList={projects:[],today:today()};render();});
+    return '<div class="open-view"><div class="head"><div><h1>오픈</h1></div></div><div class="empty">불러오는 중…</div></div>';}
   const P=opList.projects;
   if(opSel&&!opDet){
     api('GET','/api/open/'+opSel).then(r=>{opDet=r;render();}).catch(()=>{opSel=null;render();});
@@ -909,8 +969,8 @@ function vOpen(){
     const flt=x=>opFilter==='전체'?true:opFilter==='미완료'?!x.done:opFilter==='지연'?x.overdue:opFilter==='본사'?x.owner==='hq':x.owner!=='hq';
     const phases=['D-4주차','D-3주차','D-2주차','D-1주차','D-DAY'];
     return `
-  <div class="head"><div><h1>${esc(pr.name)} <span class="pill ${pr.status==='완료'?'pl-sig':pr.status==='보류'?'pl-warn':'pl-info'}">${pr.status}</span></h1>
-    <p>${pr.mode} · ${pr.stype} · 오픈 예정 ${pr.openDate} (${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)})${pr.storeId?' · 매장 등록됨':''}</p></div>
+  <div class="open-view"><div class="head"><div><h1>${esc(pr.name)} <span class="pill ${pr.status==='완료'?'pl-sig':pr.status==='보류'?'pl-warn':'pl-info'}">${pr.status}</span></h1>
+    <p>${esc(pr.region||'지역 미정')} · ${pr.mode} · ${pr.stype} · 오픈 예정 ${pr.openDate} (${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)})${pr.storeId?' · 매장 등록됨':''}</p></div>
     <div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap">
       <div><label>단계</label><select id="op_status" style="padding:6px 8px">${['상담중','진행','보류','완료'].map(s2=>`<option ${pr.status===s2?'selected':''}>${s2}</option>`).join('')}</select></div>
       <div><label>오픈일 변경</label><input type="date" id="op_date" value="${pr.openDate}" style="padding:6px 8px"></div>
@@ -960,13 +1020,39 @@ function vOpen(){
       <div style="flex:0 0 110px"><label>담당</label><select id="op_no"><option value="pt">${pr.mode==='운영대행'?'운영대행':'가맹점'}</option><option value="hq">본사</option><option value="both">협의</option></select></div>
       <div style="display:flex;align-items:flex-end"><button class="btn sm" id="op_addtask">추가</button></div>
     </div>
-  </div>`;}
+  </div></div>`;}
+  const COLS=['상담중','진행','보류','완료'];
+  const COLCLS={상담중:'consult',진행:'active',보류:'hold',완료:'complete'};
+  const ddayOf=pr=>Math.round((new Date(pr.openDate+'T00:00:00Z')-new Date(opList.today+'T00:00:00Z'))/864e5);
+  const within30=P.filter(pr=>pr.status!=='완료'&&ddayOf(pr)>=0&&ddayOf(pr)<=30).length;
+  const delayed=P.filter(pr=>pr.overdue>0).length;
+  const unchecked=P.reduce((sum,pr)=>sum+Math.max(0,pr.total-pr.done),0);
+  const q=opQuery.trim().toLocaleLowerCase('ko-KR');
+  const visible=P.filter(pr=>(!opDelayOnly||pr.overdue>0)&&(!q||[pr.name,pr.region,pr.mode,pr.stype]
+    .some(v=>String(v||'').toLocaleLowerCase('ko-KR').includes(q))));
+  const byCol={};COLS.forEach(c=>byCol[c]=[]);
+  visible.forEach(pr=>(byCol[pr.status]||byCol['진행']).push(pr));
+  const card=pr=>{
+    const dday=ddayOf(pr),dtxt=dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday);
+    const pct=pr.total?Math.round(pr.done/pr.total*100):0;
+    const dcls=pr.status!=='완료'&&dday<0?'late':pr.status!=='완료'&&dday<=30?'soon':'';
+    return `<article class="open-card ${pr.overdue?'overdue':''}" data-opsel="${pr.id}" tabindex="0" role="button" aria-label="${esc(pr.name)} 상세 보기">
+      <div class="open-card-name">${esc(pr.name)}</div>
+      <div class="open-card-region">지역 · ${esc(pr.region||'미정')}</div>
+      <div class="open-card-tags"><span>운영 방식 · ${esc(pr.mode)}</span><span>매장 유형 · ${esc(pr.stype)}</span></div>
+      <div class="open-card-date"><div><span class="date-label">오픈 예정일</span><time datetime="${pr.openDate}">${esc(pr.openDate)}</time></div>
+        <span class="open-dday ${dcls}">${dtxt}</span></div>
+      <div class="open-card-alerts">${pr.overdue?`<span class="open-overdue">지연 ${pr.overdue}건</span>`:`<span class="open-no-overdue">지연 0건</span>`}</div>
+      <div class="open-progress-head"><span>체크리스트 ${pr.done}/${pr.total}</span><b>진행률 ${pct}%</b></div>
+      <div class="open-progress" aria-label="진행률 ${pct}%"><i style="width:${Math.min(100,pct)}%"></i></div>
+    </article>`;};
   return `
-  <div class="head"><div><h1>오픈</h1><p>OFD 신규매장 오픈 매뉴얼 기반 — 프로젝트 생성 시 D-4주차~D-DAY 체크리스트가 오픈일 기준 마감일과 함께 자동 생성됩니다</p></div>
+  <div class="open-view"><div class="head"><div><h1>오픈 프로젝트</h1><p>신규 매장 준비 현황과 체크리스트 일정을 한눈에 확인합니다.</p></div>
     <button class="btn" id="op_new">+ 새 오픈 프로젝트</button></div>
   ${opNew?`<div class="panel"><div class="panel-h"><h2>새 오픈 프로젝트</h2></div>
     <div class="row" style="align-items:flex-end">
       <div style="flex:2"><label>매장명(프로젝트명)</label><input id="opn_name" placeholder="예: 판교점"></div>
+      <div style="flex:1"><label>지역</label><input id="opn_region" placeholder="예: 경기 판교"></div>
       <div style="flex:0 0 150px"><label>오픈 예정일</label><input type="date" id="opn_date"></div>
       <div style="flex:0 0 130px"><label>운영 방식</label><select id="opn_mode"><option>가맹</option><option>운영대행</option></select></div>
       <div style="flex:0 0 130px"><label>매장 유형</label><select id="opn_stype"><option>테이블형</option><option>포장형</option></select></div>
@@ -974,41 +1060,24 @@ function vOpen(){
       <div style="display:flex;align-items:flex-end;gap:6px"><button class="btn" id="opn_go">생성</button><button class="btn ghost" id="opn_cancel">취소</button></div>
     </div>
     <div class="note">운영 방식은 담당 표기(가맹점/운영대행)를, 매장 유형은 전용 체크 항목(머신·디자인물 구성 등)을 결정합니다.</div></div>`:''}
-  ${(()=>{
-    const COLS=['상담중','진행','보류','완료'];
-    const byCol={};COLS.forEach(c=>byCol[c]=[]);
-    P.forEach(pr=>{(byCol[pr.status]||byCol['진행']).push(pr);});
-    if(!P.length)return '<div class="empty">오픈 프로젝트가 없습니다 — [+ 새 오픈 프로젝트]로 시작하십시오.</div>';
-    const card=pr=>{
-      const dday=Math.round((new Date(pr.openDate+'T00:00:00Z')-new Date(opList.today+'T00:00:00Z'))/864e5);
-      const dtxt=dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday);
-      const pct=pr.total?Math.round(pr.done/pr.total*100):0;
-      return `<div style="background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(46,42,37,.04)" data-opsel="${pr.id}">
-        <div style="display:flex;align-items:center;gap:6px">
-          <b style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.name)}</b>
-          <select data-opst="${pr.id}" style="font-size:10.5px;padding:2px 4px;border-radius:6px;border:1px solid var(--line)">${COLS.map(s2=>`<option ${pr.status===s2?'selected':''}>${s2}</option>`).join('')}</select>
-        </div>
-        <div style="font-size:10.5px;color:var(--dim);margin-top:3px">${pr.mode} · ${pr.stype} · 오픈 ${pr.openDate}</div>
-        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;align-items:center">
-          <span class="pill ${dday<=7&&pr.status==='진행'?'pl-warn':'pl-dim'}">${dtxt}</span>
-          ${pr.overdue?`<span class="pill" style="background:var(--warnsoft);color:var(--risk)">지연 ${pr.overdue}건</span>`:''}
-          <span style="flex:1"></span>
-          <span style="font-size:11px;font-weight:800">${pr.done}/${pr.total} · ${pct}%</span>
-        </div>
-        <div style="background:#F1EDE5;border-radius:4px;height:7px;overflow:hidden;margin-top:6px"><div style="width:${pct}%;height:100%;background:${pr.overdue?'var(--warn)':'var(--sig)'}"></div></div>
-      </div>`;};
-    return `<div style="display:flex;gap:12px;align-items:flex-start;overflow-x:auto;padding-bottom:6px">
-      ${COLS.filter(c=>c!=='보류'||byCol['보류'].length).map(c=>`
-      <div style="flex:1;min-width:235px">
-        <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;padding:0 2px">
-          <b style="font-size:13px">${c}</b><span class="pill pl-dim">${byCol[c].length}</span>
-          ${c==='진행'&&byCol[c].some(x=>x.overdue)?`<span class="pill" style="background:var(--warnsoft);color:var(--risk)">지연 ${byCol[c].reduce((a,x)=>a+x.overdue,0)}</span>`:''}
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          ${byCol[c].length?byCol[c].map(card).join(''):`<div style="border:1.5px dashed var(--line);border-radius:11px;padding:16px;text-align:center;font-size:11px;color:var(--dimmer)">비어 있음</div>`}
-        </div>
-      </div>`).join('')}
-    </div>`;})()}`;
+  <div class="kpis open-kpis">
+    <div class="kpi"><div class="k">전체 프로젝트</div><div class="v">${P.length}<em>건</em></div><div class="s">등록된 모든 오픈 프로젝트</div></div>
+    <div class="kpi"><div class="k">30일 내 오픈</div><div class="v">${within30}<em>건</em></div><div class="s">오늘부터 30일 이내 예정</div></div>
+    <div class="kpi ${delayed?'risk':''}"><div class="k">지연 프로젝트</div><div class="v">${delayed}<em>건</em></div><div class="s">기한을 넘긴 항목이 있는 프로젝트</div></div>
+    <div class="kpi ${unchecked?'risk':''}"><div class="k">미완료 체크리스트</div><div class="v">${unchecked}<em>건</em></div><div class="s">전체 프로젝트의 남은 항목</div></div>
+  </div>
+  <div class="open-toolbar">
+    <div class="open-search"><label for="op_q">프로젝트 검색</label><input type="search" id="op_q" value="${esc(opQuery)}" placeholder="매장명, 지역, 운영 방식, 매장 유형" autocomplete="off"></div>
+    <label class="open-delay-toggle"><input type="checkbox" id="op_delay" ${opDelayOnly?'checked':''}> 지연 프로젝트만</label>
+    <div class="open-result"><b>${visible.length}</b> / ${P.length}개 표시</div>
+  </div>
+  <div class="open-board-scroll"><div class="open-board">
+    ${COLS.map(c=>{const ov=byCol[c].reduce((sum,x)=>sum+x.overdue,0);return `
+      <section class="open-column ${COLCLS[c]}">
+        <div class="open-column-head"><h2>${c}</h2><span class="count">${byCol[c].length}</span>${ov?`<span class="overdue">지연 ${ov}건</span>`:''}</div>
+        <div class="open-card-list">${byCol[c].length?byCol[c].map(card).join(''):`<div class="open-empty-column">해당 프로젝트 없음</div>`}</div>
+      </section>`;}).join('')}
+  </div></div></div>`;
 }
 function noticeList(limit){
   const ns=S.notices;
@@ -1537,16 +1606,18 @@ function bind(){
   on('#opn_go',async()=>{
     const nm=$.querySelector('#opn_name').value.trim(),dt=$.querySelector('#opn_date').value;
     if(!nm||!dt)return alert('매장명과 오픈 예정일을 입력하십시오.');
-    try{const r=await api('POST','/api/open',{name:nm,openDate:dt,
+    try{const r=await api('POST','/api/open',{name:nm,region:$.querySelector('#opn_region').value.trim(),openDate:dt,
       mode:$.querySelector('#opn_mode').value,stype:$.querySelector('#opn_stype').value,
       status:$.querySelector('#opn_st').value});
       opNew=false;opSel=r.id;opReload();}catch(e){alert(emsg(e));}});
   $.querySelectorAll('[data-opsel]').forEach(el=>el.onclick=e=>{
-    if(e.target.closest('select'))return;
     opSel=el.dataset.opsel;opDet=null;render();});
-  $.querySelectorAll('[data-opst]').forEach(sel=>sel.onchange=async()=>{
-    try{await api('PATCH','/api/open/'+sel.dataset.opst,{status:sel.value});opList=null;render();}
-    catch(e){alert(emsg(e));render();}});
+  $.querySelectorAll('[data-opsel]').forEach(el=>el.onkeydown=e=>{
+    if(e.key==='Enter'||e.key===' '){e.preventDefault();opSel=el.dataset.opsel;opDet=null;render();}});
+  {const oq=$.querySelector('#op_q');if(oq)oq.oninput=()=>{
+    const value=oq.value;clearTimeout(opSearchTimer);opSearchTimer=setTimeout(()=>{
+      opQuery=value;render();const next=$.querySelector('#op_q');if(next){next.focus();next.setSelectionRange(value.length,value.length);}},180);};}
+  {const odel=$.querySelector('#op_delay');if(odel)odel.onchange=()=>{opDelayOnly=odel.checked;render();};}
   {const os=$.querySelector('#op_status');
    if(os)os.onchange=async()=>{
      try{await api('PATCH','/api/open/'+opSel,{status:os.value});opDet=null;opList=null;render();}
@@ -1584,7 +1655,7 @@ function bind(){
         if(!confirm('미완료 항목이 '+left+'건 남아 있습니다.\n그래도 오픈을 확정하고 매장을 등록합니까? (감사 로그에 강행으로 기록됩니다)'))return;
         force=true;}
       else if(!confirm('체크리스트 100% — 오픈을 확정하고 매장 대장에 등록합니다.'))return;
-      const region=prompt('지역 (예: 서울)','서울');if(region===null)return;
+      const region=prompt('지역 (예: 서울)',opDet.project.region||'서울');if(region===null)return;
       const addr=prompt('소재지 주소','');if(addr===null)return;
       const phone=prompt('매장 전화번호','');if(phone===null)return;
       const type2=confirm('구분을 선택하십시오.\n[확인] = 가맹 · [취소] = 직영')?'가맹':'직영';

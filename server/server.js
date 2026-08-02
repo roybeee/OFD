@@ -60,12 +60,13 @@ try { db.exec('ALTER TABLE skus ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE sku_aliases ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE orders ADD COLUMN deliver_date TEXT'); db.exec('UPDATE orders SET deliver_date=date WHERE deliver_date IS NULL'); } catch (e) {}
 db.exec(`
-CREATE TABLE IF NOT EXISTS open_projects(id TEXT PRIMARY KEY, name TEXT, open_date TEXT, mode TEXT, stype TEXT,
+CREATE TABLE IF NOT EXISTS open_projects(id TEXT PRIMARY KEY, name TEXT, region TEXT, open_date TEXT, mode TEXT, stype TEXT,
   status TEXT DEFAULT '진행', store_id TEXT, memo TEXT, mt INTEGER, del INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS open_tasks(id TEXT PRIMARY KEY, project_id TEXT, phase TEXT, grp TEXT, title TEXT,
   detail TEXT, owner TEXT, off INTEGER, done INTEGER DEFAULT 0, done_by TEXT, done_at INTEGER,
   memo TEXT, sort INTEGER, custom INTEGER DEFAULT 0, del INTEGER DEFAULT 0);
 `);
+try { db.exec('ALTER TABLE open_projects ADD COLUMN region TEXT'); } catch (e) {}
 
 /* ---------------- utils ---------------- */
 const uid = p => p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
@@ -1453,7 +1454,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/open' && req.method === 'GET') {
       if (deny('stores')) return;
       const t0 = kstToday();
-      const rows = db.prepare('SELECT * FROM open_projects WHERE del=0 ORDER BY mt DESC').all().map(pr => {
+      const rows = db.prepare('SELECT p2.*, s.region store_region FROM open_projects p2 LEFT JOIN stores s ON s.id=p2.store_id AND s.del=0 WHERE p2.del=0 ORDER BY p2.mt DESC').all().map(pr => {
         const ts = db.prepare('SELECT phase, off, done FROM open_tasks WHERE project_id=? AND del=0').all(pr.id);
         const phases = {};
         OPEN_PHASES.forEach(ph => { phases[ph] = { t: 0, d: 0 }; });
@@ -1463,7 +1464,7 @@ const server = http.createServer(async (req, res) => {
           phases[x.phase].t++; if (x.done) phases[x.phase].d++;
           if (!x.done && pr.status === '진행' && addDays(pr.open_date, x.off) < t0) overdue++;
         });
-        return { id: pr.id, name: pr.name, openDate: pr.open_date, mode: pr.mode, stype: pr.stype,
+        return { id: pr.id, name: pr.name, region: pr.region || pr.store_region || '', openDate: pr.open_date, mode: pr.mode, stype: pr.stype,
           status: pr.status, storeId: pr.store_id || null, memo: pr.memo || '',
           total: ts.length, done: ts.filter(x => x.done).length, overdue, phases, mt: pr.mt };
       });
@@ -1472,6 +1473,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/open' && req.method === 'POST') {
       if (deny('stores')) return;
       const name = String(body.name || '').trim();
+      const region = String(body.region || '').trim();
       const od = String(body.openDate || '').trim();
       const mode = body.mode === '운영대행' ? '운영대행' : '가맹';
       const stype = body.stype === '포장형' ? '포장형' : '테이블형';
@@ -1479,8 +1481,8 @@ const server = http.createServer(async (req, res) => {
       if (!isDate(od)) return err(res, 400, 'BAD_DATE');
       const st0 = ['상담중', '진행'].includes(body.status) ? body.status : '상담중';
       const pid = uid('op');
-      db.prepare('INSERT INTO open_projects(id,name,open_date,mode,stype,status,memo,mt) VALUES(?,?,?,?,?,?,?,?)')
-        .run(pid, name, od, mode, stype, st0, String(body.memo || ''), now());
+      db.prepare('INSERT INTO open_projects(id,name,region,open_date,mode,stype,status,memo,mt) VALUES(?,?,?,?,?,?,?,?,?)')
+        .run(pid, name, region, od, mode, stype, st0, String(body.memo || ''), now());
       const ins = db.prepare('INSERT INTO open_tasks(id,project_id,phase,grp,title,detail,owner,off,sort) VALUES(?,?,?,?,?,?,?,?,?)');
       let n = 0;
       OPEN_TPL.forEach((t2, i) => {
@@ -1493,7 +1495,7 @@ const server = http.createServer(async (req, res) => {
     }
     if ((m = p.match(/^\/api\/open\/([\w-]+)$/)) && req.method === 'GET') {
       if (deny('stores')) return;
-      const pr = db.prepare('SELECT * FROM open_projects WHERE id=? AND del=0').get(m[1]);
+      const pr = db.prepare('SELECT p2.*, s.region store_region FROM open_projects p2 LEFT JOIN stores s ON s.id=p2.store_id AND s.del=0 WHERE p2.id=? AND p2.del=0').get(m[1]);
       if (!pr) return err(res, 404, 'NOT_FOUND');
       const t0 = kstToday();
       const tasks = db.prepare('SELECT * FROM open_tasks WHERE project_id=? AND del=0 ORDER BY sort').all(pr.id).map(x => ({
@@ -1503,7 +1505,7 @@ const server = http.createServer(async (req, res) => {
         done: !!x.done, doneBy: x.done_by || '', doneAt: x.done_at || null, memo: x.memo || '',
         overdue: !x.done && pr.status === '진행' && addDays(pr.open_date, x.off) < t0, custom: !!x.custom
       }));
-      return send(res, 200, { project: { id: pr.id, name: pr.name, openDate: pr.open_date, mode: pr.mode,
+      return send(res, 200, { project: { id: pr.id, name: pr.name, region: pr.region || pr.store_region || '', openDate: pr.open_date, mode: pr.mode,
         stype: pr.stype, status: pr.status, storeId: pr.store_id || null, memo: pr.memo || '' }, tasks, today: t0 });
     }
     if ((m = p.match(/^\/api\/open\/([\w-]+)$/)) && req.method === 'PATCH') {
@@ -1511,13 +1513,14 @@ const server = http.createServer(async (req, res) => {
       const pr = db.prepare('SELECT * FROM open_projects WHERE id=? AND del=0').get(m[1]);
       if (!pr) return err(res, 404, 'NOT_FOUND');
       let od = pr.open_date;
+      const region = body.region !== undefined ? String(body.region).trim() : (pr.region || '');
       if (body.openDate !== undefined) {
         if (!isDate(String(body.openDate))) return err(res, 400, 'BAD_DATE');
         od = String(body.openDate);
       }
       const st2 = ['상담중', '진행', '보류', '완료'].includes(body.status) ? body.status : pr.status;
-      db.prepare('UPDATE open_projects SET open_date=?, status=?, memo=?, mt=? WHERE id=?')
-        .run(od, st2, body.memo !== undefined ? String(body.memo) : pr.memo, now(), m[1]);
+      db.prepare('UPDATE open_projects SET region=?, open_date=?, status=?, memo=?, mt=? WHERE id=?')
+        .run(region, od, st2, body.memo !== undefined ? String(body.memo) : pr.memo, now(), m[1]);
       if (od !== pr.open_date) audit(actor, '오픈일 변경', pr.name + ' ' + pr.open_date + ' → ' + od + ' (전 항목 마감일 자동 재계산)');
       return send(res, 200, { ok: true });
     }
@@ -1567,9 +1570,10 @@ const server = http.createServer(async (req, res) => {
       if (left > 0 && !body.force) return err(res, 409, 'TASKS_LEFT', { left });
       const type2 = body.type === '직영' ? '직영' : '가맹';
       const sid = uid('s'); const code = genCode();
+      const region = String(body.region !== undefined ? body.region : (pr.region || '')).trim();
       db.prepare('INSERT INTO stores(id,name,type,region,addr,phone,open_date,code_hash,mt) VALUES(?,?,?,?,?,?,?,?,?)')
-        .run(sid, pr.name, type2, String(body.region || ''), String(body.addr || ''), fmtPhone(body.phone), pr.open_date, pwHash(code), now());
-      db.prepare("UPDATE open_projects SET status='완료', store_id=?, mt=? WHERE id=?").run(sid, now(), pr.id);
+        .run(sid, pr.name, type2, region, String(body.addr || ''), fmtPhone(body.phone), pr.open_date, pwHash(code), now());
+      db.prepare("UPDATE open_projects SET status='완료', store_id=?, region=?, mt=? WHERE id=?").run(sid, region, now(), pr.id);
       audit(actor, '오픈 확정 — 매장 등록', pr.name + (left ? ' (미완료 ' + left + '건 강행)' : ' (체크리스트 100%)'));
       return send(res, 200, { ok: true, storeId: sid, code });
     }
