@@ -45,7 +45,7 @@ export function Button({ className = '', variant = 'primary', ...props }: Button
 
 export function ToastRegion({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
   return (
-    <div className="toast-region" aria-live="polite" aria-label="알림">
+    <div className="toast-region" role="status" aria-live="polite" aria-label="알림">
       {toasts.map((toast) => (
         <div key={toast.id} className={`toast toast-${toast.tone}`}>
           {toast.tone === 'success' ? <Check size={18} aria-hidden="true" /> : <Info size={18} aria-hidden="true" />}

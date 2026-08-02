@@ -84,7 +84,7 @@ export function AppShell({ role, path, source, actorName, actorRole, storeName, 
         </div>
 
         <div className="context-bar">
-          <div className="context-title"><span className="online-dot" aria-label="정상 연결" /> <strong>{contextName}</strong></div>
+          <div className="context-title"><span className="online-dot" role="img" aria-label="정상 연결" /> <strong>{contextName}</strong></div>
           <nav className="primary-nav" aria-label="주요 메뉴">
             {nav.map((item) => {
               const Icon = item.icon;

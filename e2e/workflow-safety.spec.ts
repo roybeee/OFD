@@ -99,7 +99,7 @@ test('ambiguous deposits cannot be manually linked without selecting a claim', a
 test('mobile delivery proof drawer contains overflow and rejects unsafe files', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 360, height: 800 });
   await openDemo(page, '/driver/today?role=driver&view=today', 'driver-today-screen');
-  await page.getByRole('button', { name: /배송 상세|배송 시작/ }).click();
+  await page.locator('.driver-next').getByRole('button', { name: '배송 상세' }).click();
 
   const dialog = page.getByRole('dialog');
   const fileInput = dialog.locator('input[type="file"]');
