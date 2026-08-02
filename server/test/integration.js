@@ -769,6 +769,10 @@ async function main() {
     && ['open-card-name', 'open-card-region', '운영 방식 ·', '매장 유형 ·', '오픈 예정일', '진행률'].every(x => uiText.includes(x))
     && uiText.includes("const COLS=['상담중','진행','보류','완료']") && uiText.includes('max-width:1680px')
     && !uiText.includes('data-opst='));
+  log('R3 오픈 상세 헤더·전체 진행사항 XLSX 내보내기',
+    ['open-detail-header', 'open-detail-title', 'open-detail-schedule', '전체 진행사항 Excel'].every(x => uiText.includes(x))
+    && ['프로젝트 현황', '전체 체크리스트', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'].every(x => uiText.includes(x))
+    && uiText.includes("projects.map(p=>api('GET','/api/open/'+p.id))"));
 
   const pass = R.filter(Boolean).length;
   console.log('\n' + pass + '/' + R.length + ' integration checks passed');
