@@ -57,12 +57,14 @@ test("도메인 저장 직후 장애가 나면 idempotency 예약과 도메인 �
   });
 });
 
-test("order당 shipment, receipt당 settlement, settlement당 invoice business key를 경쟁 안전하게 선점한다", async () => {
+test("order당 shipment, receipt당 settlement, invoice 생성 그룹·파트 business key를 경쟁 안전하게 선점한다", async () => {
   const repository = new MemoryRepository();
   await repository.commit({ changes: [
     { type: "shipment", id: "sh-1", expectedVersion: null, value: { id: "sh-1", orderId: "order-1", version: 1 } },
     { type: "settlement", id: "set-1", expectedVersion: null, value: { id: "set-1", storeId: "store-1", periodStart: "2026-07-01", periodEnd: "2026-07-31", receiptIds: ["receipt-1"], version: 1 } },
-    { type: "tax_invoice", id: "inv-1", expectedVersion: null, value: { id: "inv-1", settlementId: "set-1", version: 1 } },
+    { type: "tax_invoice", id: "inv-1", expectedVersion: null, value: {
+      id: "inv-1", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 1, issueType: "normal", version: 1,
+    } },
   ] });
   await assert.rejects(repository.commit({ changes: [
     { type: "shipment", id: "sh-2", expectedVersion: null, value: { id: "sh-2", orderId: "order-1", version: 1 } },
@@ -71,6 +73,18 @@ test("order당 shipment, receipt당 settlement, settlement당 invoice business k
     { type: "settlement", id: "set-2", expectedVersion: null, value: { id: "set-2", storeId: "store-1", periodStart: "2026-08-01", periodEnd: "2026-08-31", receiptIds: ["receipt-1"], version: 1 } },
   ] }), /중복 생성/);
   await assert.rejects(repository.commit({ changes: [
-    { type: "tax_invoice", id: "inv-2", expectedVersion: null, value: { id: "inv-2", settlementId: "set-1", version: 1 } },
+    { type: "tax_invoice", id: "inv-2", expectedVersion: null, value: {
+      id: "inv-2", settlementId: "set-1", invoiceGroupId: "group-2", partNumber: 1, issueType: "normal", version: 1,
+    } },
+  ] }), /중복 생성/);
+  await repository.commit({ changes: [
+    { type: "tax_invoice", id: "inv-3", expectedVersion: null, value: {
+      id: "inv-3", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 2, issueType: "normal", version: 1,
+    } },
+  ] });
+  await assert.rejects(repository.commit({ changes: [
+    { type: "tax_invoice", id: "inv-4", expectedVersion: null, value: {
+      id: "inv-4", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 2, issueType: "normal", version: 1,
+    } },
   ] }), /중복 생성/);
 });
