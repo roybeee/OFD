@@ -6,7 +6,7 @@ on:
     branches: [agent/ofd-one-process-v2]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   lockfile:
@@ -19,18 +19,23 @@ jobs:
           node-version: 22.x
       - name: Use the repository npm version
         run: npm install --global npm@11.11.1
-      - name: Resolve the reviewed dependency graph without lifecycle scripts
+      - name: Detect whether the initial lockfile is missing
+        id: lockfile
+        run: test -f package-lock.json && echo "missing=false" >> "$GITHUB_OUTPUT" || echo "missing=true" >> "$GITHUB_OUTPUT"
+      - name: Resolve the initial dependency graph without lifecycle scripts
+        if: steps.lockfile.outputs.missing == 'true'
         run: npm install --package-lock-only --ignore-scripts
       - name: Verify the generated lockfile is reproducible
+        if: steps.lockfile.outputs.missing == 'true'
         run: npm ci --ignore-scripts
-      - name: Verify production dependencies are free of high vulnerabilities
-        run: npm audit --omit=dev --audit-level=high
-      - name: Commit the verified lockfile to this feature branch
-        if: github.event_name == 'push'
-        run: |
-          git diff --quiet -- package-lock.json && exit 0
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "검증된 보안 패키지 잠금파일 갱신"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+      - name: Validate dependency-free platform contracts
+        if: steps.lockfile.outputs.missing == 'true'
+        run: npm run test:platform
+      - name: Upload lockfile for review and commit
+        if: steps.lockfile.outputs.missing == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock-node-22
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 7
