@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+**/node_modules
+**/dist
+**/.cache
+**/.turbo
+coverage
+playwright-report
+test-results
+*.log
+*.pem
+*.key
+*.p12
+*.pfx

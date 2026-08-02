@@ -1,0 +1,31 @@
+import type { Role } from '../types';
+
+export const pathCapability: Record<string, string> = {
+  '/store/orders': 'store.orders.read',
+  '/store/documents': 'store.documents.read',
+  '/hq/orders': 'hq.orders.read',
+  '/hq/delivery': 'hq.shipments.manage',
+  '/hq/reconciliation': 'hq.payments.reconcile',
+  '/hq/invoices': 'hq.invoices.read',
+  '/driver/today': 'driver.deliveries.read',
+};
+
+export function canAccessPath(path: string, capabilities: string[], explicitDemo = false) {
+  return explicitDemo || capabilities.includes(pathCapability[path]);
+}
+
+export function defaultPathFor(capabilities: string[]) {
+  return Object.keys(pathCapability).find((path) => capabilities.includes(pathCapability[path])) ?? '/unauthorized';
+}
+
+export function roleForActor(actorRole: string): Role {
+  if (actorRole === 'driver') return 'driver';
+  if (actorRole.startsWith('hq_') || actorRole === 'auditor') return 'hq';
+  return 'store';
+}
+
+export function roleForPath(path: string): Role {
+  if (path.startsWith('/hq/')) return 'hq';
+  if (path.startsWith('/driver/')) return 'driver';
+  return 'store';
+}

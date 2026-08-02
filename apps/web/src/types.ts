@@ -1,0 +1,123 @@
+export type Role = 'store' | 'hq' | 'driver';
+export type DataSource = 'live' | 'demo';
+
+export type ProviderMeta = {
+  apiVersion: string;
+  appMode: 'demo' | 'test' | 'production' | string;
+  providerMode: 'mock' | 'production' | string;
+  externalIssueEnabled: boolean;
+};
+
+export type Product = {
+  id: string;
+  name: string;
+  unit: string;
+  grossPrice: number;
+  category: string;
+  recommended?: boolean;
+  note?: string;
+};
+
+export type OrderStatus = 'draft' | 'submitted' | 'change_requested' | 'approved' | 'rejected' | 'cancelled' | 'preparing' | 'out_for_delivery' | 'delivered';
+
+export type Order = {
+  id: string;
+  code: string;
+  storeName: string;
+  createdAt: string;
+  deliveryDate: string;
+  itemCount: number;
+  grossAmount: number;
+  status: OrderStatus;
+  paymentTerm: 'prepaid' | 'monthly_credit';
+  risk?: 'price_changed' | 'new_store' | 'over_credit' | null;
+  ownerName?: string;
+  version: number;
+  storeId?: string;
+  storeAddress?: string;
+  source?: 'native' | 'legacy_unverified';
+  changeRequest?: { reason: string; requestedBy: string; requestedAt: string };
+  lines?: Array<{ id: string; productId?: string; name: string; unit: string; quantity: number; unitGross: number; gross: number }>;
+  timeline: Array<{ label: string; at?: string; active?: boolean; done?: boolean }>;
+};
+
+export type Delivery = {
+  id: string;
+  sequence: number;
+  storeName: string;
+  address: string;
+  phone: string;
+  window: string;
+  itemCount: number;
+  status: 'ready' | 'driving' | 'delivered';
+  notes?: string;
+  recipientName?: string;
+  version?: number;
+  orderId?: string;
+  driverId?: string;
+  plannedDate?: string;
+  lines?: Array<{ name: string; unit: string; quantity: number }>;
+};
+
+export type BankMatch = {
+  id: string;
+  depositor: string;
+  amount: number;
+  transferredAt: string;
+  storeName?: string;
+  status: 'auto_matched' | 'manual_review' | 'overdue';
+  candidates?: number;
+  paymentRequestId?: string;
+  bankTransactionId?: string;
+  version?: number;
+  candidateOptions?: Array<{ paymentRequestId: string; bankTransactionId: string; storeName: string; version: number; label: string }>;
+};
+
+export type Invoice = {
+  id: string;
+  storeName: string;
+  period: string;
+  grossAmount: number;
+  supplyAmount: number;
+  vatAmount: number;
+  status: 'draft' | 'reviewed' | 'approved' | 'queued' | 'issued' | 'nts_pending' | 'nts_success' | 'failed' | 'cancelled' | 'internal_statement';
+  preparedBy: string;
+  preparedById: string;
+  dueDate: string;
+  sameBusinessNumber?: boolean;
+  version?: number;
+  issueDate?: string;
+  supplierName?: string;
+  supplierBusinessNumber?: string;
+  recipientName?: string;
+  recipientBusinessNumber?: string;
+};
+
+export type DocumentItem = {
+  id: string;
+  type: 'monthly_statement' | 'tax_invoice' | 'delivery_statement' | 'payment_request';
+  title: string;
+  period: string;
+  amount: number;
+  status: 'issued' | 'scheduled' | 'paid' | 'pending';
+  downloadUrl?: string;
+};
+
+export type BootstrapData = {
+  actor: { id: string; name: string; role: string };
+  store: { id: string; name: string; businessName: string; billingPolicy: string; paymentTerm: string };
+  products: Product[];
+  orders: Order[];
+  deliveries: Delivery[];
+  bankMatches: BankMatch[];
+  invoices: Invoice[];
+  documents: DocumentItem[];
+  generatedAt: string;
+  supportEmail?: string;
+  availableActors?: Array<{ id: string; name: string; role: string }>;
+  capabilities: string[];
+  allowedDeliveryDates: string[];
+  meta: ProviderMeta;
+};
+
+export type Toast = { id: number; tone: 'success' | 'info' | 'warning'; message: string };

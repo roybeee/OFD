@@ -1,0 +1,27 @@
+{
+  "name": "@ofd/api",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@fastify/cookie": "^11.0.2",
+    "@ofd/db": "2.0.0",
+    "@ofd/domain": "2.0.0",
+    "@ofd/integrations": "2.0.0",
+    "fastify": "^5.5.0",
+    "zod": "^4.0.14"
+  },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+    ,"bootstrap-admin": "tsx src/bootstrap-admin.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3",
+    "vitest": "^3.2.4"
+  }
+}

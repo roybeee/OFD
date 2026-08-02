@@ -1,0 +1,116 @@
+name: V2 quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main, agent/ofd-one-process-v2]
+
+concurrency:
+  group: v2-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ofd_v2_test
+          POSTGRES_USER: ofd
+          POSTGRES_PASSWORD: ofd-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ofd -d ofd_v2_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      APP_MODE: demo
+      DATABASE_URL: postgresql://ofd:ofd-ci-only@127.0.0.1:5432/ofd_v2_test
+      PROVIDER_MODE: mock
+      STORAGE_MODE: mock
+      EMAIL_PROVIDER: mock
+      POPBILL_PRODUCTION_ENABLED: "false"
+      VITE_DEMO_MODE: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Require committed npm lockfile
+        run: test -f package-lock.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Use the repository npm version
+        run: npm install --global npm@11.11.1
+      - run: npm ci
+      - name: Audit all dependencies
+        run: npm audit --audit-level=high
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Validate Compose configuration
+        run: docker compose -f infra/docker-compose.yml config --quiet
+      - name: Production fail-closed preflight (providers disabled)
+        run: |
+          export SESSION_SECRET="$(openssl rand -base64 48)"
+          export ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          npm run preflight
+        env:
+          NODE_ENV: production
+          APP_MODE: production
+          DATABASE_URL: postgresql://ofd:strong-password@db.internal/ofd
+          PUBLIC_APP_URL: https://workstation.example.kr
+          WEB_ORIGIN: https://workstation.example.kr
+          SESSION_COOKIE_SECURE: "true"
+          STORAGE_MODE: s3
+          S3_REGION: ap-northeast-2
+          S3_BUCKET: ofd-production-documents
+          S3_KMS_KEY_ID: alias/ofd-production
+          EMAIL_PROVIDER: smtp
+          SMTP_HOST: smtp.example.kr
+          EMAIL_FROM: no-reply@ofd.example.kr
+          PROVIDER_MODE: mock
+          POPBILL_PRODUCTION_ENABLED: "false"
+      - run: npm run test:ci
+      - name: Smoke-test compiled API runtime
+        run: npm run smoke:built-api
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      APP_MODE: demo
+      PROVIDER_MODE: mock
+      STORAGE_MODE: mock
+      EMAIL_PROVIDER: mock
+      VITE_DEMO_MODE: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Require committed npm lockfile
+        run: test -f package-lock.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Use the repository npm version
+        run: npm install --global npm@11.11.1
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+      - name: Upload real-screen review artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: v2-e2e-screens-and-report
+          path: |
+            test-results/e2e
+            playwright-report
+          retention-days: 14
