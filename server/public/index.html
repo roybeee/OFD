@@ -183,6 +183,7 @@ let anOpen=new Set();
 let stEdit=null;
 let wasteData=null,wasteKey='';
 let agFrom='',agTo='',agQ='',agNoSched=false,agPage=1,agData=null,agKey='';
+let opList=null,opSel=null,opDet=null,opFilter='전체',opNew=false;
 let stSel=[],stGeo={},nvLoading=false,nvErr='',nvReady=false,nvKeyEdit=false;
 function havM(a,b){const R=6371000,rad=x=>x*Math.PI/180;
   const dLa=rad(b.lat-a.lat),dLo=rad(b.lng-a.lng);
@@ -308,6 +309,7 @@ function tabsFor(){
   if(cap('closings'))T.push(['sales','매출']);
   if(cap('settle'))T.push(['settle','정산'],['an','분석'],['rep','매출현황']);
   if(cap('skus'))T.push(['prod','상품 관리']);
+  if(cap('stores'))T.push(['open','오픈']);
   T.push(['notice','공지'],['stores','매장'],['conf','설정']);
   return T;}
 function render(){
@@ -327,7 +329,7 @@ function render(){
     </div>
   </div>
   <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}</div>
-  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
+  <div class="main">${({dash:vDash,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,open:vOpen,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
   bind();
   if(tab==='stores')setTimeout(initNaverMap,0);
 }
@@ -890,6 +892,105 @@ function vProd(){
   </div>`;
 }
 
+function opReload(){opList=null;opDet=null;render();}
+function vOpen(){
+  if(opList===null){
+    api('GET','/api/open').then(r=>{opList=r;render();}).catch(()=>{opList={projects:[]};render();});
+    return '<div class="head"><div><h1>오픈</h1></div></div><div class="empty">불러오는 중…</div>';}
+  const P=opList.projects;
+  if(opSel&&!opDet){
+    api('GET','/api/open/'+opSel).then(r=>{opDet=r;render();}).catch(()=>{opSel=null;render();});
+    return '<div class="empty">체크리스트 불러오는 중…</div>';}
+  if(opSel&&opDet){
+    const pr=opDet.project,T2=opDet.tasks;
+    const dday=Math.round((new Date(pr.openDate+'T00:00:00Z')-new Date(opDet.today+'T00:00:00Z'))/864e5);
+    const done=T2.filter(x=>x.done).length,ov=T2.filter(x=>x.overdue).length;
+    const pct=T2.length?Math.round(done/T2.length*100):0;
+    const flt=x=>opFilter==='전체'?true:opFilter==='미완료'?!x.done:opFilter==='지연'?x.overdue:opFilter==='본사'?x.owner==='hq':x.owner!=='hq';
+    const phases=['D-4주차','D-3주차','D-2주차','D-1주차','D-DAY'];
+    return `
+  <div class="head"><div><h1>${esc(pr.name)} <span class="pill ${pr.status==='완료'?'pl-sig':pr.status==='보류'?'pl-warn':'pl-info'}">${pr.status}</span></h1>
+    <p>${pr.mode} · ${pr.stype} · 오픈 예정 ${pr.openDate} (${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)})${pr.storeId?' · 매장 등록됨':''}</p></div>
+    <div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap">
+      <div><label>오픈일 변경</label><input type="date" id="op_date" value="${pr.openDate}" style="padding:6px 8px"></div>
+      <button class="btn ghost sm" id="op_back">← 목록</button>
+    </div></div>
+  <div class="kpis">
+    <div class="kpi"><div class="k">진행률</div><div class="v">${pct}<em>%</em></div><div class="s">${done} / ${T2.length} 항목</div></div>
+    <div class="kpi"><div class="k">지연</div><div class="v" style="color:${ov?'var(--risk)':'var(--ink)'}">${ov}<em>건</em></div><div class="s">마감 경과 · 미완료</div></div>
+    <div class="kpi"><div class="k">D-day</div><div class="v">${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)}</div><div class="s">${pr.openDate} 오픈</div></div>
+  </div>
+  <div class="panel">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      ${['전체','미완료','지연','본사','파트너'].map(f=>`<button class="btn ${opFilter===f?'':'ghost '}sm" data-opflt="${f}">${f}</button>`).join('')}
+      <span style="flex:1"></span>
+      ${pr.status==='진행'?`<button class="btn sm" id="op_confirm">오픈 확정 → 매장 등록</button>`:''}
+      <button class="btn danger sm" id="op_del">프로젝트 삭제</button>
+    </div>
+    ${phases.map(ph=>{
+      const ts=T2.filter(x=>x.phase===ph);if(!ts.length)return '';
+      const vis=ts.filter(flt);
+      const pd=ts.filter(x=>x.done).length;
+      let lastGrp='';
+      return `<div style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <b style="font-size:13.5px">${ph}</b>
+          <div style="flex:1;max-width:220px;background:#F1EDE5;border-radius:4px;height:8px;overflow:hidden"><div style="width:${ts.length?Math.round(pd/ts.length*100):0}%;height:100%;background:var(--sig)"></div></div>
+          <span style="font-size:11px;color:var(--dim)">${pd}/${ts.length}</span>
+        </div>
+        ${vis.length?vis.map(x=>{
+          const gh=x.grp!==lastGrp?`<div style="font-size:10.5px;font-weight:800;color:var(--dimmer);letter-spacing:.4px;margin:8px 0 3px">${esc(x.grp)}</div>`:'';
+          lastGrp=x.grp;
+          return gh+`<div style="display:flex;gap:9px;align-items:flex-start;padding:7px 9px;border:1px solid ${x.overdue?'var(--risk)':'var(--line)'};border-radius:9px;margin-bottom:5px;background:${x.done?'#F7F4EC':x.overdue?'#FDF3F0':'#fff'}">
+            <input type="checkbox" data-optk="${x.id}" ${x.done?'checked':''} style="margin-top:2px;width:16px;height:16px;accent-color:var(--sig);cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700;font-size:13px;${x.done?'text-decoration:line-through;color:var(--dimmer)':''}">${esc(x.title)}
+                <span class="pill ${x.owner==='hq'?'pl-sig':x.owner==='both'?'pl-warn':'pl-info'}" style="margin-left:4px">${esc(x.ownerLabel)}</span>
+                ${x.overdue?`<span class="pill" style="background:var(--risksoft,#FBE9E4);color:var(--risk)">지연 ${esc(x.due)}</span>`:`<span style="font-size:10.5px;color:var(--dimmer);margin-left:4px">~${esc(x.due)}</span>`}
+                ${x.custom?'<span class="pill pl-dim">추가</span>':''}</div>
+              ${x.detail?`<div style="font-size:11.5px;color:var(--dim);margin-top:2px">${esc(x.detail)}</div>`:''}
+              ${x.done&&x.doneBy?`<div style="font-size:10.5px;color:var(--ok);margin-top:2px">✓ ${esc(x.doneBy)} · ${new Date(x.doneAt).toISOString().slice(5,16).replace('T',' ')}Z</div>`:''}
+              <div style="font-size:11px;color:var(--dim);margin-top:3px;cursor:pointer" data-opmemo="${x.id}">${x.memo?('메모: '+esc(x.memo)):'<span style="color:var(--dimmer)">+ 메모</span>'}</div>
+            </div></div>`;}).join(''):`<div style="font-size:11.5px;color:var(--dimmer);padding:4px 2px">필터에 해당하는 항목 없음</div>`}
+      </div>`;}).join('')}
+    <div class="row" style="margin-top:6px;align-items:flex-end">
+      <div style="flex:2"><label>항목 추가 (현장 특수 사항)</label><input id="op_nt" placeholder="예: 몰 방화 셔터 점검 협의"></div>
+      <div style="flex:0 0 120px"><label>단계</label><select id="op_np">${phases.map(p2=>`<option>${p2}</option>`).join('')}</select></div>
+      <div style="flex:0 0 110px"><label>담당</label><select id="op_no"><option value="pt">${pr.mode==='운영대행'?'운영대행':'가맹점'}</option><option value="hq">본사</option><option value="both">협의</option></select></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn sm" id="op_addtask">추가</button></div>
+    </div>
+  </div>`;}
+  return `
+  <div class="head"><div><h1>오픈</h1><p>OFD 신규매장 오픈 매뉴얼 기반 — 프로젝트 생성 시 D-4주차~D-DAY 체크리스트가 오픈일 기준 마감일과 함께 자동 생성됩니다</p></div>
+    <button class="btn" id="op_new">+ 새 오픈 프로젝트</button></div>
+  ${opNew?`<div class="panel"><div class="panel-h"><h2>새 오픈 프로젝트</h2></div>
+    <div class="row" style="align-items:flex-end">
+      <div style="flex:2"><label>매장명(프로젝트명)</label><input id="opn_name" placeholder="예: 판교점"></div>
+      <div style="flex:0 0 150px"><label>오픈 예정일</label><input type="date" id="opn_date"></div>
+      <div style="flex:0 0 130px"><label>운영 방식</label><select id="opn_mode"><option>가맹</option><option>운영대행</option></select></div>
+      <div style="flex:0 0 130px"><label>매장 유형</label><select id="opn_stype"><option>테이블형</option><option>포장형</option></select></div>
+      <div style="display:flex;align-items:flex-end;gap:6px"><button class="btn" id="opn_go">생성</button><button class="btn ghost" id="opn_cancel">취소</button></div>
+    </div>
+    <div class="note">운영 방식은 담당 표기(가맹점/운영대행)를, 매장 유형은 전용 체크 항목(머신·디자인물 구성 등)을 결정합니다.</div></div>`:''}
+  ${P.length?P.map(pr=>{
+    const dday=Math.round((new Date(pr.openDate+'T00:00:00Z')-new Date(opList.today+'T00:00:00Z'))/864e5);
+    const pct=pr.total?Math.round(pr.done/pr.total*100):0;
+    return `<div class="panel" style="cursor:pointer" data-opsel="${pr.id}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <b style="font-size:15px">${esc(pr.name)}</b>
+        <span class="pill ${pr.status==='완료'?'pl-sig':pr.status==='보류'?'pl-warn':'pl-info'}">${pr.status}</span>
+        <span style="font-size:12px;color:var(--dim)">${pr.mode} · ${pr.stype} · 오픈 ${pr.openDate}</span>
+        <span class="pill ${dday<=7&&pr.status==='진행'?'pl-warn':'pl-dim'}">${dday>0?'D-'+dday:dday===0?'D-DAY':'D+'+(-dday)}</span>
+        ${pr.overdue?`<span class="pill" style="background:var(--warnsoft);color:var(--risk)">지연 ${pr.overdue}건</span>`:''}
+        <span style="flex:1"></span>
+        <span style="font-size:12px;font-weight:800">${pr.done}/${pr.total} (${pct}%)</span>
+      </div>
+      <div style="background:#F1EDE5;border-radius:4px;height:9px;overflow:hidden;margin-top:8px"><div style="width:${pct}%;height:100%;background:${pr.overdue?'var(--warn)':'var(--sig)'}"></div></div>
+      <div style="display:flex;gap:10px;margin-top:6px;font-size:10.5px;color:var(--dim);flex-wrap:wrap">
+        ${Object.entries(pr.phases).map(([k,v])=>v.t?`<span>${k} ${v.d}/${v.t}</span>`:'').join('')}
+      </div></div>`;}).join('')
+  :'<div class="empty">진행 중인 오픈 프로젝트가 없습니다 — [+ 새 오픈 프로젝트]로 시작하십시오.</div>'}`;
+}
 function noticeList(limit){
   const ns=S.notices;
   const arr=limit?ns.slice(0,limit):ns;
@@ -1411,6 +1512,56 @@ function bind(){
     try{const r=await api('DELETE','/api/pos/alias/'+encodeURIComponent(a2.alias));
       alert('해제 완료 — '+r.rebuilt+'개 매장·일자 재계산');
       prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
+    catch(e){alert(emsg(e));}});
+  on('#op_new',()=>{opNew=true;render();});
+  on('#opn_cancel',()=>{opNew=false;render();});
+  on('#opn_go',async()=>{
+    const nm=$.querySelector('#opn_name').value.trim(),dt=$.querySelector('#opn_date').value;
+    if(!nm||!dt)return alert('매장명과 오픈 예정일을 입력하십시오.');
+    try{const r=await api('POST','/api/open',{name:nm,openDate:dt,
+      mode:$.querySelector('#opn_mode').value,stype:$.querySelector('#opn_stype').value});
+      opNew=false;opSel=r.id;opReload();}catch(e){alert(emsg(e));}});
+  $.querySelectorAll('[data-opsel]').forEach(el=>el.onclick=()=>{opSel=el.dataset.opsel;opDet=null;render();});
+  on('#op_back',()=>{opSel=null;opDet=null;opList=null;render();});
+  on('#op_del',async()=>{
+    if(!confirm('이 오픈 프로젝트를 삭제합니까? 체크 기록은 감사 로그에 남습니다.'))return;
+    try{await api('DELETE','/api/open/'+opSel);opSel=null;opReload();}catch(e){alert(emsg(e));}});
+  {const od=$.querySelector('#op_date');
+   if(od)od.onchange=async()=>{
+     if(!od.value)return;
+     if(!confirm('오픈일을 '+od.value+'(으)로 변경합니다.\n전 항목 마감일이 자동 재계산됩니다.')){render();return;}
+     try{await api('PATCH','/api/open/'+opSel,{openDate:od.value});opDet=null;opList=null;render();}
+     catch(e){alert(emsg(e));render();}};}
+  $.querySelectorAll('[data-opflt]').forEach(b=>b.onclick=()=>{opFilter=b.dataset.opflt;render();});
+  $.querySelectorAll('[data-optk]').forEach(cb=>cb.onchange=async()=>{
+    try{await api('PATCH','/api/open/task/'+cb.dataset.optk,{done:cb.checked});opDet=null;opList=null;render();}
+    catch(e){alert(emsg(e));render();}});
+  $.querySelectorAll('[data-opmemo]').forEach(el=>el.onclick=async()=>{
+    const cur=(opDet.tasks.find(x=>x.id===el.dataset.opmemo)||{}).memo||'';
+    const v=prompt('메모',cur);
+    if(v===null)return;
+    try{await api('PATCH','/api/open/task/'+el.dataset.opmemo,{memo:v});opDet=null;render();}
+    catch(e){alert(emsg(e));}});
+  on('#op_addtask',async()=>{
+    const t2=$.querySelector('#op_nt').value.trim();
+    if(!t2)return alert('항목명을 입력하십시오.');
+    try{await api('POST','/api/open/'+opSel+'/task',{title:t2,phase:$.querySelector('#op_np').value,owner:$.querySelector('#op_no').value});
+      opDet=null;render();}catch(e){alert(emsg(e));}});
+  on('#op_confirm',async()=>{
+    let force=false;
+    try{
+      const left=opDet.tasks.filter(x=>!x.done).length;
+      if(left>0){
+        if(!confirm('미완료 항목이 '+left+'건 남아 있습니다.\n그래도 오픈을 확정하고 매장을 등록합니까? (감사 로그에 강행으로 기록됩니다)'))return;
+        force=true;}
+      else if(!confirm('체크리스트 100% — 오픈을 확정하고 매장 대장에 등록합니다.'))return;
+      const region=prompt('지역 (예: 서울)','서울');if(region===null)return;
+      const addr=prompt('소재지 주소','');if(addr===null)return;
+      const phone=prompt('매장 전화번호','');if(phone===null)return;
+      const type2=confirm('구분을 선택하십시오.\n[확인] = 가맹 · [취소] = 직영')?'가맹':'직영';
+      const r=await api('POST','/api/open/'+opSel+'/confirm',{force,region,addr,phone,type:type2});
+      alert('매장 등록 완료 — 점주 접속코드: '+r.code+'\n(설정 탭에서 재발급 가능 · 매장 대장에서 정보 수정 가능)');
+      opSel=null;opReload();await refresh();render();}
     catch(e){alert(emsg(e));}});
   {const f=$.querySelector('#ag_from'),t2=$.querySelector('#ag_to'),q2=$.querySelector('#ag_q');
    if(f)f.onchange=()=>{agFrom=f.value;agPage=1;render();};

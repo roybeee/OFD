@@ -59,6 +59,13 @@ try { db.exec('ALTER TABLE skus ADD COLUMN category TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE skus ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE sku_aliases ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE orders ADD COLUMN deliver_date TEXT'); db.exec('UPDATE orders SET deliver_date=date WHERE deliver_date IS NULL'); } catch (e) {}
+db.exec(`
+CREATE TABLE IF NOT EXISTS open_projects(id TEXT PRIMARY KEY, name TEXT, open_date TEXT, mode TEXT, stype TEXT,
+  status TEXT DEFAULT '진행', store_id TEXT, memo TEXT, mt INTEGER, del INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS open_tasks(id TEXT PRIMARY KEY, project_id TEXT, phase TEXT, grp TEXT, title TEXT,
+  detail TEXT, owner TEXT, off INTEGER, done INTEGER DEFAULT 0, done_by TEXT, done_at INTEGER,
+  memo TEXT, sort INTEGER, custom INTEGER DEFAULT 0, del INTEGER DEFAULT 0);
+`);
 
 /* ---------------- utils ---------------- */
 const uid = p => p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
@@ -145,6 +152,65 @@ try { /* 기존 매장 전화번호 일괄 정규화 (멱등) */
 /* ---------------- 부서 권한 (서버 강제) ---------------- */
 const DEPTS = { master: '마스터', admin: '관리', ops: '운영', sales: '영업' };
 const CATS = ['도넛', '링도넛', '음료', '굿즈', '서비스', '세트', '기타'];
+const OPEN_PHASES = ['D-4주차', 'D-3주차', 'D-2주차', 'D-1주차', 'D-DAY'];
+const OPEN_OFF = { 'D-4주차': -28, 'D-3주차': -21, 'D-2주차': -14, 'D-1주차': -7, 'D-DAY': 0 };
+/* OFD_신규매장_오픈_매뉴얼.xlsx 기반 — o: hq(본사)/pt(가맹점·운영대행)/both(협의), off: 명시 데드라인 */
+const OPEN_TPL = [
+  { ph: 'D-4주차', g: '초기 구성', t: '입점위치 확인·상권 파악', o: 'both', d: '매장유형(테이블형/포장형) 선정 · 기물리스트 선정 · 평면 구성' },
+  { ph: 'D-4주차', g: '초기 구성', t: '도넛 판매유형·납품처 지정', o: 'hq', d: '생산형: 생산실 평수 확인 / 납품형: 납품 가능 생산팀 지정' },
+  { ph: 'D-4주차', g: '초기 구성', t: '위생교육 수료', o: 'pt', d: '영업신고 전 필수' },
+  { ph: 'D-4주차', g: '초기 구성', t: '영업신고증 발급', o: 'pt', off: -10, d: '오픈일 기준 10일 전까지 준비' },
+  { ph: 'D-4주차', g: '초기 구성', t: '사업자등록증 발급', o: 'pt', off: -10, d: '오픈일 기준 10일 전까지 준비' },
+  { ph: 'D-4주차', g: '초기 구성', t: '예상 고객층 파악 · 메뉴/객단가 선정', o: 'hq', d: '적용 가능한 프로모션 기획 포함' },
+  { ph: 'D-4주차', g: '초기 구성', t: '[테이블형] 반자동 머신·시그니처 음료 구성', o: 'hq', stype: '테이블형', d: '커피 퀄리티 교육 계획 · 비주얼 시그니처 음료 · 차분한 서비스 톤' },
+  { ph: 'D-4주차', g: '초기 구성', t: '[포장형] 자동머신·밀크/슬러시 · 타임세일 기획', o: 'hq', stype: '포장형', d: '출퇴근·점심 타임세일 · 미리 포장 가능한 메뉴 위주 구성 (오피스/메디컬·역세권 상권)' },
+  { ph: 'D-4주차', g: '대형기물 발주', t: '대형기물 리스트업', o: 'hq', d: '도넛 판매유형에 따라 리스트업' },
+  { ph: 'D-4주차', g: '대형기물 발주', t: '업체 선정', o: 'hq' },
+  { ph: 'D-4주차', g: '대형기물 발주', t: '대형기물 발주 요청', o: 'pt' },
+  { ph: 'D-4주차', g: '스텝 채용', t: '채용 공고 게시', o: 'pt', d: '상시 채용' },
+  { ph: 'D-4주차', g: '스텝 채용', t: '면접 진행·채용인원 확정', o: 'pt', d: '테이블형: 총 4~5명(관리자1·직원3~4·알바) / 포장형: 총 2~4명(관리자1·직원1~2·알바) · 예비인력까지 면접 · 교육기간 근무 가능여부 확인' },
+  { ph: 'D-4주차', g: '교육', t: '교육 지점 선정·일정 조율', o: 'hq', d: '테이블형: 한남·가로수길 / 포장형: 용산·정자·사당 — 각 지점 점장과 일정 조율' },
+  { ph: 'D-4주차', g: '교육', t: '교육 지점에 교육 매뉴얼 전달', o: 'hq' },
+  { ph: 'D-4주차', g: '교육', t: '유니폼 발주·교육 지점 분배', o: 'pt' },
+  { ph: 'D-4주차', g: '교육', t: '관리자 교육 시작', o: 'pt', d: '최소 2개 지점 · 3~4주(실근무 약 20일) · 커리큘럼: 1주 서비스/위생/포장법 → 2주 홀관리/음료/커피 → 3주 클레임/수량관리(매장·배달 비율, 폐기) → 4주 운영매뉴얼·인수인계' },
+  { ph: 'D-3주차', g: '교육', t: '직원(스텝) 교육 시작', o: 'pt', d: '1개 지점 · 1~3주(실근무 약 15일) · 메뉴숙지/포장법/고객응대 → 커피셋팅/음료제조 · 서비스 집중교육(클레임 응대·상황 대처)' },
+  { ph: 'D-3주차', g: '서류 준비', t: '매장 비치 서류 준비', o: 'hq', d: '서비스매뉴얼 · 음료레시피 · 위생 체크리스트 · 발주 체크리스트' },
+  { ph: 'D-3주차', g: '서류 준비', t: '근로계약서 작성', o: 'pt', d: '근무시작 1주일 내 — 교육지점 점장 또는 운영지원팀' },
+  { ph: 'D-3주차', g: '서류 준비', t: '보건증 발급·유효기간 확인', o: 'pt', off: -14, d: '실전 투입 최소 2주 전 — 채용 스텝 전원 확인/재발급' },
+  { ph: 'D-2주차', g: '발주', t: '소기물 발주', o: 'pt', d: '본사 리스트업(메뉴 기준 업데이트) 후 발주 요청' },
+  { ph: 'D-2주차', g: '발주', t: '부자재 발주', o: 'pt', d: '제작비품·굿즈 등 · 내정 관리자 있을 시 발주 교육 병행' },
+  { ph: 'D-2주차', g: '발주', t: '생활용품·사무용품 발주', o: 'pt', d: '화장실 관리 여부 확인 포함' },
+  { ph: 'D-2주차', g: '발주', t: '청소용품 발주', o: 'pt' },
+  { ph: 'D-2주차', g: '디자인물', t: '디자인물 리스트업·출력 요청', o: 'hq', d: '매장 상황에 따라 디자인팀 수정 요청' },
+  { ph: 'D-2주차', g: '디자인물', t: '오픈일정 포스터 제작', o: 'hq', d: '내용 정리 후 디자인팀 요청' },
+  { ph: 'D-2주차', g: '디자인물', t: '디자인물 후작업', o: 'hq', d: '코팅 · 스탠드 · POP 체크' },
+  { ph: 'D-2주차', g: '디자인물', t: '[테이블형] 디자인물 세트 준비', o: 'hq', stype: '테이블형', d: '포스앞 메뉴판(A4·자석 스탠드) · 대형 스탠드 메뉴판(A3) · 네임텍(스텐홀더) · sold out 자석 · 박스구성 안내(1/4/6구) · 품절·영업시간 안내(A4) · 세트 POP(시그니처/버라이어티/하프더즌)' },
+  { ph: 'D-2주차', g: '디자인물', t: '[포장형] 디자인물 세트 준비', o: 'hq', stype: '포장형', d: '포스앞 메뉴판(A4) · X배너(커피+도넛 세트 구성) · 네임텍 · sold out 자석 · 박스구성 안내(1/4/6구) · 품절·영업시간 안내(A4) · 세트 POP' },
+  { ph: 'D-1주차', g: '현장 점검', t: '대형기물 셋팅 확인', o: 'pt', d: '추가 필요 품목 확인' },
+  { ph: 'D-1주차', g: '현장 점검', t: '소기물 입고 확인', o: 'pt' },
+  { ph: 'D-1주차', g: '현장 점검', t: '발주품목 입고 확인', o: 'pt', d: '부자재 · 생활용품 · 사무용품 · 청소용품' },
+  { ph: 'D-1주차', g: '현장 점검', t: '디자인물 확인·부착', o: 'pt', d: '내용 재확인 후 부착' },
+  { ph: 'D-1주차', g: '현장 점검', t: '매장 청소', o: 'pt' },
+  { ph: 'D-1주차', g: '현장 점검', t: '동선 체크·운영 시뮬레이션', o: 'both', d: '홀: 웨이팅라인·테이블 배치 / 바: 기물·부자재·용품 배치 / 전체 운영 시뮬레이션' },
+  { ph: 'D-1주차', g: '등록·연동', t: '포털 위치 등록 (네이버·구글·카카오맵)', o: 'pt', off: -10, d: '업체등록 심사까지 약 1주 소요 — 늦지 않게 신청' },
+  { ph: 'D-1주차', g: '등록·연동', t: '전화·인터넷 설치 → POS 설치', o: 'pt', off: -10, d: '인터넷 개통 후 포스 설치 · 포스 계정정보 본사 공유' },
+  { ph: 'D-1주차', g: '등록·연동', t: '토스 POS 서비스코드 연결 · 워크스테이션 연동', o: 'hq', off: -7, d: '토스 POS 설정→서비스 연동→코드 입력 후 [연결하기] · 워크스테이션에서 merchantId 웹훅 자동 감지 → 키 저장 → 동기화 · 30일 백필' },
+  { ph: 'D-1주차', g: '등록·연동', t: '배달 앱 등록 (쿠팡이츠·배민)', o: 'pt', d: '이미지·메뉴 등록 · 계정정보 공유' },
+  { ph: 'D-1주차', g: '등록·연동', t: '(백화점/몰 입점 시) 식자재 보관·관리 교육', o: 'pt', d: '백화점/몰 기준 식자재 보관·관리법 확인 — 해당 없으면 완료 처리' },
+  { ph: 'D-1주차', g: '홍보', t: '인스타그램 오픈 포스터 업로드', o: 'hq', d: '외부 부착물 필요 시 운영팀 출력 문의' },
+  { ph: 'D-1주차', g: '운영 준비', t: '스케줄 공유', o: 'pt' },
+  { ph: 'D-1주차', g: '운영 준비', t: '도넛 초도 발주', o: 'pt', off: -8, d: '오픈 7~10일 전, 지정 납품처에 수량 발주 요청' },
+  { ph: 'D-1주차', g: '운영 준비', t: '소통 창구 초대 (슬랙·구글시트)', o: 'hq', d: '올페 가맹본부 워크스페이스 초대' },
+  { ph: 'D-1주차', g: '운영 준비', t: '워크스테이션 점주 접속코드 발급·안내', o: 'hq', d: '설정 → 점주 접속코드 발급 → 마감·발주 사용법 안내' },
+  { ph: 'D-DAY', g: '오픈 전', t: '스텝 스케줄링·단톡방 생성', o: 'pt' },
+  { ph: 'D-DAY', g: '오픈 전', t: '근무인원 체크', o: 'pt', d: '매장 운영시간에 맞춰 인원 분배' },
+  { ph: 'D-DAY', g: '오픈 전', t: '메뉴 퀄리티 테스트', o: 'pt', d: '오픈 전 직원 시식 진행 · 이상 있을 시 운영팀에 전달' },
+  { ph: 'D-DAY', g: '오픈 전', t: '오픈 업무 리스트 점검', o: 'pt' },
+  { ph: 'D-DAY', g: '마감 후', t: '입고량 확인·업무 보고', o: 'pt' },
+  { ph: 'D-DAY', g: '마감 후', t: '마감 업무 리스트 점검', o: 'pt' },
+  { ph: 'D-DAY', g: '마감 후', t: '고객 피드백 체크', o: 'pt' },
+  { ph: 'D-DAY', g: '마감 후', t: '판매량 확인·업무 보고', o: 'pt', d: '워크스테이션 매출현황 자동 집계 대조' }
+];
 const CAP = {
   leads:   ['master', 'sales'],            // 가맹 영업 파이프라인
   orders:  ['master', 'ops'],              // 발주 상태 전이·반려·대리 발주
@@ -1380,6 +1446,131 @@ const server = http.createServer(async (req, res) => {
       });
       audit(actor, '예시 데이터 삭제', JSON.stringify(counts));
       return send(res, 200, { ok: true, counts });
+    }
+
+    /* ---- 오픈 프로세스 (OFD 신규매장 오픈 매뉴얼 기반) ---- */
+    /* phase 기본 오프셋: D-4주차 -28 · D-3주차 -21 · D-2주차 -14 · D-1주차 -7 · D-DAY 0. off 명시 항목은 매뉴얼의 데드라인. */
+    if (p === '/api/open' && req.method === 'GET') {
+      if (deny('stores')) return;
+      const t0 = kstToday();
+      const rows = db.prepare('SELECT * FROM open_projects WHERE del=0 ORDER BY mt DESC').all().map(pr => {
+        const ts = db.prepare('SELECT phase, off, done FROM open_tasks WHERE project_id=? AND del=0').all(pr.id);
+        const phases = {};
+        OPEN_PHASES.forEach(ph => { phases[ph] = { t: 0, d: 0 }; });
+        let overdue = 0;
+        ts.forEach(x => {
+          if (!phases[x.phase]) phases[x.phase] = { t: 0, d: 0 };
+          phases[x.phase].t++; if (x.done) phases[x.phase].d++;
+          if (!x.done && pr.status === '진행' && addDays(pr.open_date, x.off) < t0) overdue++;
+        });
+        return { id: pr.id, name: pr.name, openDate: pr.open_date, mode: pr.mode, stype: pr.stype,
+          status: pr.status, storeId: pr.store_id || null, memo: pr.memo || '',
+          total: ts.length, done: ts.filter(x => x.done).length, overdue, phases, mt: pr.mt };
+      });
+      return send(res, 200, { projects: rows, today: t0 });
+    }
+    if (p === '/api/open' && req.method === 'POST') {
+      if (deny('stores')) return;
+      const name = String(body.name || '').trim();
+      const od = String(body.openDate || '').trim();
+      const mode = body.mode === '운영대행' ? '운영대행' : '가맹';
+      const stype = body.stype === '포장형' ? '포장형' : '테이블형';
+      if (!name) return err(res, 400, 'NAME_REQUIRED');
+      if (!isDate(od)) return err(res, 400, 'BAD_DATE');
+      const pid = uid('op');
+      db.prepare('INSERT INTO open_projects(id,name,open_date,mode,stype,status,memo,mt) VALUES(?,?,?,?,?,?,?,?)')
+        .run(pid, name, od, mode, stype, '진행', String(body.memo || ''), now());
+      const ins = db.prepare('INSERT INTO open_tasks(id,project_id,phase,grp,title,detail,owner,off,sort) VALUES(?,?,?,?,?,?,?,?,?)');
+      let n = 0;
+      OPEN_TPL.forEach((t2, i) => {
+        if (t2.stype && t2.stype !== stype) return;
+        ins.run(uid('ot'), pid, t2.ph, t2.g, t2.t, t2.d || '', t2.o, t2.off !== undefined ? t2.off : OPEN_OFF[t2.ph], (i + 1) * 10);
+        n++;
+      });
+      audit(actor, '오픈 프로젝트 생성', name + ' — ' + od + ' 오픈 · ' + mode + ' · ' + stype + ' · 체크리스트 ' + n + '건');
+      return send(res, 200, { id: pid, tasks: n });
+    }
+    if ((m = p.match(/^\/api\/open\/([\w-]+)$/)) && req.method === 'GET') {
+      if (deny('stores')) return;
+      const pr = db.prepare('SELECT * FROM open_projects WHERE id=? AND del=0').get(m[1]);
+      if (!pr) return err(res, 404, 'NOT_FOUND');
+      const t0 = kstToday();
+      const tasks = db.prepare('SELECT * FROM open_tasks WHERE project_id=? AND del=0 ORDER BY sort').all(pr.id).map(x => ({
+        id: x.id, phase: x.phase, grp: x.grp, title: x.title, detail: x.detail || '',
+        owner: x.owner, ownerLabel: x.owner === 'hq' ? '본사' : x.owner === 'both' ? '협의' : (pr.mode === '운영대행' ? '운영대행' : '가맹점'),
+        off: x.off, due: addDays(pr.open_date, x.off),
+        done: !!x.done, doneBy: x.done_by || '', doneAt: x.done_at || null, memo: x.memo || '',
+        overdue: !x.done && pr.status === '진행' && addDays(pr.open_date, x.off) < t0, custom: !!x.custom
+      }));
+      return send(res, 200, { project: { id: pr.id, name: pr.name, openDate: pr.open_date, mode: pr.mode,
+        stype: pr.stype, status: pr.status, storeId: pr.store_id || null, memo: pr.memo || '' }, tasks, today: t0 });
+    }
+    if ((m = p.match(/^\/api\/open\/([\w-]+)$/)) && req.method === 'PATCH') {
+      if (deny('stores')) return;
+      const pr = db.prepare('SELECT * FROM open_projects WHERE id=? AND del=0').get(m[1]);
+      if (!pr) return err(res, 404, 'NOT_FOUND');
+      let od = pr.open_date;
+      if (body.openDate !== undefined) {
+        if (!isDate(String(body.openDate))) return err(res, 400, 'BAD_DATE');
+        od = String(body.openDate);
+      }
+      const st2 = ['진행', '보류', '완료'].includes(body.status) ? body.status : pr.status;
+      db.prepare('UPDATE open_projects SET open_date=?, status=?, memo=?, mt=? WHERE id=?')
+        .run(od, st2, body.memo !== undefined ? String(body.memo) : pr.memo, now(), m[1]);
+      if (od !== pr.open_date) audit(actor, '오픈일 변경', pr.name + ' ' + pr.open_date + ' → ' + od + ' (전 항목 마감일 자동 재계산)');
+      return send(res, 200, { ok: true });
+    }
+    if ((m = p.match(/^\/api\/open\/([\w-]+)$/)) && req.method === 'DELETE') {
+      if (deny('stores')) return;
+      const pr = db.prepare('SELECT name FROM open_projects WHERE id=? AND del=0').get(m[1]);
+      if (!pr) return err(res, 404, 'NOT_FOUND');
+      db.prepare('UPDATE open_projects SET del=1, mt=? WHERE id=?').run(now(), m[1]);
+      audit(actor, '오픈 프로젝트 삭제', pr.name);
+      return send(res, 200, { ok: true });
+    }
+    if ((m = p.match(/^\/api\/open\/([\w-]+)\/task$/)) && req.method === 'POST') {
+      if (deny('stores')) return;
+      const pr = db.prepare('SELECT * FROM open_projects WHERE id=? AND del=0').get(m[1]);
+      if (!pr) return err(res, 404, 'NOT_FOUND');
+      const title = String(body.title || '').trim();
+      if (!title) return err(res, 400, 'TITLE_REQUIRED');
+      const ph = OPEN_PHASES.includes(body.phase) ? body.phase : 'D-1주차';
+      const ow = ['hq', 'pt', 'both'].includes(body.owner) ? body.owner : 'pt';
+      const mx = db.prepare('SELECT COALESCE(MAX(sort),0) s FROM open_tasks WHERE project_id=?').get(pr.id).s;
+      const tid = uid('ot');
+      db.prepare('INSERT INTO open_tasks(id,project_id,phase,grp,title,detail,owner,off,sort,custom) VALUES(?,?,?,?,?,?,?,?,?,1)')
+        .run(tid, pr.id, ph, '추가 항목', title, String(body.detail || ''), ow,
+          body.off !== undefined && Number.isInteger(body.off) ? body.off : OPEN_OFF[ph], mx + 10);
+      audit(actor, '오픈 항목 추가', pr.name + ' — ' + title);
+      return send(res, 200, { id: tid });
+    }
+    if ((m = p.match(/^\/api\/open\/task\/([\w-]+)$/)) && req.method === 'PATCH') {
+      if (deny('stores')) return;
+      const tk = db.prepare('SELECT t.*, p2.name pname, p2.status pstatus FROM open_tasks t JOIN open_projects p2 ON p2.id=t.project_id WHERE t.id=? AND t.del=0').get(m[1]);
+      if (!tk) return err(res, 404, 'NOT_FOUND');
+      if (body.done !== undefined) {
+        const d2 = body.done ? 1 : 0;
+        db.prepare('UPDATE open_tasks SET done=?, done_by=?, done_at=? WHERE id=?')
+          .run(d2, d2 ? actor : null, d2 ? now() : null, m[1]);
+        audit(actor, d2 ? '오픈 항목 완료' : '오픈 항목 완료 취소', tk.pname + ' — ' + tk.title);
+      }
+      if (body.memo !== undefined) db.prepare('UPDATE open_tasks SET memo=? WHERE id=?').run(String(body.memo), m[1]);
+      return send(res, 200, { ok: true });
+    }
+    if ((m = p.match(/^\/api\/open\/([\w-]+)\/confirm$/)) && req.method === 'POST') {
+      if (deny('stores')) return;
+      const pr = db.prepare('SELECT * FROM open_projects WHERE id=? AND del=0').get(m[1]);
+      if (!pr) return err(res, 404, 'NOT_FOUND');
+      if (pr.status === '완료') return err(res, 409, 'ALREADY_DONE');
+      const left = db.prepare('SELECT COUNT(*) c FROM open_tasks WHERE project_id=? AND del=0 AND done=0').get(pr.id).c;
+      if (left > 0 && !body.force) return err(res, 409, 'TASKS_LEFT', { left });
+      const type2 = body.type === '직영' ? '직영' : '가맹';
+      const sid = uid('s'); const code = genCode();
+      db.prepare('INSERT INTO stores(id,name,type,region,addr,phone,open_date,code_hash,mt) VALUES(?,?,?,?,?,?,?,?,?)')
+        .run(sid, pr.name, type2, String(body.region || ''), String(body.addr || ''), fmtPhone(body.phone), pr.open_date, pwHash(code), now());
+      db.prepare("UPDATE open_projects SET status='완료', store_id=?, mt=? WHERE id=?").run(sid, now(), pr.id);
+      audit(actor, '오픈 확정 — 매장 등록', pr.name + (left ? ' (미완료 ' + left + '건 강행)' : ' (체크리스트 100%)'));
+      return send(res, 200, { ok: true, storeId: sid, code });
     }
 
     /* ---- 감사 로그 검색 (관리/마스터) ---- */

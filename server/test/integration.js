@@ -657,6 +657,49 @@ async function main() {
   r = await call('ad', 'GET', '/api/audit?from=2026-13-01');
   log('AI8 잘못된 날짜는 무시(전체 조회)', r.status === 200 && r.data.total > 0);
 
+  /* ===== AJ. 오픈 프로세스 ===== */
+  r = await call('sa', 'POST', '/api/open', { name: 'X점', openDate: addD(t, 30) });
+  log('AJ1 영업: 오픈 403', r.status === 403);
+  r = await call('op2', 'POST', '/api/open', { name: '판교점', openDate: addD(t, 28), mode: '가맹', stype: '테이블형' });
+  const opId = r.data.id;
+  log('AJ2 프로젝트 생성: 템플릿 자동 생성(테이블형 전용 포함·포장형 제외)', r.status === 200 && r.data.tasks >= 45);
+  r = await call('op2', 'GET', '/api/open/' + opId);
+  {
+    const T3 = r.data.tasks;
+    const biz = T3.find(x => x.title === '영업신고증 발급');
+    const portal = T3.find(x => x.title.startsWith('포털 위치 등록'));
+    const tbl = T3.some(x => x.title.includes('[테이블형]'));
+    const pkg = T3.some(x => x.title.includes('[포장형]'));
+    log('AJ3 데드라인 반영: 영업신고 D-10·포털 D-10·유형 필터', biz.off === -10 && biz.due === addD(addD(t, 28), -10)
+      && portal.off === -10 && tbl && !pkg);
+    log('AJ4 담당 표기: 가맹 모드 → 가맹점', T3.find(x => x.owner === 'pt').ownerLabel === '가맹점');
+    const tk1 = T3.find(x => x.title === '위생교육 수료');
+    r = await call('op2', 'PATCH', '/api/open/task/' + tk1.id, { done: true, memo: '수료증 수령' });
+    log('AJ5 체크 처리', r.status === 200);
+  }
+  r = await call('op2', 'GET', '/api/open/' + opId);
+  {
+    const tk = r.data.tasks.find(x => x.title === '위생교육 수료');
+    log('AJ6 완료자·시각 기록', tk.done === true && tk.doneBy.length > 0 && tk.doneAt > 0 && tk.memo === '수료증 수령');
+  }
+  r = await call('op2', 'POST', '/api/open/' + opId + '/task', { title: '몰 셔터 점검', phase: 'D-1주차', owner: 'both' });
+  log('AJ7 커스텀 항목 추가', r.status === 200);
+  r = await call('op2', 'PATCH', '/api/open/' + opId, { openDate: addD(t, -20) });
+  chk = await call('op2', 'GET', '/api/open/' + opId);
+  log('AJ8 오픈일 변경 → 마감 재계산·지연 산출', chk.data.tasks.find(x => x.title === '영업신고증 발급').due === addD(addD(t, -20), -10)
+    && chk.data.tasks.filter(x => x.overdue).length > 30);
+  r = await call('op2', 'POST', '/api/open/' + opId + '/confirm', {});
+  log('AJ9 미완료 잔존 시 확정 거부 409', r.status === 409 && r.data.error === 'TASKS_LEFT');
+  r = await call('op2', 'POST', '/api/open/' + opId + '/confirm', { force: true, region: '경기', addr: '판교로 1', phone: '01011112222', type: '가맹' });
+  log('AJ10 강행 확정 → 매장 생성·전화 형식화', r.status === 200 && !!r.data.code);
+  chk = await call('m', 'GET', '/api/bootstrap');
+  {
+    const ns = chk.data.stores.find(s2 => s2.name === '판교점');
+    log('AJ11 매장 대장 자동 등록', !!ns && ns.type === '가맹' && ns.phone === '010-1111-2222' && ns.openDate === addD(t, -20));
+  }
+  chk = await call('op2', 'GET', '/api/open');
+  log('AJ12 프로젝트 완료 상태 전환', chk.data.projects.find(x => x.id === opId).status === '완료');
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);
