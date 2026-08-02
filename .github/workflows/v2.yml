@@ -3,7 +3,7 @@ name: V2 quality gate
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, agent/ofd-one-process-v2]
 
 concurrency:
   group: v2-${{ github.workflow }}-${{ github.ref }}
