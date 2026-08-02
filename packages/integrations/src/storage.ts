@@ -66,10 +66,14 @@ export class MockObjectStorage implements ObjectStorage {
 export class S3ObjectStorage implements ObjectStorage {
   private readonly client: S3Client;
   constructor(private readonly config: ProviderConfig) {
-    if (!config.s3Bucket || !config.s3Region) throw new DomainError("S3_NOT_CONFIGURED", "S3_BUCKET과 S3_REGION이 필요합니다.", 503);
-    this.client = new S3Client({ region: config.s3Region, endpoint: config.s3Endpoint, forcePathStyle: Boolean(config.s3Endpoint),
-      credentials: config.s3AccessKeyId && config.s3SecretAccessKey
-        ? { accessKeyId: config.s3AccessKeyId, secretAccessKey: config.s3SecretAccessKey } : undefined });
+    const { s3Bucket, s3Region, s3Endpoint, s3AccessKeyId, s3SecretAccessKey } = config;
+    if (!s3Bucket || !s3Region) throw new DomainError("S3_NOT_CONFIGURED", "S3_BUCKET과 S3_REGION이 필요합니다.", 503);
+    this.client = new S3Client({
+      region: s3Region,
+      forcePathStyle: Boolean(s3Endpoint),
+      ...(s3Endpoint ? { endpoint: s3Endpoint } : {}),
+      ...(s3AccessKeyId && s3SecretAccessKey ? { credentials: { accessKeyId: s3AccessKeyId, secretAccessKey: s3SecretAccessKey } } : {}),
+    });
   }
 
   async createDeliveryProofUpload(shipmentId: string, contentType: string): Promise<UploadTicket> {
