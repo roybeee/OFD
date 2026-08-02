@@ -54,11 +54,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_pos ON pos_sales(store_id, date, hour, raw_
 CREATE INDEX IF NOT EXISTS idx_pos_sd ON pos_sales(store_id, date);
 CREATE TABLE IF NOT EXISTS sku_aliases(alias TEXT PRIMARY KEY, sku_id TEXT, mt INTEGER);
 CREATE TABLE IF NOT EXISTS pos_events(id TEXT PRIMARY KEY, ts INTEGER, type TEXT, merchant_id TEXT, app TEXT, raw TEXT);
+CREATE TABLE IF NOT EXISTS pos_backfills(id TEXT PRIMARY KEY, store_id TEXT, years INTEGER,
+  from_date TEXT, to_date TEXT, next_date TEXT, total_days INTEGER, completed_days INTEGER DEFAULT 0,
+  revenue INTEGER DEFAULT 0, errors INTEGER DEFAULT 0, status TEXT, actor TEXT, last_error TEXT,
+  created INTEGER, started INTEGER, finished INTEGER, mt INTEGER);
+CREATE INDEX IF NOT EXISTS idx_pos_bf_store ON pos_backfills(store_id, created DESC);
 `);
 try { db.exec('ALTER TABLE skus ADD COLUMN category TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE skus ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE sku_aliases ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE orders ADD COLUMN deliver_date TEXT'); db.exec('UPDATE orders SET deliver_date=date WHERE deliver_date IS NULL'); } catch (e) {}
+/* 서버 재시작만으로 과거 백필이 다시 실행되지 않도록 중단 상태로 보존한다. 수동 버튼으로만 재개. */
+db.prepare("UPDATE pos_backfills SET status='interrupted', last_error=CASE WHEN last_error IS NULL OR last_error='' THEN '서버 재시작으로 중단됨 — 같은 기간 버튼을 눌러 재개' ELSE last_error END, mt=? WHERE status IN ('queued','running')")
+  .run(Date.now());
 db.exec(`
 CREATE TABLE IF NOT EXISTS open_projects(id TEXT PRIMARY KEY, name TEXT, region TEXT, open_date TEXT, mode TEXT, stype TEXT,
   status TEXT DEFAULT '진행', store_id TEXT, memo TEXT, mt INTEGER, del INTEGER DEFAULT 0);
@@ -76,6 +84,30 @@ const kstDayStart = d => new Date(d + 'T00:00:00+09:00').getTime(); /* KST 자�
 function addDays(s, n) {
   const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
+}
+function addYears(s, n) {
+  const p = String(s).split('-').map(Number);
+  const y = p[0] + n, m = p[1], day = p[2];
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return y.toString().padStart(4, '0') + '-' + String(m).padStart(2, '0') + '-' + String(Math.min(day, last)).padStart(2, '0');
+}
+const dateDays = (from, to) => Math.round((new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 864e5) + 1;
+function monthChunks(from, to) {
+  const out = []; let cur = from;
+  while (cur <= to) {
+    const p = cur.split('-').map(Number);
+    const nextMonth = p[1] === 12 ? (p[0] + 1) + '-01-01' : p[0] + '-' + String(p[1] + 1).padStart(2, '0') + '-01';
+    const end = addDays(nextMonth, -1) < to ? addDays(nextMonth, -1) : to;
+    out.push({ from: cur, to: end, days: dateDays(cur, end) });
+    cur = addDays(end, 1);
+  }
+  return out;
+}
+function backfillBounds(to, years, openDate) {
+  let from = addDays(addYears(to, -years), 1); /* 오늘 포함 최근 N개년 */
+  if (/^\d{4}-\d{2}-\d{2}$/.test(openDate || '') && openDate > from && openDate <= to) from = openDate;
+  const chunks = monthChunks(from, to);
+  return { years, from, to, totalDays: dateDays(from, to), chunks };
 }
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 function pwHash(pw) {
@@ -195,7 +227,7 @@ const OPEN_TPL = [
   { ph: 'D-1주차', g: '현장 점검', t: '동선 체크·운영 시뮬레이션', o: 'both', d: '홀: 웨이팅라인·테이블 배치 / 바: 기물·부자재·용품 배치 / 전체 운영 시뮬레이션' },
   { ph: 'D-1주차', g: '등록·연동', t: '포털 위치 등록 (네이버·구글·카카오맵)', o: 'pt', off: -10, d: '업체등록 심사까지 약 1주 소요 — 늦지 않게 신청' },
   { ph: 'D-1주차', g: '등록·연동', t: '전화·인터넷 설치 → POS 설치', o: 'pt', off: -10, d: '인터넷 개통 후 포스 설치 · 포스 계정정보 본사 공유' },
-  { ph: 'D-1주차', g: '등록·연동', t: '토스 POS 서비스코드 연결 · 워크스테이션 연동', o: 'hq', off: -7, d: '토스 POS 설정→서비스 연동→코드 입력 후 [연결하기] · 워크스테이션에서 merchantId 웹훅 자동 감지 → 키 저장 → 동기화 · 30일 백필' },
+  { ph: 'D-1주차', g: '등록·연동', t: '토스 POS 서비스코드 연결 · 워크스테이션 연동', o: 'hq', off: -7, d: '토스 POS 설정→서비스 연동→코드 입력 후 [연결하기] · 워크스테이션에서 merchantId 웹훅 자동 감지 → 키 저장 → 동기화 · 필요 시 1·3·5년 수동 백필' },
   { ph: 'D-1주차', g: '등록·연동', t: '배달 앱 등록 (쿠팡이츠·배민)', o: 'pt', d: '이미지·메뉴 등록 · 계정정보 공유' },
   { ph: 'D-1주차', g: '등록·연동', t: '(백화점/몰 입점 시) 식자재 보관·관리 교육', o: 'pt', d: '백화점/몰 기준 식자재 보관·관리법 확인 — 해당 없으면 완료 처리' },
   { ph: 'D-1주차', g: '홍보', t: '인스타그램 오픈 포스터 업로드', o: 'hq', d: '외부 부착물 필요 시 운영팀 출력 문의' },
@@ -389,53 +421,63 @@ async function tpGet(url, ak, sk) {
     return j.success;
   } finally { clearTimeout(to); }
 }
-const providers = {
-  /* 토스플레이스 Open API — 주문 목록(COMPLETED)을 KST 하루 범위로 페이지 순회 */
-  tossplace: {
-    async fetchDay(link, date) {
-      const from = encodeURIComponent(date + 'T00:00:00+09:00');
-      const to = encodeURIComponent(addDays(date, 1) + 'T00:00:00+09:00');
-      const ak = decSecret(link.access_key_enc), sk = decSecret(link.secret_key_enc);
-      if (!ak || !sk) throw new Error('KEY_DECRYPT_FAIL');
-      const agg = new Map();
-      for (let page = 1; page <= 40; page++) {
-        const url = TP_BASE + encodeURIComponent(link.merchant_id) +
-          '/order/orders?from=' + from + '&to=' + to + '&orderStates=COMPLETED&page=' + page + '&size=500&sortOrder=ASC';
-        const arr = (await tpGet(url, ak, sk)) || [];
-        for (const o of arr) {
-          if (o.orderState && o.orderState !== 'COMPLETED') continue;
-          const kp = kstParts(o.completedAt || o.createdAt);
-          if (!kp || kp.date !== date) continue;
-          for (const li of (o.lineItems || [])) {
-            const name = (li.item && li.item.title) || '';
-            const qty = Number(li.quantity) || 0;
-            if (!name || qty <= 0) continue;
-            let amt = (li.itemPrice ? Number(li.itemPrice.priceValue) || 0 : 0) * qty;
-            (li.optionChoices || []).forEach(c => { amt += (Number(c.priceValue) || 0) * (Number(c.quantity) || 0); });
-            (li.appliedDiscounts || []).forEach(d => { amt -= Number(d.amount) || 0; });
-            const key = kp.hour + '|' + name;
-            const cur = agg.get(key) || { hour: kp.hour, name, qty: 0, amount: 0 };
-            cur.qty += qty; cur.amount += Math.max(0, amt);
-            agg.set(key, cur);
-          }
-        }
-        if (arr.length < 500) break;
-        await sleep(150); /* 매장별 호출량 제한(초당 10) 준수 */
+async function tossFetchRange(link, fromDate, toDate) {
+  const from = encodeURIComponent(fromDate + 'T00:00:00+09:00');
+  const to = encodeURIComponent(addDays(toDate, 1) + 'T00:00:00+09:00');
+  const ak = decSecret(link.access_key_enc), sk = decSecret(link.secret_key_enc);
+  if (!ak || !sk) throw new Error('KEY_DECRYPT_FAIL');
+  const agg = new Map();
+  for (let page = 1; page <= 80; page++) {
+    const url = TP_BASE + encodeURIComponent(link.merchant_id) +
+      '/order/orders?from=' + from + '&to=' + to + '&orderStates=COMPLETED&page=' + page + '&size=500&sortOrder=ASC';
+    const arr = (await tpGet(url, ak, sk)) || [];
+    for (const o of arr) {
+      if (o.orderState && o.orderState !== 'COMPLETED') continue;
+      const kp = kstParts(o.completedAt || o.createdAt);
+      if (!kp || kp.date < fromDate || kp.date > toDate) continue;
+      for (const li of (o.lineItems || [])) {
+        const name = (li.item && li.item.title) || '';
+        const qty = Number(li.quantity) || 0;
+        if (!name || qty <= 0) continue;
+        let amt = (li.itemPrice ? Number(li.itemPrice.priceValue) || 0 : 0) * qty;
+        (li.optionChoices || []).forEach(c => { amt += (Number(c.priceValue) || 0) * (Number(c.quantity) || 0); });
+        (li.appliedDiscounts || []).forEach(d => { amt -= Number(d.amount) || 0; });
+        const key = kp.date + '|' + kp.hour + '|' + name;
+        const cur = agg.get(key) || { date: kp.date, hour: kp.hour, name, qty: 0, amount: 0 };
+        cur.qty += qty; cur.amount += Math.max(0, amt);
+        agg.set(key, cur);
       }
-      return [...agg.values()];
     }
+    if (arr.length < 500) break;
+    if (page === 80) throw new Error('ORDER_PAGE_LIMIT');
+    await sleep(150); /* 토스플레이스 매장별 토큰 충전량(초당 10) 이내 */
+  }
+  const byDate = {};
+  for (const L of agg.values()) (byDate[L.date] || (byDate[L.date] = [])).push({ hour: L.hour, name: L.name, qty: L.qty, amount: L.amount });
+  return byDate;
+}
+function mockDay(date) {
+  const wknd = (d => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w === 0 || w === 6; })(date);
+  const P = { '우유크림도넛': 4200, '버터피스타치오': 5800, '신메뉴딸기': 4500 };
+  const plan = wknd
+    ? [['우유크림도넛', [[12, 30], [15, 20], [18, 10]]], ['버터피스타치오', [[12, 15], [15, 10], [18, 5]]], ['신메뉴딸기', [[15, 10]]]]
+    : [['우유크림도넛', [[12, 15], [15, 10], [18, 5]]], ['버터피스타치오', [[12, 8], [15, 5], [18, 2]]], ['신메뉴딸기', [[15, 5]]]];
+  const out = [];
+  plan.forEach(([name, slots]) => slots.forEach(([hour, qty]) => out.push({ hour, name, qty, amount: qty * P[name] })));
+  return out;
+}
+const providers = {
+  /* 긴 역사 백필은 월 단위 범위 조회, 일반 동기화는 하루 조회로 같은 집계기를 사용한다. */
+  tossplace: {
+    fetchRange: tossFetchRange,
+    async fetchDay(link, date) { return (await tossFetchRange(link, date, date))[date] || []; }
   },
   /* 결정적 목 드라이버 — 키 발급 전 전체 파이프라인 검증·시연용 */
   mock: {
-    async fetchDay(link, date) {
-      const wknd = (d => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w === 0 || w === 6; })(date);
-      const P = { '우유크림도넛': 4200, '버터피스타치오': 5800, '신메뉴딸기': 4500 };
-      const plan = wknd
-        ? [['우유크림도넛', [[12, 30], [15, 20], [18, 10]]], ['버터피스타치오', [[12, 15], [15, 10], [18, 5]]], ['신메뉴딸기', [[15, 10]]]]
-        : [['우유크림도넛', [[12, 15], [15, 10], [18, 5]]], ['버터피스타치오', [[12, 8], [15, 5], [18, 2]]], ['신메뉴딸기', [[15, 5]]]];
-      const out = [];
-      plan.forEach(([name, slots]) => slots.forEach(([hour, qty]) =>
-        out.push({ hour, name, qty, amount: qty * P[name] })));
+    async fetchDay(link, date) { return mockDay(date); },
+    async fetchRange(link, fromDate, toDate) {
+      const out = {};
+      for (let d = fromDate; d <= toDate; d = addDays(d, 1)) out[d] = mockDay(d);
       return out;
     }
   }
@@ -475,32 +517,99 @@ function rebuildClosingFromPos(storeId, date) {
     .filter(i => i.sold > 0 || i.waste > 0);
   if (items.length) upsertClosing(storeId, date, items, Object.keys(recv).length ? 'auto' : 'import');
 }
-async function syncStoreDay(storeId, date, actorName, quiet) {
+function activePosDriver(storeId) {
   const link = db.prepare('SELECT * FROM pos_links WHERE store_id=? AND del=0 AND active=1').get(storeId);
   if (!link) throw new Error('NO_LINK');
   const drv = providers[link.provider];
   if (!drv) throw new Error('BAD_PROVIDER');
-  const lines = await drv.fetchDay(link, date);
+  return { link, drv };
+}
+function saveStoreDay(storeId, date, lines) {
   const M = now();
   db.exec('BEGIN');
   try {
     db.prepare('DELETE FROM pos_sales WHERE store_id=? AND date=?').run(storeId, date); /* 일 단위 전량 재계산 → 멱등 */
     const ins = db.prepare('INSERT INTO pos_sales(id,store_id,date,hour,sku_id,raw_name,qty,amount,mt) VALUES(?,?,?,?,?,?,?,?,?)');
-    let matched = 0; const missSet = new Set();
+    let matched = 0, revenue = 0; const missSet = new Set();
     for (const L of lines) {
+      const qty = Math.max(0, Math.trunc(Number(L.qty) || 0));
+      const amount = Math.max(0, Math.round(Number(L.amount) || 0));
       const kid = resolveSku(L.name, storeId);
-      if (kid) matched += L.qty; else missSet.add(L.name);
-      ins.run(uid('x'), storeId, date, L.hour | 0, kid, L.name, L.qty | 0, L.amount | 0, M);
+      if (kid) matched += qty; else missSet.add(L.name);
+      revenue += amount;
+      ins.run(uid('x'), storeId, date, L.hour | 0, kid, L.name, qty, amount, M);
     }
     db.exec('COMMIT');
     rebuildClosingFromPos(storeId, date);
-    const revenue = lines.reduce((a, L) => a + (L.amount | 0), 0);
     const res = { date, lines: lines.length, matchedQty: matched, unmatched: [...missSet], revenue };
     db.prepare('UPDATE pos_links SET last_sync=?, last_result=?, mt=? WHERE store_id=?')
       .run(now(), 'OK ' + date + ' 매출 ' + revenue.toLocaleString('ko-KR') + '원' + (missSet.size ? ' · 미매칭 ' + missSet.size + '종' : ''), now(), storeId);
-    if (!quiet) audit(actorName || '스케줄러', 'POS 동기화', ((db.prepare('SELECT name FROM stores WHERE id=?').get(storeId) || {}).name || storeId) + ' ' + date + ' (' + lines.length + '행)');
     return res;
   } catch (e) { try { db.exec('ROLLBACK'); } catch (e2) {} throw e; }
+}
+async function syncStoreDay(storeId, date, actorName, quiet) {
+  const { link, drv } = activePosDriver(storeId);
+  const res = saveStoreDay(storeId, date, await drv.fetchDay(link, date));
+  if (!quiet) audit(actorName || '스케줄러', 'POS 동기화', ((db.prepare('SELECT name FROM stores WHERE id=?').get(storeId) || {}).name || storeId) + ' ' + date + ' (' + res.lines + '행)');
+  return res;
+}
+async function syncStoreRange(storeId, fromDate, toDate) {
+  const { link, drv } = activePosDriver(storeId);
+  const grouped = drv.fetchRange ? await drv.fetchRange(link, fromDate, toDate) : null;
+  let revenue = 0, lines = 0, days = 0;
+  for (let d = fromDate; d <= toDate; d = addDays(d, 1)) {
+    const dayLines = grouped ? (grouped[d] || []) : await drv.fetchDay(link, d);
+    const r = saveStoreDay(storeId, d, dayLines);
+    revenue += r.revenue; lines += r.lines; days++;
+  }
+  return { from: fromDate, to: toDate, days, revenue, lines };
+}
+function mBackfill(r) {
+  if (!r) return null;
+  return { id: r.id, storeId: r.store_id, years: r.years, from: r.from_date, to: r.to_date,
+    nextDate: r.next_date, totalDays: r.total_days | 0, completedDays: r.completed_days | 0,
+    revenue: Number(r.revenue) || 0, errors: Number(r.errors) || 0, status: r.status, manual: true,
+    lastError: r.last_error || '', created: r.created, started: r.started || null, finished: r.finished || null };
+}
+function recentBackfills() {
+  return db.prepare('SELECT * FROM pos_backfills ORDER BY created DESC LIMIT 100').all().map(mBackfill);
+}
+const manualBackfillRunners = new Set();
+async function runManualBackfill(id) {
+  let job = db.prepare('SELECT * FROM pos_backfills WHERE id=?').get(id);
+  if (!job || job.status !== 'queued') return;
+  db.prepare("UPDATE pos_backfills SET status='running', started=COALESCE(started,?), last_error='', mt=? WHERE id=?")
+    .run(now(), now(), id);
+  const chunks = monthChunks(job.next_date || job.from_date, job.to_date);
+  for (const chunk of chunks) {
+    job = db.prepare('SELECT * FROM pos_backfills WHERE id=?').get(id);
+    if (!job || job.status !== 'running') return;
+    try {
+      const r = await syncStoreRange(job.store_id, chunk.from, chunk.to);
+      db.prepare('UPDATE pos_backfills SET next_date=?, completed_days=completed_days+?, revenue=revenue+?, mt=? WHERE id=?')
+        .run(addDays(chunk.to, 1), r.days, r.revenue, now(), id);
+    } catch (e) {
+      const msg = e.message || String(e);
+      db.prepare("UPDATE pos_backfills SET status='interrupted', errors=errors+1, last_error=?, mt=? WHERE id=?")
+        .run(msg, now(), id);
+      audit(job.actor || '시스템', 'POS 수동 백필 중단', job.store_id + ' ' + chunk.from + ' — ' + msg);
+      return;
+    }
+    await sleep(150);
+  }
+  job = db.prepare('SELECT * FROM pos_backfills WHERE id=?').get(id);
+  db.prepare("UPDATE pos_backfills SET status='done', next_date=?, completed_days=total_days, finished=?, mt=? WHERE id=?")
+    .run(addDays(job.to_date, 1), now(), now(), id);
+  const stName = ((db.prepare('SELECT name FROM stores WHERE id=?').get(job.store_id) || {}).name || job.store_id);
+  audit(job.actor || '시스템', 'POS 수동 백필 완료', stName + ' ' + job.years + '년 — 매출 ' + (Number(job.revenue) || 0).toLocaleString('ko-KR') + '원, 오류 ' + (Number(job.errors) || 0) + '건');
+}
+function launchManualBackfill(id) {
+  if (process.env.POS_BACKFILL_RUNNER === '0' || manualBackfillRunners.has(id)) return;
+  manualBackfillRunners.add(id);
+  setImmediate(() => runManualBackfill(id).catch(e => {
+    db.prepare("UPDATE pos_backfills SET status='interrupted', errors=errors+1, last_error=?, mt=? WHERE id=?")
+      .run(e.message || String(e), now(), id);
+  }).finally(() => manualBackfillRunners.delete(id)));
 }
 const aliasKey = (n, storeId) => storeId ? n + '@@' + storeId : n; /* 매장 전용 SKU 매핑은 그 매장에만 적용 */
 function reapplyAlias(aliasNorm, skuId, storeId) {
@@ -1226,6 +1335,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     /* ---- POS 연동 (운영/마스터) ---- */
+    if (p === '/api/pos/backfills' && req.method === 'GET') {
+      if (deny('pos')) return;
+      return send(res, 200, { jobs: recentBackfills() });
+    }
     if (p === '/api/pos/links' && req.method === 'GET') {
       if (deny('pos')) return;
       const rows = db.prepare('SELECT * FROM pos_links WHERE del=0').all().map(L => ({
@@ -1234,7 +1347,7 @@ const server = http.createServer(async (req, res) => {
         lastSync: L.last_sync || null, lastResult: L.last_result || '' }));
       const events = db.prepare("SELECT merchant_id, MAX(ts) ts, MAX(type) type FROM pos_events WHERE merchant_id != '' GROUP BY merchant_id ORDER BY ts DESC LIMIT 5").all()
         .map(e => ({ ts: e.ts, type: e.type, merchantId: e.merchant_id }));
-      return send(res, 200, { links: rows, events });
+      return send(res, 200, { links: rows, events, jobs: recentBackfills() });
     }
     if ((m = p.match(/^\/api\/pos\/links\/([\w-]+)$/)) && req.method === 'PUT') {
       if (deny('pos')) return;
@@ -1292,6 +1405,33 @@ const server = http.createServer(async (req, res) => {
     }
     if ((m = p.match(/^\/api\/pos\/backfill\/([\w-]+)$/)) && req.method === 'POST') {
       if (deny('pos')) return;
+      if (body.years !== undefined) {
+        const years = Number(body.years);
+        if (![1, 3, 5].includes(years)) return err(res, 400, 'BACKFILL_YEARS');
+        const stRow = db.prepare('SELECT id,name,open_date FROM stores WHERE id=? AND del=0').get(m[1]);
+        if (!stRow) return err(res, 404, 'STORE_NOT_FOUND');
+        if (!db.prepare('SELECT 1 FROM pos_links WHERE store_id=? AND del=0 AND active=1').get(m[1])) return err(res, 404, 'NO_LINK');
+        const active = db.prepare("SELECT id FROM pos_backfills WHERE store_id=? AND status IN ('queued','running') ORDER BY created DESC LIMIT 1").get(m[1]);
+        if (active) return err(res, 409, 'BACKFILL_ACTIVE', { jobId: active.id });
+        const bounds = backfillBounds(kstToday(), years, stRow.open_date);
+        /* 날짜가 바뀌어도 같은 기간 버튼은 가장 최근의 미완료 수동 작업부터 이어서 처리한다. */
+        let job = db.prepare("SELECT * FROM pos_backfills WHERE store_id=? AND years=? AND status='interrupted' ORDER BY created DESC LIMIT 1")
+          .get(m[1], years);
+        let resumed = false;
+        if (job) {
+          resumed = true;
+          db.prepare("UPDATE pos_backfills SET status='queued', actor=?, last_error='', mt=? WHERE id=?").run(actor, now(), job.id);
+        } else {
+          const id = uid('bf');
+          db.prepare("INSERT INTO pos_backfills(id,store_id,years,from_date,to_date,next_date,total_days,completed_days,revenue,errors,status,actor,last_error,created,mt) VALUES(?,?,?,?,?,?,?,0,0,0,'queued',?,'',?,?)")
+            .run(id, m[1], years, bounds.from, bounds.to, bounds.from, bounds.totalDays, actor, now(), now());
+          job = db.prepare('SELECT * FROM pos_backfills WHERE id=?').get(id);
+        }
+        if (resumed) job = db.prepare('SELECT * FROM pos_backfills WHERE id=?').get(job.id);
+        audit(actor, resumed ? 'POS 수동 백필 재개' : 'POS 수동 백필 시작', stRow.name + ' ' + years + '년 (' + job.from_date + ' ~ ' + job.to_date + ')');
+        launchManualBackfill(job.id); /* 이 수동 요청 외에는 역사 백필 실행기를 호출하지 않는다. */
+        return send(res, 202, { job: mBackfill(job), resumed });
+      }
       const days = Math.min(60, Math.max(1, (body.days | 0) || 30));
       const t0 = kstToday();
       const results = []; let revenue = 0, errors = 0;
@@ -1715,4 +1855,4 @@ if (process.env.POS_AUTOSYNC !== '0') setInterval(() => { posAutoSync().catch(()
 if (require.main === module) {
   server.listen(PORT, () => console.log('[OFD] 워크스테이션 서버 v2 가동 — http://localhost:' + PORT + ' (DB: ' + DB_PATH + ')'));
 }
-module.exports = { server, db, _test: { kstParts, computeAnalytics, suggestSku } };
+module.exports = { server, db, _test: { kstParts, computeAnalytics, suggestSku, backfillBounds } };
