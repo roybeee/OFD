@@ -182,6 +182,7 @@ let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric=
 let anOpen=new Set();
 let stEdit=null;
 let wasteData=null,wasteKey='';
+let agFrom='',agTo='',agQ='',agNoSched=false,agPage=1,agData=null,agKey='';
 let stSel=[],stGeo={},nvLoading=false,nvErr='',nvReady=false,nvKeyEdit=false;
 function havM(a,b){const R=6371000,rad=x=>x*Math.PI/180;
   const dLa=rad(b.lat-a.lat),dLo=rad(b.lng-a.lng);
@@ -1050,11 +1051,35 @@ function vConf(){
     </div>
     <div class="note">아티팩트(파일럿)판 백업을 그대로 병합할 수 있습니다(수정시각 최신 우선). 이관된 매장은 접속코드 미발급 → 위에서 재발급. 이관된 계정은 비밀번호 미설정 → 계정 관리에서 재설정.</div></div>`:''}
 
-  ${cap('auditv')?`<div class="panel"><div class="panel-h"><h2>감사 로그</h2><span class="meta">서버 기록 최근 ${logs.length}건 · 행위자 개인 단위 식별 · 제3조⑦ 대응</span></div>
-    ${logs.length?logs.map(g=>`<div class="logrow">
-      <span class="lt">${new Date(g.ts).toISOString().slice(0,16).replace('T',' ')}Z</span>
-      <span class="lw">${esc(g.who)}</span><span>${esc(g.act)}</span></div>`).join(''):'<div class="empty">기록 없음</div>'}
-  </div>`:''}`;
+  ${cap('auditv')?(()=>{
+    const key=[agFrom,agTo,agQ,agNoSched?'1':'0',agPage].join('#');
+    if(agKey!==key){agKey=key;
+      api('GET','/api/audit?page='+agPage+'&limit=100'+(agFrom?'&from='+agFrom:'')+(agTo?'&to='+agTo:'')
+        +(agQ?'&q='+encodeURIComponent(agQ):'')+(agNoSched?'&noSched=1':''))
+        .then(r=>{if(agKey===key){agData=r;render();}}).catch(()=>{if(agKey===key){agData={rows:[],total:0};render();}});}
+    const A=agData;
+    const pages=A?Math.max(1,Math.ceil(A.total/A.limit)):1;
+    return `<div class="panel"><div class="panel-h"><h2>감사 로그</h2>
+      <span class="meta">보존 ${A?A.keepDays:30}일 · 총 ${A?won(A.total):'…'}건${A&&A.oldest?' · 최초 '+new Date(A.oldest).toISOString().slice(0,10):''} · 제3조⑦ 대응</span></div>
+      <div class="row" style="align-items:flex-end">
+        <div style="flex:0 0 150px"><label>시작일</label><input type="date" id="ag_from" value="${agFrom}"></div>
+        <div style="flex:0 0 150px"><label>종료일</label><input type="date" id="ag_to" value="${agTo}"></div>
+        <div style="flex:1"><label>검색어 (행위자·행위·상세)</label><input id="ag_q" value="${esc(agQ)}" placeholder="예: 매핑, 발주, 황인범"></div>
+        <div style="display:flex;align-items:flex-end;gap:6px">
+          <button class="btn ${agNoSched?'':'ghost '}sm" id="ag_nosched">스케줄러 제외</button>
+          <button class="btn ghost sm" id="ag_today">오늘</button>
+          <button class="btn ghost sm" id="ag_7">7일</button>
+          <button class="btn ghost sm" id="ag_reset">초기화</button>
+        </div>
+      </div>
+      ${!A?'<div class="empty">불러오는 중…</div>':(A.rows.length?A.rows.map(g=>`<div class="logrow">
+        <span class="lt">${new Date(g.ts).toISOString().slice(0,16).replace('T',' ')}Z</span>
+        <span class="lw">${esc(g.who)}</span><span>${esc(g.act)}</span></div>`).join(''):'<div class="empty">조건에 맞는 기록이 없습니다</div>')}
+      ${A&&pages>1?`<div style="display:flex;gap:6px;align-items:center;margin-top:10px">
+        <button class="btn ghost sm" id="ag_prev" ${agPage<=1?'disabled':''}>이전</button>
+        <span style="font-size:12px;color:var(--dim)">${agPage} / ${pages}</span>
+        <button class="btn ghost sm" id="ag_next" ${agPage>=pages?'disabled':''}>다음</button></div>`:''}
+    </div>`;})():''}`;
 }
 
 /* ---- csv (클라이언트 파싱 → 서버 검증 반영) ---- */
@@ -1387,6 +1412,16 @@ function bind(){
       alert('해제 완료 — '+r.rebuilt+'개 매장·일자 재계산');
       prodConf={loaded:false};anData=null;repData=null;await refresh();render();}
     catch(e){alert(emsg(e));}});
+  {const f=$.querySelector('#ag_from'),t2=$.querySelector('#ag_to'),q2=$.querySelector('#ag_q');
+   if(f)f.onchange=()=>{agFrom=f.value;agPage=1;render();};
+   if(t2)t2.onchange=()=>{agTo=t2.value;agPage=1;render();};
+   if(q2)q2.onchange=()=>{agQ=q2.value.trim();agPage=1;render();};}
+  on('#ag_nosched',()=>{agNoSched=!agNoSched;agPage=1;render();});
+  on('#ag_today',()=>{agFrom=agTo=today();agPage=1;render();});
+  on('#ag_7',()=>{agTo=today();agFrom=addD(today(),-6);agPage=1;render();});
+  on('#ag_reset',()=>{agFrom=agTo=agQ='';agNoSched=false;agPage=1;render();});
+  on('#ag_prev',()=>{if(agPage>1){agPage--;render();}});
+  on('#ag_next',()=>{agPage++;render();});
   on('#purgedemo',async()=>{
     if(!confirm('예시(데모) 데이터를 삭제합니다:\n· 시드 매장 3곳(가로수길·정자·사당)과 그 마감·발주\n· 예시 리드 2건 · 예시 공지\n\n실제 등록 매장·POS 실측·별칭·계정은 유지됩니다. 진행합니까?'))return;
     try{const r=await api('POST','/api/admin/purge-demo',{});

@@ -630,6 +630,33 @@ async function main() {
     log('AH8 잘못된 입고일 400', r.status === 400);
   }
 
+  /* ===== AI. 감사 로그 검색·보존 ===== */
+  r = await call('sa', 'GET', '/api/audit');
+  log('AI1 영업: 감사 검색 403', r.status === 403);
+  r = await call('op2', 'GET', '/api/audit');
+  log('AI2 운영: 감사 검색 403(auditv)', r.status === 403);
+  r = await call('ad', 'GET', '/api/audit?limit=10');
+  log('AI3 관리: 페이지네이션·보존기간 노출', r.status === 200 && r.data.rows.length <= 10
+    && r.data.total >= r.data.rows.length && r.data.keepDays === 30);
+  {
+    const p1 = await call('ad', 'GET', '/api/audit?limit=5&page=1');
+    const p2 = await call('ad', 'GET', '/api/audit?limit=5&page=2');
+    const ids1 = new Set(p1.data.rows.map(x => x.id));
+    log('AI4 페이지 이동 시 중복 없음', p1.data.rows.length === 5 && p2.data.rows.length > 0
+      && p2.data.rows.every(x => !ids1.has(x.id)));
+  }
+  r = await call('ad', 'GET', '/api/audit?q=' + encodeURIComponent('매장 정보 수정'));
+  log('AI5 키워드 검색', r.data.total > 0 && r.data.rows.every(x => x.act.includes('매장 정보 수정')));
+  r = await call('ad', 'GET', '/api/audit?from=' + t + '&to=' + t);
+  {
+    const all = await call('ad', 'GET', '/api/audit?limit=300');
+    log('AI6 오늘 일자 필터', r.data.total > 0 && r.data.total <= all.data.total);
+  }
+  r = await call('ad', 'GET', '/api/audit?from=2020-01-01&to=2020-01-02');
+  log('AI7 과거 구간 0건', r.data.total === 0 && r.data.rows.length === 0);
+  r = await call('ad', 'GET', '/api/audit?from=2026-13-01');
+  log('AI8 잘못된 날짜는 무시(전체 조회)', r.status === 200 && r.data.total > 0);
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

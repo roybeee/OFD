@@ -64,6 +64,7 @@ try { db.exec('ALTER TABLE orders ADD COLUMN deliver_date TEXT'); db.exec('UPDAT
 const uid = p => p + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
 const now = () => Date.now();
 const kstToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+const kstDayStart = d => new Date(d + 'T00:00:00+09:00').getTime(); /* KST 자정 → epoch ms */
 function addDays(s, n) {
   const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
@@ -106,6 +107,14 @@ function decSecret(b64) {
   } catch (e) { return null; }
 }
 
+const AUDIT_KEEP_DAYS = 30;
+function purgeAudit() { /* 보존 기간 초과 감사 로그 정리 */
+  try {
+    const cut = now() - AUDIT_KEEP_DAYS * 864e5;
+    const r = db.prepare('DELETE FROM audit WHERE ts < ?').run(cut);
+    return r.changes | 0;
+  } catch (e) { return 0; }
+}
 function audit(actor, action, detail) {
   db.prepare('INSERT INTO audit(id,ts,actor,action,detail) VALUES(?,?,?,?,?)')
     .run(uid('g'), now(), actor, action, detail || '');
@@ -1373,6 +1382,29 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, counts });
     }
 
+    /* ---- 감사 로그 검색 (관리/마스터) ---- */
+    if (p === '/api/audit' && req.method === 'GET') {
+      if (deny('auditv')) return;
+      const q = String(u.searchParams.get('q') || '').trim();
+      const from = isDate(u.searchParams.get('from') || '') ? u.searchParams.get('from') : '';
+      const to = isDate(u.searchParams.get('to') || '') ? u.searchParams.get('to') : '';
+      const noSched = u.searchParams.get('noSched') === '1';
+      const limit = Math.min(300, Math.max(10, parseInt(u.searchParams.get('limit') || '100', 10) || 100));
+      const page = Math.max(1, parseInt(u.searchParams.get('page') || '1', 10) || 1);
+      const cond = [], args = [];
+      if (from) { cond.push('ts >= ?'); args.push(kstDayStart(from)); }
+      if (to) { cond.push('ts < ?'); args.push(kstDayStart(addDays(to, 1))); }
+      if (noSched) cond.push("actor != '스케줄러'");
+      if (q) { cond.push('(actor LIKE ? OR action LIKE ? OR detail LIKE ?)'); args.push('%' + q + '%', '%' + q + '%', '%' + q + '%'); }
+      const where = cond.length ? ' WHERE ' + cond.join(' AND ') : '';
+      const total = db.prepare('SELECT COUNT(*) c FROM audit' + where).get(...args).c;
+      const rows = db.prepare('SELECT * FROM audit' + where + ' ORDER BY ts DESC, rowid DESC LIMIT ? OFFSET ?')
+        .all(...args, limit, (page - 1) * limit)
+        .map(a => ({ id: a.id, ts: a.ts, who: a.actor, act: a.action + (a.detail ? ' — ' + a.detail : '') }));
+      const oldest = db.prepare('SELECT MIN(ts) m FROM audit').get().m;
+      return send(res, 200, { rows, total, page, limit, keepDays: AUDIT_KEEP_DAYS, oldest: oldest || null });
+    }
+
     /* ---- 백업 (마스터) ---- */
     if (p === '/api/export' && req.method === 'GET') {
       if (deny('backup')) return;
@@ -1455,6 +1487,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 setInterval(() => { try { db.prepare('DELETE FROM sessions WHERE expires < ?').run(now()); } catch (e) {} }, 600e3).unref();
+purgeAudit();
+setInterval(purgeAudit, 6 * 3600e3).unref();
 /* POS 자동 동기화 — 30분마다 활성 연동 매장의 오늘·어제를 재수집(멱등) */
 async function posAutoSync() {
   const links = db.prepare('SELECT store_id FROM pos_links WHERE del=0 AND active=1').all();
