@@ -1,5 +1,30 @@
+# Dependencies/build output
+node_modules/
+dist/
+coverage/
+.vite/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data
 *.db
 *.db-wal
 *.db-shm
-node_modules/
-.env
+server/data/
+.minio/
+.postgres/
+backups/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

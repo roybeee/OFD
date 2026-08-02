@@ -1,0 +1,15 @@
+{
+  "name": "OFD 워크스테이션",
+  "short_name": "OFD",
+  "description": "발주·배송·입금·정산·세금계산서 통합 운영",
+  "lang": "ko-KR",
+  "start_url": "/store/orders",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f3ef",
+  "theme_color": "#f56722",
+  "icons": [
+    { "src": "/ofd-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

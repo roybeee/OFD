@@ -1,0 +1,28 @@
+{
+  "name": "@ofd/integrations",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" } },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.864.0",
+    "@aws-sdk/s3-request-presigner": "^3.864.0",
+    "@ofd/domain": "2.0.0",
+    "nodemailer": "^7.0.5"
+  },
+  "optionalDependencies": {
+    "popbill": "1.64.2"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.0",
+    "tsx": "^4.20.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build -w @ofd/domain",
+    "test": "tsx --test src/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

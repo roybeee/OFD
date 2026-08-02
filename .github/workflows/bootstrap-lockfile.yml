@@ -1,0 +1,39 @@
+name: Bootstrap npm lockfile artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/ofd-one-process-v2]
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Detect whether the initial lockfile is missing
+        id: lockfile
+        run: test -f package-lock.json && echo "missing=false" >> "$GITHUB_OUTPUT" || echo "missing=true" >> "$GITHUB_OUTPUT"
+      - name: Resolve the initial dependency graph without lifecycle scripts
+        if: steps.lockfile.outputs.missing == 'true'
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Verify the generated lockfile is reproducible
+        if: steps.lockfile.outputs.missing == 'true'
+        run: npm ci --ignore-scripts
+      - name: Validate dependency-free platform contracts
+        if: steps.lockfile.outputs.missing == 'true'
+        run: npm run test:platform
+      - name: Upload lockfile for review and commit
+        if: steps.lockfile.outputs.missing == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock-node-22
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 7

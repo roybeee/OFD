@@ -1,0 +1,21 @@
+{
+  "name": "@ofd/db",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" } },
+  "dependencies": {
+    "@ofd/domain": "2.0.0",
+    "pg": "^8.16.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build -w @ofd/domain",
+    "test": "tsx --test src/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "tsx src/migrate.ts"
+  },
+  "devDependencies": { "tsx": "^4.20.3", "@types/pg": "^8.15.5" }
+}
