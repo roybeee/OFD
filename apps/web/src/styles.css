@@ -405,6 +405,9 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .match-connector span { flex: 1; height: 1px; border-top: 1px dashed var(--line-strong); }
 .match-action { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .matched-check { display: inline-flex; align-items: center; gap: 4px; color: var(--green); font-size: 9px; font-weight: 700; }
+.reverse-reason { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.reverse-reason span { color: var(--muted); font-size: 8px; }
+.reverse-reason input { min-height: 31px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; font-size: 9px; }
 .reconcile-rule { display: flex; align-items: flex-start; gap: 10px; margin: 0 12px 12px; padding: 12px; border-radius: 10px; background: #f4f6f8; }
 .reconcile-rule svg { color: var(--blue); }
 .reconcile-rule strong { font-size: 9px; }

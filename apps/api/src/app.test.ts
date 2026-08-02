@@ -6,6 +6,12 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.ts";
 
 const openApps: FastifyInstance[] = [];
+function todayInSeoul() {
+  const parts = new Intl.DateTimeFormat("en", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
 async function demoApp(): Promise<FastifyInstance> {
   const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent" }, logger: false });
   openApps.push(app);
@@ -260,7 +266,8 @@ describe("OFD v2 API", () => {
     const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent" }, repository, logger: false });
     openApps.push(app);
     const headers = { "x-demo-actor-id": DEMO_IDS.finance, "idempotency-key": "bank-sync-request-test" };
-    const payload = { from: "2026-08-02", to: "2026-08-02" };
+    const date = todayInSeoul();
+    const payload = { from: date, to: date };
     const first = await app.inject({ method: "POST", url: "/api/v2/bank-sync", headers, payload });
     const replay = await app.inject({ method: "POST", url: "/api/v2/bank-sync", headers, payload });
     expect(first.statusCode).toBe(202);
