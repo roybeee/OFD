@@ -17,6 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.x
+      - name: Use the repository npm version
+        run: npm install --global npm@11.11.1
       - name: Detect whether the initial lockfile is missing
         id: lockfile
         run: test -f package-lock.json && echo "missing=false" >> "$GITHUB_OUTPUT" || echo "missing=true" >> "$GITHUB_OUTPUT"

@@ -47,6 +47,8 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+      - name: Use the repository npm version
+        run: npm install --global npm@11.11.1
       - run: npm ci
       - name: Validate Compose configuration
         run: docker compose -f infra/docker-compose.yml config --quiet
@@ -93,6 +95,8 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+      - name: Use the repository npm version
+        run: npm install --global npm@11.11.1
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
