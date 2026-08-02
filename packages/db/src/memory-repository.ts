@@ -10,6 +10,11 @@ interface Entry {
 
 const keyOf = (type: AggregateType, id: string): string => `${type}:${id}`;
 const clone = <T>(value: T): T => structuredClone(value);
+const entryOf = (version: number, value: unknown, storeId?: string): Entry => ({
+  version,
+  value: clone(value),
+  ...(storeId !== undefined ? { storeId } : {}),
+});
 
 export class MemoryRepository implements StateRepository {
   private records = new Map<string, Entry>();
@@ -24,7 +29,7 @@ export class MemoryRepository implements StateRepository {
       const valueVersion = typeof item.value === "object" && item.value && "version" in item.value
         ? Number((item.value as { version: unknown }).version)
         : 1;
-      this.records.set(keyOf(item.type, item.id), { version: valueVersion, storeId: item.storeId, value: clone(item.value) });
+      this.records.set(keyOf(item.type, item.id), entryOf(valueVersion, item.value, item.storeId));
       for (const claim of deriveClaims(item)) this.claims.set(`${claim.type}:${claim.key}`, `${claim.aggregateType}:${claim.aggregateId}`);
     }
   }
@@ -72,7 +77,7 @@ export class MemoryRepository implements StateRepository {
     if (change.expectedVersion === null) {
       if (existing) throw new DomainError("AGGREGATE_EXISTS", "이미 생성된 데이터입니다.", 409);
       const version = this.valueVersion(change.value, 1);
-      target.set(key, { version, storeId: change.storeId, value: clone(change.value) });
+      target.set(key, entryOf(version, change.value, change.storeId));
       return;
     }
     if (!existing || existing.version !== change.expectedVersion) {
@@ -82,7 +87,7 @@ export class MemoryRepository implements StateRepository {
     if (nextVersion !== change.expectedVersion + 1) {
       throw new DomainError("INVALID_NEXT_VERSION", "저장할 버전이 예상 버전보다 정확히 1 커야 합니다.", 500);
     }
-    target.set(key, { version: nextVersion, storeId: change.storeId ?? existing.storeId, value: clone(change.value) });
+    target.set(key, entryOf(nextVersion, change.value, change.storeId ?? existing.storeId));
   }
 
   private valueVersion(value: unknown, fallback: number): number {
@@ -165,12 +170,18 @@ export class MemoryRepository implements StateRepository {
     const event = this.outbox.get(id);
     if (!event) return;
     event.status = error ? (event.attempts >= maxAttempts ? "dead_letter" : "failed") : "completed";
-    event.lastError = error;
-    event.processedAt = error ? undefined : new Date().toISOString();
-    event.deadLetterAt = event.status === "dead_letter" ? new Date().toISOString() : undefined;
-    event.lockedAt = undefined;
-    event.lockedBy = undefined;
-    if (error) event.availableAt = new Date(Date.now() + Math.min(60_000, 2 ** event.attempts * 1_000)).toISOString();
+    if (error) {
+      event.lastError = error;
+      delete event.processedAt;
+      event.availableAt = new Date(Date.now() + Math.min(60_000, 2 ** event.attempts * 1_000)).toISOString();
+    } else {
+      delete event.lastError;
+      event.processedAt = new Date().toISOString();
+    }
+    if (event.status === "dead_letter") event.deadLetterAt = new Date().toISOString();
+    else delete event.deadLetterAt;
+    delete event.lockedAt;
+    delete event.lockedBy;
     this.outbox.set(id, event);
   }
 
@@ -180,8 +191,8 @@ export class MemoryRepository implements StateRepository {
     event.status = "pending";
     event.attempts = 0;
     event.availableAt = new Date().toISOString();
-    event.lastError = undefined;
-    event.deadLetterAt = undefined;
+    delete event.lastError;
+    delete event.deadLetterAt;
     this.outbox.set(id, event);
     return clone(event);
   }

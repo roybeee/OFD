@@ -123,12 +123,15 @@ export class PostgresRepository implements StateRepository {
     if (scope) params.push(storeIds);
     const result = await this.query<{
       id: string; aggregate_type: string; aggregate_id: string; action: string; actor_id: string; actor_role: AuditEvent["actorRole"];
-      store_id?: string; before_data?: unknown; after_data?: unknown; metadata: Record<string, unknown>; occurred_at: Date;
+      store_id: string | null; before_data: unknown | null; after_data: unknown | null; metadata: Record<string, unknown>; occurred_at: Date;
     }>(`SELECT * FROM audit_ledger ${scope} ORDER BY sequence DESC LIMIT $1`, params);
     return result.rows.map((row) => ({
       id: row.id, aggregateType: row.aggregate_type, aggregateId: row.aggregate_id, action: row.action,
-      actorId: row.actor_id, actorRole: row.actor_role, storeId: row.store_id,
-      before: row.before_data, after: row.after_data, metadata: row.metadata, occurredAt: row.occurred_at.toISOString(),
+      actorId: row.actor_id, actorRole: row.actor_role,
+      ...(row.store_id !== null ? { storeId: row.store_id } : {}),
+      ...(row.before_data !== null ? { before: row.before_data } : {}),
+      ...(row.after_data !== null ? { after: row.after_data } : {}),
+      metadata: row.metadata, occurredAt: row.occurred_at.toISOString(),
     }));
   }
 
@@ -197,7 +200,8 @@ export class PostgresRepository implements StateRepository {
     );
     const result = await this.query<{
       id: string; topic: string; aggregate_id: string; payload: unknown; status: OutboxEvent["status"]; attempts: number;
-      available_at: Date; created_at: Date; processed_at?: Date; last_error?: string; locked_at?: Date; locked_by?: string; dead_letter_at?: Date;
+      available_at: Date; created_at: Date; processed_at: Date | null; last_error: string | null;
+      locked_at: Date | null; locked_by: string | null; dead_letter_at: Date | null;
     }>(
       `WITH claimed AS (
          SELECT id FROM outbox_events
@@ -212,8 +216,11 @@ export class PostgresRepository implements StateRepository {
     return result.rows.map((row) => ({
       id: row.id, topic: row.topic, aggregateId: row.aggregate_id, payload: row.payload, status: row.status,
       attempts: row.attempts, availableAt: row.available_at.toISOString(), createdAt: row.created_at.toISOString(),
-      processedAt: row.processed_at?.toISOString(), lastError: row.last_error,
-      lockedAt: row.locked_at?.toISOString(), lockedBy: row.locked_by, deadLetterAt: row.dead_letter_at?.toISOString(),
+      ...(row.processed_at ? { processedAt: row.processed_at.toISOString() } : {}),
+      ...(row.last_error !== null ? { lastError: row.last_error } : {}),
+      ...(row.locked_at ? { lockedAt: row.locked_at.toISOString() } : {}),
+      ...(row.locked_by !== null ? { lockedBy: row.locked_by } : {}),
+      ...(row.dead_letter_at ? { deadLetterAt: row.dead_letter_at.toISOString() } : {}),
     }));
   }
 

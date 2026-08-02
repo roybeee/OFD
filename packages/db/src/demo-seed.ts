@@ -106,10 +106,9 @@ function makeOrder(input: {
     const vatLine = vat.lines[index];
     if (!pricedLine || !vatLine) throw new Error("주문 품목의 부가세 배분 결과가 누락되었습니다.");
     return {
-      id: pricedLine.id,
+      ...vatLine,
       snapshot: { productId: product.id, sku: product.sku, name: product.name, unit: product.unit, unitGross: product.unitGross, taxable: true, taxRate: 10 },
       quantity,
-      ...vatLine,
     };
   });
   const time = `${input.date}T09:20:00.000Z`;
@@ -117,30 +116,32 @@ function makeOrder(input: {
     id: input.id, number: input.number, storeId: input.storeId, status: input.status, source: input.source ?? "native",
     requestedDeliveryDate: input.requested, note: input.status === "submitted" ? "오전 입고 부탁드립니다." : "",
     lines, gross: vat.gross, supply: vat.supply, vat: vat.vat, createdBy: input.createdBy ?? DEMO_IDS.owner,
-    submittedAt: input.status !== "draft" ? time : undefined,
-    approvedBy: input.status === "approved" ? DEMO_IDS.ops : undefined,
-    approvedAt: input.status === "approved" ? `${input.date}T10:10:00.000Z` : undefined,
+    ...(input.status !== "draft" ? { submittedAt: time } : {}),
+    ...(input.status === "approved" ? { approvedBy: DEMO_IDS.ops, approvedAt: `${input.date}T10:10:00.000Z` } : {}),
     createdAt: time, updatedAt: time, version: 1,
   };
 }
 
 export function createDemoSeed(now = new Date("2026-08-02T05:30:00.000Z")): AggregateChange[] {
   const iso = now.toISOString();
+  const [brioche, bean, cup, milk] = products;
+  const doksanStore = stores[0];
+  if (!brioche || !bean || !cup || !milk || !doksanStore) throw new Error("데모 기준정보가 누락되었습니다.");
   const submitted = makeOrder({
     id: "00000000-0000-4000-8000-000000003001", number: "PO-202608-0142", storeId: DEMO_IDS.storeDoksan,
-    status: "submitted", date: "2026-08-02", requested: "2026-08-04", items: [[products[0], 3], [products[1], 4]],
+    status: "submitted", date: "2026-08-02", requested: "2026-08-04", items: [[brioche, 3], [bean, 4]],
   });
   const approved = makeOrder({
     id: "00000000-0000-4000-8000-000000003002", number: "PO-202608-0141", storeId: DEMO_IDS.storeDoksan,
-    status: "approved", date: "2026-08-01", requested: "2026-08-02", items: [[products[2], 1], [products[3], 2]],
+    status: "approved", date: "2026-08-01", requested: "2026-08-02", items: [[cup, 1], [milk, 2]],
   });
   const deliveredOrder = makeOrder({
     id: "00000000-0000-4000-8000-000000003003", number: "PO-202607-0130", storeId: DEMO_IDS.storeDoksan,
-    status: "approved", date: "2026-07-28", requested: "2026-07-30", items: [[products[0], 2], [products[1], 2]],
+    status: "approved", date: "2026-07-28", requested: "2026-07-30", items: [[brioche, 2], [bean, 2]],
   });
   const legacyOrder = makeOrder({
     id: "00000000-0000-4000-8000-000000003004", number: "LEGACY-2026-0029", storeId: DEMO_IDS.storeHapjeong,
-    status: "approved", source: "legacy_unverified", date: "2026-07-25", requested: "2026-07-26", items: [[products[0], 1]], createdBy: DEMO_IDS.ops,
+    status: "approved", source: "legacy_unverified", date: "2026-07-25", requested: "2026-07-26", items: [[brioche, 1]], createdBy: DEMO_IDS.ops,
   });
   const shipment: Shipment = {
     id: "00000000-0000-4000-8000-000000004001", number: "SHP-202608-0068", orderId: approved.id, storeId: approved.storeId,
@@ -182,7 +183,7 @@ export function createDemoSeed(now = new Date("2026-08-02T05:30:00.000Z")): Aggr
     id: "00000000-0000-4000-8000-000000008001", storeId: DEMO_IDS.storeDoksan, settlementId: settlement.id,
     invoiceGroupId: "00000000-0000-4000-8000-000000008000", partNumber: 1, partCount: 1,
     providerManagementKey: popbillManagementKey("00000000-0000-4000-8000-000000008001"),
-    issueType: "normal", status: "reviewed", issueDate: "2026-07-31", supplier: hqBusiness, recipient: stores[0].business,
+    issueType: "normal", status: "reviewed", issueDate: "2026-07-31", supplier: hqBusiness, recipient: doksanStore.business,
     gross: settlement.gross, supply: settlement.supply, vat: settlement.vat, preparedBy: DEMO_IDS.finance,
     reviewedBy: DEMO_IDS.finance, lines: [{ id: receipt.id, description: "식자재 공급", quantity: 1,
       gross: settlement.gross, supply: settlement.supply, vat: settlement.vat }], version: 2,
@@ -207,7 +208,7 @@ export function createDemoSeed(now = new Date("2026-08-02T05:30:00.000Z")): Aggr
     { type: "bank_transaction", id: ambiguousTransaction.id, expectedVersion: null, value: ambiguousTransaction },
     { type: "settlement", id: settlement.id, storeId: settlement.storeId, expectedVersion: null, value: settlement },
     { type: "tax_invoice", id: invoice.id, storeId: invoice.storeId, expectedVersion: null, value: invoice },
-    { type: "notification", id: notification.id, storeId: notification.storeId, expectedVersion: null, value: notification },
+    { type: "notification", id: notification.id, storeId: DEMO_IDS.storeDoksan, expectedVersion: null, value: notification },
   ];
 }
 
