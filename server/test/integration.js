@@ -660,7 +660,7 @@ async function main() {
   /* ===== AJ. 오픈 프로세스 ===== */
   r = await call('sa', 'POST', '/api/open', { name: 'X점', openDate: addD(t, 30) });
   log('AJ1 영업: 오픈 403', r.status === 403);
-  r = await call('op2', 'POST', '/api/open', { name: '판교점', openDate: addD(t, 28), mode: '가맹', stype: '테이블형', status: '진행' });
+  r = await call('op2', 'POST', '/api/open', { name: '판교점', region: '경기 판교', openDate: addD(t, 28), mode: '가맹', stype: '테이블형', status: '진행' });
   const opId = r.data.id;
   log('AJ2 프로젝트 생성: 템플릿 자동 생성(테이블형 전용 포함·포장형 제외)', r.status === 200 && r.data.tasks >= 45);
   r = await call('op2', 'GET', '/api/open/' + opId);
@@ -672,6 +672,7 @@ async function main() {
     const pkg = T3.some(x => x.title.includes('[포장형]'));
     log('AJ3 데드라인 반영: 영업신고 D-10·포털 D-10·유형 필터', biz.off === -10 && biz.due === addD(addD(t, 28), -10)
       && portal.off === -10 && tbl && !pkg);
+    log('AJ3a 프로젝트 지역 저장·상세 응답', r.data.project.region === '경기 판교');
     log('AJ4 담당 표기: 가맹 모드 → 가맹점', T3.find(x => x.owner === 'pt').ownerLabel === '가맹점');
     const tk1 = T3.find(x => x.title === '위생교육 수료');
     r = await call('op2', 'PATCH', '/api/open/task/' + tk1.id, { done: true, memo: '수료증 수령' });
@@ -698,7 +699,8 @@ async function main() {
     log('AJ11 매장 대장 자동 등록', !!ns && ns.type === '가맹' && ns.phone === '010-1111-2222' && ns.openDate === addD(t, -20));
   }
   chk = await call('op2', 'GET', '/api/open');
-  log('AJ12 프로젝트 완료 상태 전환', chk.data.projects.find(x => x.id === opId).status === '완료');
+  log('AJ12 프로젝트 완료 상태·확정 지역 반영', chk.data.projects.find(x => x.id === opId).status === '완료'
+    && chk.data.projects.find(x => x.id === opId).region === '경기');
 
   /* ===== AK. 칸반 단계 ===== */
   r = await call('op2', 'POST', '/api/open', { name: '상담테스트점', openDate: addD(t, -5), mode: '가맹', stype: '포장형' });
@@ -740,6 +742,12 @@ async function main() {
   const ui = await fetch(BASE + '/');
   const uiText = await ui.text();
   log('R1 UI: UTF-8 + 계정 게이트', (ui.headers.get('content-type') || '').includes('utf-8') && uiText.includes('부서 계정'));
+  log('R2 오픈 보드 UI: KPI·검색·지연 필터·4열 고정·카드 상태 select 제거',
+    uiText.includes('class="kpis open-kpis"') && uiText.includes('id="op_q"') && uiText.includes('id="op_delay"')
+    && ['전체 프로젝트', '30일 내 오픈', '지연 프로젝트', '미완료 체크리스트'].every(x => uiText.includes(x))
+    && ['open-card-name', 'open-card-region', '운영 방식 ·', '매장 유형 ·', '오픈 예정일', '진행률'].every(x => uiText.includes(x))
+    && uiText.includes("const COLS=['상담중','진행','보류','완료']") && uiText.includes('max-width:1680px')
+    && !uiText.includes('data-opst='));
 
   const pass = R.filter(Boolean).length;
   console.log('\n' + pass + '/' + R.length + ' integration checks passed');
