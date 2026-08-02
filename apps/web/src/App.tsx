@@ -11,12 +11,13 @@ import { HqReconciliationPage } from './pages/HqReconciliationPage';
 import { StoreDocumentsPage } from './pages/StoreDocumentsPage';
 import { StoreOrdersPage } from './pages/StoreOrdersPage';
 import type { BootstrapData, DataSource, Toast } from './types';
-import { canAccessPath, defaultPathFor, roleForPath } from './lib/access';
+import { browserPathFor, canAccessPath, defaultPathFor, logicalPathFromLocation, roleForPath } from './lib/access';
 
 const knownPaths = new Set(['/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/driver/today', '/unauthorized']);
 
 function initialPath() {
-  if (knownPaths.has(window.location.pathname)) return window.location.pathname;
+  const logicalPath = logicalPathFromLocation(window.location.pathname, import.meta.env.BASE_URL);
+  if (knownPaths.has(logicalPath)) return logicalPath;
   const params = new URLSearchParams(window.location.search);
   const role = params.get('role');
   const view = params.get('view');
@@ -46,7 +47,7 @@ export default function App() {
         if (!mounted) return;
         if (!canAccessPath(path, result.data.capabilities, explicitDemo)) {
           const permittedPath = defaultPathFor(result.data.capabilities);
-          window.history.replaceState({}, '', permittedPath);
+          window.history.replaceState({}, '', browserPathFor(permittedPath, import.meta.env.BASE_URL));
           setPath(permittedPath);
           return;
         }
@@ -73,7 +74,7 @@ export default function App() {
   function navigate(nextPath: string) {
     if (data && !canAccessPath(nextPath, data.capabilities, explicitDemo)) return;
     const demo = explicitDemo ? '?demo=1' : '';
-    window.history.pushState({}, '', `${nextPath}${demo}`);
+    window.history.pushState({}, '', `${browserPathFor(nextPath, import.meta.env.BASE_URL)}${demo}`);
     setPath(nextPath);
     window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }

@@ -3,7 +3,7 @@ name: V2 quality gate
 on:
   pull_request:
   push:
-    branches: [main, agent/ofd-one-process-v2]
+    branches: [main, "agent/**"]
 
 concurrency:
   group: v2-${{ github.workflow }}-${{ github.ref }}
@@ -114,3 +114,35 @@ jobs:
             test-results/e2e
             playwright-report
           retention-days: 14
+
+  publish-render-assets:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/agent/ofd-v2-production-routing' && !contains(github.event.head_commit.message, '[skip ci]')
+    needs: [quality, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Use the repository npm version
+        run: npm install --global npm@11.11.1
+      - run: npm ci
+      - name: Build the V2 app for the existing Render service
+        run: npm run build:render -w @ofd/web
+      - name: Verify legacy and V2 routing together
+        run: npm test --prefix server
+      - name: Commit reproducible Render assets
+        run: |
+          if [ -z "$(git status --porcelain -- server/public/v2)" ]; then
+            echo "Render assets are already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/public/v2
+          git commit -m "build: publish Render V2 assets [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
