@@ -12,13 +12,22 @@ jobs:
   evidence:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Download screens from the green Chromium run
+      - name: Wait for the matching green Chromium run and download its screens
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download 30755517073 --repo "${GITHUB_REPOSITORY}" --name v2-e2e-screens-and-report --dir .verified-screens
+        run: |
+          run_id=""
+          for attempt in $(seq 1 60); do
+            run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow v2.yml --branch "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            test -n "$run_id" && break
+            sleep 5
+          done
+          test -n "$run_id"
+          gh run watch "$run_id" --repo "${GITHUB_REPOSITORY}" --exit-status
+          gh run download "$run_id" --repo "${GITHUB_REPOSITORY}" --name v2-e2e-screens-and-report --dir .verified-screens
       - name: Keep the three review surfaces in the branch
         run: |
           mkdir -p docs/screenshots/v2

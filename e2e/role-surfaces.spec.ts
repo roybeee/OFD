@@ -66,6 +66,9 @@ for (const surface of surfaces) {
     expect(focusIsVisible).toBe(true);
 
     await expectWcagAa(page);
+    await page.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    });
     await saveReviewScreenshot(page, testInfo, surface.name);
   });
 }
