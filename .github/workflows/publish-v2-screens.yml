@@ -1,0 +1,38 @@
+name: Publish verified V2 screens
+
+on:
+  push:
+    branches: [agent/ofd-one-process-v2]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  evidence:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download screens from the green Chromium run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 30755517073 --repo "${GITHUB_REPOSITORY}" --name v2-e2e-screens-and-report --dir .verified-screens
+      - name: Keep the three review surfaces in the branch
+        run: |
+          mkdir -p docs/screenshots/v2
+          for name in hq-desktop.png store-mobile.png driver-mobile.png; do
+            source_path="$(find .verified-screens -type f -name "$name" -print -quit)"
+            test -n "$source_path"
+            cp "$source_path" "docs/screenshots/v2/$name"
+            test -s "docs/screenshots/v2/$name"
+          done
+      - name: Commit immutable review evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots/v2
+          git diff --cached --quiet && exit 0
+          git commit -m "검증된 V2 실화면 증빙 추가"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
