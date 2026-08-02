@@ -109,6 +109,43 @@ html,body{margin:0;padding:0;background:#EFEAE1}
   align-items:center;gap:4px;min-width:0}
 #app .bars .b i{width:100%;background:var(--sig);border-radius:3px 3px 0 0;min-height:2px}
 #app .bars .b span{font-size:8.5px;color:var(--dimmer);white-space:nowrap}
+#app .daily-summary{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:8px;margin-bottom:12px}
+#app .daily-stat{background:#F7F3EB;border:1px solid var(--line);border-radius:8px;padding:9px 11px;min-width:0}
+#app .daily-stat span{display:block;font-size:9.5px;color:var(--dim);font-weight:800}
+#app .daily-stat b{display:block;font-size:14px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#app .daily-stat em{display:block;font-size:10px;color:var(--dim);font-style:normal;margin-top:2px}
+#app .daily-stat.selected{background:var(--soft);border-color:#F5C8AA}
+#app .daily-stat.selected b{color:var(--deep)}
+#app .daily-chart-scroll{overflow-x:auto;padding:4px 0 7px;scrollbar-width:thin;scrollbar-color:#D8CFC2 transparent}
+#app .daily-chart{width:100%;padding:0 3px}
+#app .daily-plot{height:154px;position:relative;margin-top:18px;border-bottom:1.5px solid #CFC6BA}
+#app .daily-grid{position:absolute;inset:0;background:repeating-linear-gradient(to top,
+  transparent 0,transparent calc(25% - 1px),#EEE8DF 25%);pointer-events:none}
+#app .daily-average-line{position:absolute;left:0;right:0;border-top:1.5px dashed var(--info);z-index:3;pointer-events:none}
+#app .daily-average-line span{position:absolute;left:2px;bottom:3px;background:var(--sur);color:var(--info);
+  padding:1px 5px;border-radius:4px;font-size:9px;font-weight:800}
+#app .daily-columns,#app .daily-labels{display:flex;gap:6px}
+#app .daily-columns{position:absolute;inset:0;align-items:flex-end;z-index:2}
+#app .daily-day{height:100%;flex:1;min-width:24px;border:0;background:transparent;padding:0 2px;
+  display:flex;align-items:flex-end;justify-content:center;position:relative;cursor:pointer;border-radius:5px 5px 0 0}
+#app .daily-day:hover{background:#F8F3EC}
+#app .daily-day:focus-visible{outline:2px solid var(--info);outline-offset:1px}
+#app .daily-day .daily-fill{display:block;width:100%;max-width:42px;height:var(--height);min-height:3px;
+  background:var(--sig);border-radius:5px 5px 1px 1px;transition:height .16s,filter .16s;box-shadow:inset 0 -1px 0 rgba(110,48,10,.12)}
+#app .daily-day.weekend .daily-fill{background:var(--deep)}
+#app .daily-day.selected .daily-fill{background:var(--ink);box-shadow:0 0 0 2px var(--sur),0 0 0 4px var(--sig)}
+#app .daily-bar-value{position:absolute;bottom:calc(var(--height) + 5px);left:50%;transform:translateX(-50%);
+  background:var(--ink);color:#fff;border-radius:4px;padding:2px 5px;font-size:8.5px;font-weight:800;white-space:nowrap;z-index:4}
+#app .daily-day:not(.selected) .daily-bar-value.peak{background:var(--deep)}
+#app .daily-labels{padding-top:6px}
+#app .daily-date{flex:1;min-width:24px;text-align:center;font-size:8.5px;color:var(--dim);line-height:1.25;white-space:nowrap}
+#app .daily-date b{display:block;font-size:9px;color:var(--ink)}
+#app .daily-date.weekend,#app .daily-date.weekend b{color:var(--deep)}
+#app .daily-legend{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:var(--dim)}
+#app .daily-legend span{display:flex;align-items:center;gap:5px}
+#app .daily-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--sig)}
+#app .daily-legend i.weekend{background:var(--deep)}
+#app .daily-legend i.average{width:13px;height:0;border-top:1.5px dashed var(--info);border-radius:0;background:none}
 #app .note{font-size:11px;color:var(--dim);line-height:1.6;background:#F7F3EB;
   border-left:2.5px solid var(--sig);padding:10px 12px;border-radius:0 7px 7px 0;margin-top:11px}
 #app .empty{color:var(--dimmer);font-size:12px;padding:18px 0;text-align:center}
@@ -210,6 +247,8 @@ html,body{margin:0;padding:0;background:#EFEAE1}
 @media(max-width:1080px){#app .open-detail-header{grid-template-columns:1fr}#app .open-detail-schedule{grid-template-columns:112px 120px minmax(160px,1fr)}}
 @media(max-width:900px){#app .open-kpis{grid-template-columns:repeat(2,minmax(150px,1fr))}}
 @media(max-width:760px){#app .main{padding:13px}#app .kb-col{min-width:180px}#app .sess{margin-left:0;width:100%}
+  #app .daily-summary{grid-template-columns:1fr 1fr}#app .daily-stat.selected{grid-column:1/-1}
+  #app .daily-day:not(.selected) .daily-bar-value:not(.peak){display:none}
   #app .open-view .head h1{font-size:22px}#app .open-kpis{gap:8px}#app .open-kpis .kpi{padding:13px;min-height:98px}
   #app .open-toolbar{align-items:stretch}#app .open-search{min-width:100%}#app .open-delay-toggle{flex:1}#app .open-result{margin-left:0}
   #app .open-detail-header{margin:0 -13px 14px;padding:14px 13px 16px;gap:14px}#app .open-detail-title h1{font-size:24px}
@@ -231,6 +270,7 @@ const addD=(s,n)=>{const d=new Date(s+'T00:00:00');d.setDate(d.getDate()+n);
   return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
 const diffD=(a,b)=>Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/864e5);
 const isWknd=s=>{const w=new Date(s+'T00:00:00').getDay();return w===0||w===6;};
+const dow=s=>['일','월','화','수','목','금','토'][new Date(s+'T00:00:00').getDay()];
 const md=s=>s?s.slice(5).replace('-','.'):'';
 const won=n=>n.toLocaleString('ko-KR');
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>
@@ -263,7 +303,7 @@ const emsg=e=>(e&&e.data&&EMSG[e.data.error])||'요청을 처리하지 못했습
 /* ---- state ---- */
 let PH='boot',ST0=null,S=null,tab='dash';
 let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoading=false;
-let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
+let anStore=null,anDays=30,anData=null,anLoading=false,anDaySel=null,posConf={loaded:false};
 let repOpen=new Set();
 let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
 let anOpen=new Set();
@@ -832,7 +872,13 @@ function vAn(){
   if(A.err)return head+'<div class="empty">분석 데이터를 불러오지 못했습니다.</div>';
   const g=A.growthPct;
   const mxD=Math.max(...A.daily.map(d=>d.amount),1);
-  const showEvery=A.daily.length>31?7:(A.daily.length>10?2:1);
+  const avgD=Math.round(A.daily.reduce((s2,d)=>s2+d.amount,0)/Math.max(A.daily.length,1));
+  const topDay=A.daily.reduce((best,d)=>!best||d.amount>best.amount?d:best,null);
+  const maxDay=topDay&&topDay.amount>0?topDay:null;
+  const selDay=A.daily.find(d=>d.date===anDaySel)||A.daily[A.daily.length-1]||{date:A.to,amount:0};
+  const avgPct=Math.min(100,avgD/mxD*100);
+  const showBarValues=A.daily.length<=14;
+  const chartMin=Math.max(280,A.daily.length*34);
   const hourSlice=A.hourly?A.hourly.filter(h=>h.hour>=8&&h.hour<=22):null;
   const mxH=hourSlice?Math.max(...hourSlice.map(h=>h.amount),1):1;
   return head+`
@@ -847,8 +893,23 @@ function vAn(){
     ${A.unmatchedAmount>0?`<div class="kpi"><div class="k">미매칭 매출</div><div class="v" style="color:var(--warn)">${won(A.unmatchedAmount)}<em>원</em></div><div class="s">설정 → POS 연동에서 매핑</div></div>`:''}
   </div>
   <div class="panel"><div class="panel-h"><h2>일별 매출</h2><span class="meta">${A.from} ~ ${A.to}</span></div>
-    <div class="bars">${A.daily.map((d,i)=>`<div class="b"><i style="height:${Math.round(d.amount/mxD*88)}px;${d.wknd?'background:var(--deep)':''}"></i><span>${i%showEvery===0?d.date.slice(8):''}</span></div>`).join('')}</div>
-    <div style="font-size:10px;color:var(--dimmer);margin-top:4px">진한 막대 = 주말</div></div>
+    <div class="daily-summary">
+      <div class="daily-stat"><span>일평균</span><b>${won(avgD)}원</b><em>선택 기간 ${A.daily.length}일 기준</em></div>
+      <div class="daily-stat"><span>최고 매출</span><b>${maxDay?md(maxDay.date)+' ('+dow(maxDay.date)+') · '+won(maxDay.amount)+'원':'—'}</b><em>막대를 선택해 일자별 확인</em></div>
+      <div class="daily-stat selected"><span>선택일</span><b>${md(selDay.date)} (${dow(selDay.date)}) · ${won(selDay.amount)}원</b><em>${selDay.date===today()?'오늘 진행 중 · ':''}전체 기간의 ${A.totalAmount?((selDay.amount/A.totalAmount)*100).toFixed(1):'0.0'}%</em></div>
+    </div>
+    <div class="daily-chart-scroll"><div class="daily-chart" style="min-width:${chartMin}px">
+      <div class="daily-plot">
+        <div class="daily-grid"></div>
+        <div class="daily-average-line" style="bottom:${avgPct.toFixed(1)}%"><span>일평균 ${won(avgD)}원</span></div>
+        <div class="daily-columns">${A.daily.map(d=>{const height=d.amount?Math.max(4,Math.round(d.amount/mxD*100)):2;
+          const selected=d.date===selDay.date,peak=maxDay&&d.date===maxDay.date;
+          return `<button type="button" class="daily-day ${d.wknd?'weekend ':''}${selected?'selected':''}" data-anday="${d.date}" style="--height:${height}%" aria-label="${d.date} ${dow(d.date)}요일, 매출 ${won(d.amount)}원" title="${d.date} (${dow(d.date)}) · ${won(d.amount)}원">
+            ${(showBarValues||selected||peak)?`<span class="daily-bar-value ${peak?'peak':''}">${won(d.amount)}원</span>`:''}<i class="daily-fill"></i></button>`;}).join('')}</div>
+      </div>
+      <div class="daily-labels">${A.daily.map(d=>`<div class="daily-date ${d.wknd?'weekend':''}"><b>${md(d.date)}</b>${dow(d.date)}요일</div>`).join('')}</div>
+    </div></div>
+    <div class="daily-legend"><span><i></i>평일</span><span><i class="weekend"></i>주말</span><span><i class="average"></i>일평균 기준선</span><span>막대를 누르면 정확한 금액 표시</span></div></div>
   ${hourSlice?`<div class="panel"><div class="panel-h"><h2>시간대별 매출 (08~22시)</h2><span class="meta">피크 운영·생산 타이밍 근거</span></div>
     <div class="bars">${hourSlice.map(h=>`<div class="b"><i style="height:${Math.round(h.amount/mxH*88)}px"></i><span>${h.hour}시</span></div>`).join('')}</div></div>`:''}
   <div class="panel"><div class="panel-h"><h2>상품 믹스</h2><span class="meta">매출 비중 — P&L 모델 믹스 가정 검증용</span></div>
@@ -1624,8 +1685,9 @@ function bind(){
     if(anOpen.has(k2))anOpen.delete(k2);else anOpen.add(k2);
     render();});
   const anS=$.querySelector('#an_store');
-  if(anS)anS.onchange=()=>{anStore=anS.value;anData=null;render();};
-  $.querySelectorAll('[data-anp]').forEach(b=>b.onclick=()=>{anDays=+b.dataset.anp;anData=null;render();});
+  if(anS)anS.onchange=()=>{anStore=anS.value;anData=null;anDaySel=null;render();};
+  $.querySelectorAll('[data-anp]').forEach(b=>b.onclick=()=>{anDays=+b.dataset.anp;anData=null;anDaySel=null;render();});
+  $.querySelectorAll('[data-anday]').forEach(b=>b.onclick=()=>{anDaySel=b.dataset.anday;render();});
   $.querySelectorAll('[data-repunit]').forEach(b=>b.onclick=()=>{repUnit=b.dataset.repunit;repData=null;repOpen=new Set();render();});
   $.querySelectorAll('[data-reprow]').forEach(tr=>tr.onclick=()=>{
     const k2=tr.dataset.reprow;

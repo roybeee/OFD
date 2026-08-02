@@ -779,6 +779,9 @@ async function main() {
     && uiText.includes("projects.map(p=>api('GET','/api/open/'+p.id))"));
   log('R4 매출 분석: 당일 기간 선택 제공', uiText.includes('[1,7,30,90]')
     && uiText.includes("d===1?'당일':d+'일'"));
+  log('R5 일별 매출: 평균선·최고/선택 요약·날짜별 접근 가능한 막대',
+    ['daily-chart-scroll', 'daily-average-line', 'daily-bar-value', '최고 매출', '선택일'].every(x => uiText.includes(x))
+    && uiText.includes('data-anday="${d.date}"') && uiText.includes('aria-label="${d.date}'));
 
   const pass = R.filter(Boolean).length;
   console.log('\n' + pass + '/' + R.length + ' integration checks passed');
