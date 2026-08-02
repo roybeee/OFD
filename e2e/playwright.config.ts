@@ -38,7 +38,7 @@ export default defineConfig({
           stderr: 'pipe'
         },
         {
-          command: 'VITE_DEMO_MODE=false npm run dev:web -- --host 127.0.0.1',
+          command: 'VITE_DEMO_MODE=false npm run dev:web',
           url: baseURL,
           reuseExistingServer: !process.env.CI,
           timeout: 120_000,
