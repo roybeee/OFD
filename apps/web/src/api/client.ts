@@ -115,7 +115,7 @@ export function normalizeBootstrap(input: unknown): BootstrapData {
       id: text(invoice.id), version: number(invoice.version, 1), storeName: text(store.name, '매장'), period: formatPeriod(text(invoice.issueDate)),
       grossAmount: number(invoice.gross), supplyAmount: number(invoice.supply), vatAmount: number(invoice.vat),
       status: issueType === 'internal_statement' ? 'internal_statement' : text(invoice.status, 'draft') as Invoice['status'],
-      preparedBy: actorName(array(raw.availableActors), text(invoice.preparedBy)), preparedById: text(invoice.preparedBy), dueDate: '익월 10일', sameBusinessNumber: issueType === 'internal_statement', version: number(invoice.version, 1), issueDate: text(invoice.issueDate),
+      preparedBy: actorName(array(raw.availableActors), text(invoice.preparedBy)), preparedById: text(invoice.preparedBy), dueDate: '익월 10일', sameBusinessNumber: issueType === 'internal_statement', issueDate: text(invoice.issueDate),
       supplierName: text(record(invoice.supplier).legalName), supplierBusinessNumber: text(record(invoice.supplier).businessNumber), recipientName: text(record(invoice.recipient).legalName), recipientBusinessNumber: text(record(invoice.recipient).businessNumber),
     };
   });

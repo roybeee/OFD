@@ -46,9 +46,11 @@ export async function resolveActor(request: FastifyRequest, repository: StateRep
     const payload = verifySessionToken(token!, secret!, "session");
     if (payload.ver !== actor.authVersion) throw new DomainError("SESSION_REVOKED", "폐기된 세션입니다. 다시 로그인해 주세요.", 401);
   }
-  return appMode === "production"
-    ? { ...actor, mfaVerified: Boolean(mfaAtFromSession), mfaVerifiedAt: mfaAtFromSession }
-    : actor;
+  if (appMode !== "production") return actor;
+  const sessionActor: Actor = { ...actor, mfaVerified: Boolean(mfaAtFromSession) };
+  if (mfaAtFromSession) sessionActor.mfaVerifiedAt = mfaAtFromSession;
+  else delete sessionActor.mfaVerifiedAt;
+  return sessionActor;
 }
 
 export function signSessionToken(payload: SessionPayload, secret: string): string {

@@ -40,7 +40,7 @@ import { audit, outbox } from "./events.ts";
 interface CreateOrderInput {
   storeId: string;
   requestedDeliveryDate: string;
-  note?: string;
+  note?: string | undefined;
   items: Array<{ productId: string; quantity: number }>;
 }
 
@@ -52,10 +52,10 @@ interface DeliveryInput {
   expectedVersion: number;
   photoKey: string;
   recipientName: string;
-  note?: string;
+  note?: string | undefined;
   capturedAt: string;
-  latitude?: number;
-  longitude?: number;
+  latitude?: number | undefined;
+  longitude?: number | undefined;
 }
 
 export class ProcurementService {
@@ -264,7 +264,7 @@ export class ProcurementService {
       audits: [audit(actor, "order", order.id, "order.cancelled", order.storeId, order, updated, { reason: reason.trim() })],
       outbox: [outbox("order.cancelled", order.id, { orderId: order.id, storeId: order.storeId, reason: reason.trim() })],
     });
-    return { order: updated, paymentRequest: cancelledPayment };
+    return { order: updated, ...(cancelledPayment ? { paymentRequest: cancelledPayment } : {}) };
   }
 
   async rejectOrder(actor: Actor, orderId: string, expectedVersion: number, reason: string): Promise<{ order: PurchaseOrder }> {
@@ -306,7 +306,7 @@ export class ProcurementService {
       audits: [audit(actor, "order", order.id, "order.approved", order.storeId, order, updated)],
       outbox: [outbox("order.approved", order.id, { orderId: order.id, storeId: order.storeId, paymentRequestId: paymentRequest?.id })],
     });
-    return { order: updated, paymentRequest };
+    return { order: updated, ...(paymentRequest ? { paymentRequest } : {}) };
   }
 
   async createShipment(actor: Actor, orderId: string, driverId: string, plannedDate: string): Promise<{ shipment: Shipment }> {
@@ -386,8 +386,10 @@ export class ProcurementService {
     const proof = {
       id: randomUUID(), shipmentId: shipment.id, photoObjectKey: verifiedPhoto.objectKey, objectVersionId: verifiedPhoto.versionId,
       etag: verifiedPhoto.etag, checksumSha256: verifiedPhoto.checksumSha256,
-      recipientName: input.recipientName.trim(), note: input.note?.trim().slice(0, 300) ?? "", latitude: input.latitude,
-      longitude: input.longitude, capturedAt: input.capturedAt, uploadedBy: actor.id,
+      recipientName: input.recipientName.trim(), note: input.note?.trim().slice(0, 300) ?? "",
+      ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
+      ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
+      capturedAt: input.capturedAt, uploadedBy: actor.id,
     };
     const updated: Shipment = { ...shipment, status: "delivered", deliveredAt: now, proof, version: shipment.version + 1 };
     const receipt: GoodsReceipt = {
@@ -543,7 +545,7 @@ export class ProcurementService {
     return { queued: true, from, to };
   }
 
-  async draftSettlement(actor: Actor, input: { storeId: string; periodStart: string; periodEnd: string; receiptIds?: string[] }): Promise<{ settlement: Settlement }> {
+  async draftSettlement(actor: Actor, input: { storeId: string; periodStart: string; periodEnd: string; receiptIds?: string[] | undefined }): Promise<{ settlement: Settlement }> {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     invariant(/^\d{4}-\d{2}-\d{2}$/.test(input.periodStart) && /^\d{4}-\d{2}-\d{2}$/.test(input.periodEnd) && input.periodStart <= input.periodEnd,
@@ -667,13 +669,18 @@ export class ProcurementService {
     invariant(original.issueType !== "internal_statement", "INTERNAL_STATEMENT_ONLY", "내부 거래명세서는 수정세금계산서 대상이 아닙니다.", 409);
     const groupId = randomUUID();
     const id = randomUUID();
+    const invoiceBase: TaxInvoice = { ...original };
+    delete invoiceBase.reviewedBy;
+    delete invoiceBase.approvedBy;
+    delete invoiceBase.providerReceiptId;
+    delete invoiceBase.serialNumber;
+    delete invoiceBase.failureReason;
     const invoice: TaxInvoice = {
-      ...original, id, invoiceGroupId: groupId, partNumber: 1, partCount: 1, providerManagementKey: popbillManagementKey(id), issueType: "modified", status: "draft",
+      ...invoiceBase, id, invoiceGroupId: groupId, partNumber: 1, partCount: 1, providerManagementKey: popbillManagementKey(id), issueType: "modified", status: "draft",
       originalInvoiceId: original.id, originalNtsConfirmNumber: original.serialNumber!, modificationReasonCode: reasonCode,
       gross: -original.gross, supply: -original.supply, vat: -original.vat,
       lines: original.lines.map((line) => ({ ...line, id: randomUUID(), gross: -line.gross, supply: -line.supply, vat: -line.vat })),
-      preparedBy: actor.id, reviewedBy: undefined, approvedBy: undefined, providerReceiptId: undefined, serialNumber: undefined,
-      failureReason: undefined, version: 1,
+      preparedBy: actor.id, version: 1,
     };
     await this.repository.commit({
       changes: [{ type: "tax_invoice", id: invoice.id, storeId: invoice.storeId, expectedVersion: null, value: invoice }],

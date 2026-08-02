@@ -276,7 +276,7 @@ export class OfdWorker {
       const existing = await this.repository.get<Notification>("notification", id);
       if (existing?.status === "sent") continue;
       let notification: Notification = existing ?? {
-        id, actorId: owner?.id, storeId: store.id, channel, template: event.topic, title, body, status: "pending",
+        id, ...(owner ? { actorId: owner.id } : {}), storeId: store.id, channel, template: event.topic, title, body, status: "pending",
         createdAt: new Date().toISOString(), version: 1,
       };
       if (!existing) await this.repository.commit({ changes: [{ type: "notification", id, storeId: store.id, expectedVersion: null, value: notification }] });
@@ -298,8 +298,9 @@ export class OfdWorker {
   }
 
   private audit(aggregateType: string, aggregateId: string, action: string, storeId: string | undefined, before: unknown, after: unknown): AuditEvent {
-    return { id: randomUUID(), aggregateType, aggregateId, action, actorId: systemActor.id, actorRole: "system", storeId,
-      before, after, metadata: { worker: true }, occurredAt: new Date().toISOString() };
+    return { id: randomUUID(), aggregateType, aggregateId, action, actorId: systemActor.id, actorRole: "system",
+      ...(storeId !== undefined ? { storeId } : {}), ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}),
+      metadata: { worker: true }, occurredAt: new Date().toISOString() };
   }
 
   private outbox(topic: string, aggregateId: string, payload: unknown): OutboxEvent {
