@@ -723,6 +723,27 @@ async function main() {
     && chk.data.projects.find(x => x.id === okId).overdue === 0);
   await call('op2', 'DELETE', '/api/open/' + okId);
 
+  /* ===== AL. 매출현황 품목 드릴다운 ===== */
+  r = await call('ad', 'GET', '/api/salesreport?from=' + satD + '&to=' + satD + '&unit=day&stores=s2');
+  {
+    const row = r.data.rows[0];
+    const sum = row.mix.reduce((a2, x) => a2 + x.amount, 0);
+    const qs = row.mix.reduce((a2, x) => a2 + x.qty, 0);
+    log('AL1 행별 품목 내역 합 = 행 합계', Array.isArray(row.mix) && row.mix.length > 0
+      && sum === row.total.amount && qs === row.total.qty);
+    log('AL2 금액 내림차순 정렬', row.mix.every((x, i2) => i2 === 0 || row.mix[i2 - 1].amount >= x.amount));
+    log('AL3 품목별 매장 내역 포함', row.mix[0].stores.length === 1 && row.mix[0].stores[0].storeId === 's2'
+      && row.mix[0].stores[0].amount === row.mix[0].amount);
+  }
+  r = await call('ad', 'GET', '/api/salesreport?from=' + addD(satD, -6) + '&to=' + satD + '&unit=week&stores=s2');
+  {
+    const row = r.data.rows[0];
+    log('AL4 주별 버킷에도 품목 집계', row.mix.length > 0
+      && row.mix.reduce((a2, x) => a2 + x.amount, 0) === row.total.amount);
+  }
+  r = await call('ad', 'GET', '/api/salesreport?from=' + t + '&to=' + t + '&unit=day&stores=s77');
+  log('AL5 마감 폴백 매장도 품목 내역 제공', r.data.rows.length > 0 && r.data.rows[0].mix.length > 0);
+
   /* ===== Z. 예시 데이터 삭제 ===== */
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);

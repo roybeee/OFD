@@ -592,9 +592,16 @@ function computeSalesReport(from, to, unit, storeIds, skuSel) {
   const bucketOf = d => unit === 'month' ? d.slice(0, 7) : unit === 'week' ? weekStartMon(d) : d;
   const buckets = {}; const srcMap = {};
   const ensure = (bk, sid) => {
-    if (!buckets[bk]) buckets[bk] = { perStore: {}, total: { amount: 0, qty: 0 } };
+    if (!buckets[bk]) buckets[bk] = { perStore: {}, total: { amount: 0, qty: 0 }, mix: {} };
     if (!buckets[bk].perStore[sid]) buckets[bk].perStore[sid] = { amount: 0, qty: 0 };
     return buckets[bk];
+  };
+  const addMix = (b, sid, key, name, qty, amount) => { /* 기간 × 품목 (매장별 내역 포함) */
+    if (!b.mix[key]) b.mix[key] = { key, name, qty: 0, amount: 0, stores: {} };
+    const m2 = b.mix[key];
+    m2.qty += qty; m2.amount += amount;
+    if (!m2.stores[sid]) m2.stores[sid] = { qty: 0, amount: 0 };
+    m2.stores[sid].qty += qty; m2.stores[sid].amount += amount;
   };
   for (const st of stores) {
     const pos = db.prepare('SELECT date, sku_id, qty, amount FROM pos_sales WHERE store_id=? AND date>=? AND date<=?').all(st.id, from, to);
@@ -605,6 +612,8 @@ function computeSalesReport(from, to, unit, storeIds, skuSel) {
         const b = ensure(bucketOf(r.date), st.id);
         b.perStore[st.id].amount += r.amount; b.perStore[st.id].qty += r.qty;
         b.total.amount += r.amount; b.total.qty += r.qty;
+        addMix(b, st.id, r.sku_id || '__unmatched',
+          r.sku_id ? ((skuMap[r.sku_id] || {}).name || r.sku_id) : '미매칭(기타)', r.qty, r.amount);
       }
     } else {
       srcMap[st.id] = 'closings'; /* POS 미연동 매장 폴백: 마감 × 정가 */
@@ -617,6 +626,7 @@ function computeSalesReport(from, to, unit, storeIds, skuSel) {
           const amt = k.price * i.sold;
           b.perStore[st.id].amount += amt; b.perStore[st.id].qty += i.sold;
           b.total.amount += amt; b.total.qty += i.sold;
+          addMix(b, st.id, i.skuId, k.name, i.sold, amt);
         });
       });
     }
@@ -625,7 +635,11 @@ function computeSalesReport(from, to, unit, storeIds, skuSel) {
     bucket: bk,
     label: unit === 'week' ? bk.slice(5).replace('-', '/') + '~' + addDays(bk, 6).slice(5).replace('-', '/')
       : unit === 'month' ? bk : bk,
-    perStore: buckets[bk].perStore, total: buckets[bk].total
+    perStore: buckets[bk].perStore, total: buckets[bk].total,
+    mix: Object.values(buckets[bk].mix)
+      .map(m2 => ({ key: m2.key, name: m2.name, qty: m2.qty, amount: m2.amount,
+        stores: Object.keys(m2.stores).map(sid2 => ({ storeId: sid2, qty: m2.stores[sid2].qty, amount: m2.stores[sid2].amount })) }))
+      .sort((a, b) => b.amount - a.amount)
   }));
   const grand = { amount: 0, qty: 0 }; const perStoreTotal = {};
   rows.forEach(r => {

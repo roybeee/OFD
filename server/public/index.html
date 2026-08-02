@@ -238,6 +238,7 @@ const emsg=e=>(e&&e.data&&EMSG[e.data.error])||'요청을 처리하지 못했습
 let PH='boot',ST0=null,S=null,tab='dash';
 let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoading=false;
 let anStore=null,anDays=30,anData=null,anLoading=false,posConf={loaded:false};
+let repOpen=new Set();
 let repUnit='day',repFrom=null,repTo=null,repStores=null,repSkus=null,repMetric='amount',repData=null,repLoading=false;
 let anOpen=new Set();
 let stEdit=null;
@@ -833,9 +834,23 @@ function vRep(){
     <div style="overflow-x:auto"><table><thead><tr><th>기간</th>
       ${D.stores.map(s=>`<th class="num">${esc(s.name)}<div style="font-weight:400;font-size:9.5px;color:var(--dimmer)">${s.source==='pos'?'POS 실측':s.source==='closings'?'마감 기준':'-'}</div></th>`).join('')}
       <th class="num" style="border-left:2px solid var(--line)">합계</th></tr></thead><tbody>
-    ${D.rows.length?D.rows.map(r=>`<tr><td style="font-weight:700;white-space:nowrap">${esc(r.label)}</td>
+    ${D.rows.length?D.rows.map(r=>{const op=repOpen.has(r.bucket);const mx=r.mix||[];
+      const stName2=id=>{const s3=D.stores.find(x=>x.storeId===id);return s3?s3.name:id;};
+      return `<tr data-reprow="${r.bucket}" style="cursor:pointer"><td style="font-weight:700;white-space:nowrap"><span style="color:var(--dim);font-size:10px">${op?'▾':'▸'}</span> ${esc(r.label)}</td>
       ${D.stores.map(s=>`<td class="num">${cell(r.perStore[s.storeId])}</td>`).join('')}
-      <td class="num" style="font-weight:800;border-left:2px solid var(--line)">${won(r.total[M])}</td></tr>`).join('')
+      <td class="num" style="font-weight:800;border-left:2px solid var(--line)">${won(r.total[M])}</td></tr>`
+      +(op?`<tr><td colspan="${D.stores.length+2}" style="padding:0;background:#FAF7F1">
+        <div style="padding:10px 14px">
+          <div style="font-size:11px;font-weight:800;color:var(--dim);margin-bottom:6px">${esc(r.label)} 품목별 판매 — ${mx.length}개 품목 · 총 ${won(r.total.qty)}개 / ${won(r.total.amount)}원</div>
+          <table style="margin:0"><thead><tr><th>품목</th>${D.stores.length>1?D.stores.map(s=>`<th class="num">${esc(s.name)}</th>`).join(''):''}<th class="num">수량</th><th class="num">매출</th><th class="num">비중</th></tr></thead><tbody>
+          ${mx.map(m2=>`<tr><td style="font-weight:600;font-size:12px">${esc(m2.name)}</td>
+            ${D.stores.length>1?D.stores.map(s=>{const sv=m2.stores.find(x=>x.storeId===s.storeId);
+              return `<td class="num" style="font-size:11.5px;color:var(--dim)">${sv?won(sv[M]):'<span style="color:var(--dimmer)">–</span>'}</td>`;}).join(''):''}
+            <td class="num" style="font-size:12px">${won(m2.qty)}</td>
+            <td class="num" style="font-size:12px;font-weight:700">${won(m2.amount)}</td>
+            <td class="num" style="font-size:11.5px;color:var(--dim)">${r.total.amount?(m2.amount/r.total.amount*100).toFixed(1):'0.0'}%</td></tr>`).join('')}
+          </tbody></table>
+        </div></td></tr>`:'');}).join('')
       :`<tr><td colspan="${D.stores.length+2}" style="text-align:center;color:var(--dimmer);padding:20px">선택한 조건에 데이터가 없습니다</td></tr>`}
     </tbody>${D.rows.length?`<tfoot><tr style="background:#F4F0E8"><td style="font-weight:800">합계</td>
       ${D.stores.map(s=>`<td class="num" style="font-weight:800">${cell(D.perStoreTotal[s.storeId])}</td>`).join('')}
@@ -1525,7 +1540,11 @@ function bind(){
   const anS=$.querySelector('#an_store');
   if(anS)anS.onchange=()=>{anStore=anS.value;anData=null;render();};
   $.querySelectorAll('[data-anp]').forEach(b=>b.onclick=()=>{anDays=+b.dataset.anp;anData=null;render();});
-  $.querySelectorAll('[data-repunit]').forEach(b=>b.onclick=()=>{repUnit=b.dataset.repunit;repData=null;render();});
+  $.querySelectorAll('[data-repunit]').forEach(b=>b.onclick=()=>{repUnit=b.dataset.repunit;repData=null;repOpen=new Set();render();});
+  $.querySelectorAll('[data-reprow]').forEach(tr=>tr.onclick=()=>{
+    const k2=tr.dataset.reprow;
+    if(repOpen.has(k2))repOpen.delete(k2);else repOpen.add(k2);
+    render();});
   $.querySelectorAll('[data-reppre]').forEach(b=>b.onclick=()=>{repTo=today();repFrom=addD(repTo,-(+b.dataset.reppre-1));repData=null;render();});
   $.querySelectorAll('[data-repmet]').forEach(b=>b.onclick=()=>{repMetric=b.dataset.repmet;render();});
   const rf=$.querySelector('#rep_from'),rt=$.querySelector('#rep_to');
