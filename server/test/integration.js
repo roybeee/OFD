@@ -301,6 +301,10 @@ async function main() {
   const mixK1 = A.mix.find(x => x.skuId === 'k1');
   log('T4 믹스: 우유크림 378,000 · 미매칭 67,500', mixK1.amount === 378000 && A.unmatchedAmount === 67500 && A.mix[0].skuId === 'k1');
   log('T5 성장률: 직전 기간 0 → null', A.growthPct === null && A.prevAmount === 0);
+  r = await call('ad', 'GET', '/api/analytics?storeId=s2&from=' + satD + '&to=' + satD);
+  log('T5b 당일 분석: 하루 범위·POS 매출·일별 1건', r.status === 200 && r.data.days === 1
+    && r.data.from === satD && r.data.to === satD && r.data.totalAmount === 471000
+    && r.data.daily.length === 1 && r.data.daily[0].date === satD);
   r = await call('sa', 'GET', '/api/analytics?storeId=s2');
   log('T6 영업: 분석 403(need settle)', r.status === 403);
   r = await call('own2', 'GET', '/api/analytics?from=' + aFrom + '&to=' + aTo);
@@ -773,6 +777,8 @@ async function main() {
     ['open-detail-header', 'open-detail-title', 'open-detail-schedule', '전체 진행사항 Excel'].every(x => uiText.includes(x))
     && ['프로젝트 현황', '전체 체크리스트', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'].every(x => uiText.includes(x))
     && uiText.includes("projects.map(p=>api('GET','/api/open/'+p.id))"));
+  log('R4 매출 분석: 당일 기간 선택 제공', uiText.includes('[1,7,30,90]')
+    && uiText.includes("d===1?'당일':d+'일'"));
 
   const pass = R.filter(Boolean).length;
   console.log('\n' + pass + '/' + R.length + ' integration checks passed');
