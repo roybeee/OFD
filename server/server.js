@@ -16,6 +16,56 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'ofd.db');
 const SECURE = process.env.SECURE_COOKIES === '1';
 const SESSION_HOURS = +(process.env.SESSION_HOURS || 12);
 const PUB = path.join(__dirname, 'public');
+const STORE_GUIDE_FILE = path.join(__dirname, 'data', 'store-operation-guide.json');
+
+/* 매장 운영 가이드는 공개 정적 파일이 아니라 서버 내부 승인본으로만 보관·제공한다. */
+function validateStoreGuide(data) {
+  const fail = message => { throw new Error('STORE_GUIDE_INVALID: ' + message); };
+  const isObj = value => !!value && typeof value === 'object' && !Array.isArray(value);
+  if (!isObj(data)) fail('root must be an object');
+  if (!isObj(data.meta)) fail('meta must be an object');
+  for (const key of ['sections', 'articles', 'products']) {
+    if (!Array.isArray(data[key])) fail(key + ' must be an array');
+  }
+
+  const ids = new Set();
+  for (const key of ['sections', 'articles', 'products']) {
+    data[key].forEach((item, index) => {
+      if (!isObj(item)) fail(key + '[' + index + '] must be an object');
+      const id = typeof item.id === 'string' ? item.id.trim() : '';
+      if (!id) fail(key + '[' + index + '].id is required');
+      if (ids.has(id)) fail('duplicate id: ' + id);
+      ids.add(id);
+    });
+  }
+
+  const sectionIds = new Set(data.sections.map(section => section.id));
+  data.articles.forEach((article, index) => {
+    if (typeof article.title !== 'string' || !article.title.trim()) fail('articles[' + index + '].title is required');
+    if (typeof article.section !== 'string' || !sectionIds.has(article.section)) {
+      fail('articles[' + index + '].section must reference a section id');
+    }
+  });
+  data.sections.forEach((section, index) => {
+    if (typeof section.title !== 'string' || !section.title.trim()) fail('sections[' + index + '].title is required');
+  });
+  data.products.forEach((product, index) => {
+    if (typeof product.nameKo !== 'string' || !product.nameKo.trim()) fail('products[' + index + '].nameKo is required');
+    if (Object.prototype.hasOwnProperty.call(product, 'price')) fail('products[' + index + '].price is forbidden');
+  });
+  if (JSON.stringify(data).includes('전일 잔여')) fail('forbidden phrase: 전일 잔여');
+  return data;
+}
+function loadStoreGuide(file = STORE_GUIDE_FILE) {
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); }
+  catch (e) { throw new Error('STORE_GUIDE_LOAD_FAILED: ' + e.message); }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (e) { throw new Error('STORE_GUIDE_INVALID_JSON: ' + e.message); }
+  return validateStoreGuide(parsed);
+}
+const STORE_GUIDE = loadStoreGuide();
 
 /* ---------------- DB ---------------- */
 const db = new DatabaseSync(DB_PATH);
@@ -255,6 +305,7 @@ const CAP = {
   skus:    ['master', 'admin'],            // 품목·가격
   settle:  ['master', 'admin'],            // 정산 조회
   auditv:  ['master', 'admin'],            // 감사 로그 열람
+  guide:   ['master', 'ops'],              // 점주용 매장 운영 가이드 열람
   users:   ['master'],                     // 계정 관리
   backup:  ['master']                      // 백업·이관
 };
@@ -899,6 +950,18 @@ const server = http.createServer(async (req, res) => {
     const actor = actorOf(sess);
     const deny = cap => { if (sess.role !== 'hq' || !hasCap(HU, cap)) { err(res, 403, 'FORBIDDEN', { need: cap }); return true; } return false; };
     const denyAny = caps => { if (sess.role !== 'hq' || !caps.some(c => hasCap(HU, c))) { err(res, 403, 'FORBIDDEN', { need: caps.join('|') }); return true; } return false; };
+
+    if (p === '/api/store-guide' && req.method === 'GET') {
+      if (sess.role === 'store') {
+        if (!db.prepare('SELECT 1 FROM stores WHERE id=? AND del=0').get(sess.storeId)) return err(res, 403, 'STORE_GONE');
+      } else if (!hasCap(HU, 'guide')) {
+        return err(res, 403, 'FORBIDDEN', { need: 'guide' });
+      }
+      return send(res, 200, STORE_GUIDE, {
+        'Cache-Control': 'private, no-store, max-age=0',
+        'Vary': 'Cookie'
+      });
+    }
 
     if (p === '/api/bootstrap' && req.method === 'GET') {
       const base = { skus: allSkus(), notices: allNotices(), today: kstToday() };
@@ -1855,4 +1918,4 @@ if (process.env.POS_AUTOSYNC !== '0') setInterval(() => { posAutoSync().catch(()
 if (require.main === module) {
   server.listen(PORT, () => console.log('[OFD] 워크스테이션 서버 v2 가동 — http://localhost:' + PORT + ' (DB: ' + DB_PATH + ')'));
 }
-module.exports = { server, db, _test: { kstParts, computeAnalytics, suggestSku, backfillBounds } };
+module.exports = { server, db, _test: { kstParts, computeAnalytics, suggestSku, backfillBounds, validateStoreGuide } };

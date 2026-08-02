@@ -140,6 +140,36 @@ async function main() {
   r = await call('ad', 'POST', '/api/stores/s2/code', {});
   log('H7 관리: 코드 재발급 403(운영 권한)', r.status === 403 && r.data.need === 'codes');
 
+  /* ===== H8. 매장 운영 가이드 — 권한·정본 안전성 ===== */
+  r = await call('anon-guide', 'GET', '/api/store-guide');
+  log('H8 가이드: 비인증 401', r.status === 401);
+  r = await call('owner', 'GET', '/api/store-guide');
+  const guideData = r.data;
+  const guideText = JSON.stringify(guideData || {});
+  log('H9 가이드: 점주 열람·버전 메타', r.status === 200
+    && guideData.meta && guideData.meta.version === '1.0'
+    && ['today', 'help', 'learn', 'standards', 'maintenance'].every(id => guideData.sections.some(s => s.id === id)));
+  const guideIds = [...guideData.sections, ...guideData.articles, ...guideData.products].map(x => x.id);
+  log('H10 가이드: ID 고유·필수 배열 구조', new Set(guideIds).size === guideIds.length
+    && guideData.articles.every(a => a.id && a.section && a.title && Array.isArray(a.steps) && Array.isArray(a.keywords))
+    && guideData.products.every(p => p.id && p.nameKo && Array.isArray(p.allergens) && Array.isArray(p.hiddenFields)));
+  const guideChapters = ['브랜드소개', '소통·보고체계', '구비서류 및 게시물 체크리스트', '도넛메뉴', '메뉴별 중량열량',
+    '음료메뉴', '고객응대매뉴얼', '직급별 업무 R&R', '주간월간계절업무', '위생품질상황별 매뉴얼',
+    '솔드아웃 타임', '오픈마감업무', '설비관리', '주간월간 청소관리', '개정이력'];
+  log('H11 가이드: 원본 15개 장 출처 매핑', guideChapters.every(x => guideText.includes(x)));
+  log('H12 가이드: 안전 정본 — 전일 잔여·정적 가격 차단', !guideText.includes('전일 잔여')
+    && guideData.products.every(p => !Object.prototype.hasOwnProperty.call(p, 'price')));
+  log('H13 가이드: 충돌 제품 값 숨김·검수 상태', guideData.products.filter(p => p.reviewStatus === 'needs-review').length >= 4
+    && guideData.products.filter(p => p.reviewStatus === 'needs-review').every(p => p.hiddenFields.length > 0));
+  r = await call('op', 'GET', '/api/store-guide');
+  log('H14 가이드: 운영 열람', r.status === 200);
+  r = await call('m', 'GET', '/api/store-guide');
+  log('H15 가이드: 마스터 열람', r.status === 200);
+  r = await call('ad', 'GET', '/api/store-guide');
+  log('H16 가이드: 관리 차단', r.status === 403);
+  r = await call('sa', 'GET', '/api/store-guide');
+  log('H17 가이드: 영업 차단', r.status === 403);
+
   /* ===== I. 감사 로그 — 개인·부서 단위 행위자 ===== */
   const au = chk.data.audit;
   log('I1 감사: 영업 개인 식별(숙려 미준수)', au.some(a => a.who === '김영업 (영업)' && a.act.includes('숙려기간 미준수')));
@@ -810,6 +840,14 @@ async function main() {
   log('R6 분석 탭명·매장별 수동 1·3·5년 백필 UI',
     !uiText.includes("['an','분석']") && uiText.includes("['an','매출 분석']")
     && ['1년 백필', '3년 백필', '5년 백필', '백필 상태 새로고침', '수동 실행'].every(x => uiText.includes(x)));
+  log('R7 매장 운영 가이드: 메뉴·검색·상황/역할 필터·읽기 전용 안전표시',
+    uiText.includes("['guide','매장 운영 가이드']") && uiText.includes("guide:['master','ops']")
+    && ['id="guide_search"', 'data-guide-section=', 'data-guide-role=', '가격 확인 필요', '본사 확인 중', '읽기 전용'].every(x => uiText.includes(x))
+    && uiText.includes('체크 결과나 진행률을 저장하지 않습니다')
+    && !uiText.includes('올드페리도넛_매장운영매뉴얼_2026.ver.xlsx'));
+  log('R8 매장 운영 가이드: 미검수 알레르기 정보를 공란으로 오인하지 않게 표시',
+    uiText.includes("const allergensHidden=hidden.includes('allergens')")
+    && uiText.includes('알레르기 · 본사 확인 중'));
 
   const pass = R.filter(Boolean).length;
   console.log('\n' + pass + '/' + R.length + ' integration checks passed');
