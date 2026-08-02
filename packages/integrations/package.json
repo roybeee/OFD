@@ -10,13 +10,13 @@
     "@aws-sdk/client-s3": "^3.864.0",
     "@aws-sdk/s3-request-presigner": "^3.864.0",
     "@ofd/domain": "2.0.0",
-    "nodemailer": "^7.0.5"
+    "nodemailer": "^9.0.3"
   },
   "optionalDependencies": {
     "popbill": "1.64.2"
   },
   "devDependencies": {
-    "@types/nodemailer": "^7.0.0",
+    "@types/nodemailer": "^8.0.1",
     "tsx": "^4.20.3"
   },
   "scripts": {
