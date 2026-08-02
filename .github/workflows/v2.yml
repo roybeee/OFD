@@ -50,6 +50,8 @@ jobs:
       - name: Use the repository npm version
         run: npm install --global npm@11.11.1
       - run: npm ci
+      - name: Audit all dependencies
+        run: npm audit --audit-level=high
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
       - name: Validate Compose configuration
