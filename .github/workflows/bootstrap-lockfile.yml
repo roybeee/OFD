@@ -1,4 +1,4 @@
-name: Bootstrap npm lockfile artifact
+name: Review npm lockfile consistency
 
 on:
   workflow_dispatch:
@@ -19,23 +19,26 @@ jobs:
           node-version: 22.x
       - name: Use the repository npm version
         run: npm install --global npm@11.11.1
-      - name: Detect whether the initial lockfile is missing
-        id: lockfile
-        run: test -f package-lock.json && echo "missing=false" >> "$GITHUB_OUTPUT" || echo "missing=true" >> "$GITHUB_OUTPUT"
-      - name: Resolve the initial dependency graph without lifecycle scripts
-        if: steps.lockfile.outputs.missing == 'true'
+      - name: Resolve the dependency graph without lifecycle scripts
         run: npm install --package-lock-only --ignore-scripts
-      - name: Verify the generated lockfile is reproducible
-        if: steps.lockfile.outputs.missing == 'true'
+      - name: Detect a lockfile update
+        id: lockfile
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain -- package-lock.json)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify the resolved lockfile is reproducible
         run: npm ci --ignore-scripts
       - name: Validate dependency-free platform contracts
-        if: steps.lockfile.outputs.missing == 'true'
         run: npm run test:platform
-      - name: Upload lockfile for review and commit
-        if: steps.lockfile.outputs.missing == 'true'
+      - name: Upload changed lockfile for review and commit
+        if: steps.lockfile.outputs.changed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: package-lock-node-22
+          name: package-lock-node-22-${{ github.run_id }}
           path: package-lock.json
           if-no-files-found: error
           retention-days: 7
