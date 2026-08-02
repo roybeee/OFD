@@ -7,7 +7,7 @@ const safeProduction = {
   APP_MODE: 'production',
   DATABASE_URL: 'postgresql://ofd:strong-password@db.internal/ofd',
   SESSION_SECRET: '0123456789abcdefghijklmnopqrstuvwxyz-session',
-  ENCRYPTION_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
+  ENCRYPTION_KEY: Buffer.alloc(32, 0xa5).toString('base64'),
   PUBLIC_APP_URL: 'https://workstation.example.kr',
   WEB_ORIGIN: 'https://workstation.example.kr',
   SESSION_COOKIE_SECURE: 'true',
@@ -52,6 +52,14 @@ test('rejects demo or missing app mode in a production process', () => {
 test('requires ENCRYPTION_KEY to decode to exactly 32 bytes', () => {
   const errors = validateProductionEnv({ ...safeProduction, ENCRYPTION_KEY: 'abcdefghijklmnopqrstuvwxyz0123456789-encryption' });
   assert.ok(errors.includes('ENCRYPTION_KEY must be base64 for exactly 32 bytes'));
+});
+
+test('rejects the historical encryption key that was published in the example environment', () => {
+  const errors = validateProductionEnv({
+    ...safeProduction,
+    ENCRYPTION_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY='
+  });
+  assert.ok(errors.includes('ENCRYPTION_KEY uses a known development key'));
 });
 
 test('requires real object storage and SMTP independently of Popbill', () => {

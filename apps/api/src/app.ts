@@ -74,13 +74,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.post("/api/v2/auth/mfa", async (request, reply) => {
     const body = z.object({ challengeToken: z.string().min(20), code: z.string().regex(/^\d{6}$/) }).parse(request.body);
-    const result = await authService.completeMfa(body.challengeToken, body.code);
+    const result = await authService.completeMfa(body.challengeToken, body.code, request.ip);
     setSessionCookie(reply, result.token, config.appMode);
     return { authenticated: true, actor: result.actor };
   });
   app.post("/api/v2/auth/step-up", async (request, reply) => {
     const body = z.object({ password: z.string().min(1).max(200), code: z.string().regex(/^\d{6}$/) }).parse(request.body);
-    const result = await authService.stepUp(request.actor, body.password, body.code);
+    const result = await authService.stepUp(request.actor, body.password, body.code, request.ip);
     setSessionCookie(reply, result.token, config.appMode);
     return { authenticated: true, mfaVerifiedAt: new Date().toISOString(), actor: result.actor };
   });

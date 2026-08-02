@@ -55,13 +55,14 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose -f infra/docker-compose.yml config --quiet
       - name: Production fail-closed preflight (providers disabled)
-        run: npm run preflight
+        run: |
+          export SESSION_SECRET="$(openssl rand -base64 48)"
+          export ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          npm run preflight
         env:
           NODE_ENV: production
           APP_MODE: production
           DATABASE_URL: postgresql://ofd:strong-password@db.internal/ofd
-          SESSION_SECRET: 0123456789abcdefghijklmnopqrstuvwxyz-session
-          ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
           PUBLIC_APP_URL: https://workstation.example.kr
           WEB_ORIGIN: https://workstation.example.kr
           SESSION_COOKIE_SECURE: "true"

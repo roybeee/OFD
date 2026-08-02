@@ -50,25 +50,42 @@ export class AuthService {
     return { token, mfaRequired: false, actor: publicActor(actor) };
   }
 
-  async completeMfa(challengeToken: string, code: string): Promise<{ token: string; actor: PublicActor }> {
+  async completeMfa(challengeToken: string, code: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
+    this.checkRate(`mfa-ip:${ip}`);
     const payload = verifySessionToken(challengeToken, this.secret, "mfa_challenge");
+    this.checkRate(`mfa-actor:${payload.sub}`);
     const actor = await this.requiredActor(payload.sub);
     invariant(payload.ver === actor.authVersion, "SESSION_REVOKED", "폐기된 로그인 요청입니다.", 401);
     const credential = await this.credentialForActor(actor.id);
+    this.assertCredentialAvailable(credential, actor);
     const secret = decryptMfaSecret(credential.mfaSecretEncrypted ?? "", this.encryptionKey, this.appMode !== "production");
     if (!verifyTotp(code, secret)) {
-      await this.recordFailure(credential, actor);
+      await this.recordFailure(credential, actor, "auth.mfa_failed");
       throw new DomainError("INVALID_MFA_CODE", "인증 코드가 올바르지 않습니다.", 401);
     }
     return { token: await this.finishLogin(credential, actor, new Date().toISOString()), actor: publicActor(actor) };
   }
 
-  async stepUp(actor: Actor, password: string, code: string): Promise<{ token: string; actor: PublicActor }> {
+  async stepUp(actor: Actor, password: string, code: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
+    this.checkRate(`step-up:${actor.id}:${ip}`);
     const credential = await this.credentialForActor(actor.id);
-    invariant(verifyPassword(password, credential.passwordHash), "INVALID_CREDENTIALS", "비밀번호가 올바르지 않습니다.", 401);
+    this.assertCredentialAvailable(credential, actor);
+    if (!verifyPassword(password, credential.passwordHash)) {
+      await this.recordFailure(credential, actor, "auth.step_up_failed");
+      throw new DomainError("INVALID_CREDENTIALS", "비밀번호가 올바르지 않습니다.", 401);
+    }
     const secret = decryptMfaSecret(credential.mfaSecretEncrypted ?? "", this.encryptionKey, this.appMode !== "production");
-    invariant(verifyTotp(code, secret), "INVALID_MFA_CODE", "인증 코드가 올바르지 않습니다.", 401);
+    if (!verifyTotp(code, secret)) {
+      await this.recordFailure(credential, actor, "auth.step_up_failed");
+      throw new DomainError("INVALID_MFA_CODE", "인증 코드가 올바르지 않습니다.", 401);
+    }
     const mfaAt = new Date().toISOString();
+    const updated: UserCredential = { ...credential, failedAttempts: 0, version: credential.version + 1 };
+    delete updated.lockedUntil;
+    await this.repository.commit({
+      changes: [{ type: "credential", id: credential.id, expectedVersion: credential.version, value: updated }],
+      audits: [audit(actor, "credential", credential.id, "auth.step_up_succeeded", undefined, undefined, { actorId: actor.id })],
+    });
     return { token: signSessionToken(this.payload(actor, "session", mfaAt), this.secret), actor: publicActor(actor) };
   }
 
@@ -83,13 +100,13 @@ export class AuthService {
     return signSessionToken(this.payload(actor, "session", mfaAt), this.secret);
   }
 
-  private async recordFailure(credential: UserCredential, actor: Actor): Promise<void> {
+  private async recordFailure(credential: UserCredential, actor: Actor, failureAction = "auth.login_failed"): Promise<void> {
     const failedAttempts = credential.failedAttempts + 1;
     const updated: UserCredential = { ...credential, failedAttempts, version: credential.version + 1,
       ...(failedAttempts >= 5 ? { lockedUntil: new Date(Date.now() + 15 * 60_000).toISOString() } : {}) };
     await this.repository.commit({
       changes: [{ type: "credential", id: credential.id, expectedVersion: credential.version, value: updated }],
-      audits: [audit(actor, "credential", credential.id, failedAttempts >= 5 ? "auth.account_locked" : "auth.login_failed", undefined,
+      audits: [audit(actor, "credential", credential.id, failedAttempts >= 5 ? "auth.account_locked" : failureAction, undefined,
         undefined, { actorId: actor.id, failedAttempts })],
     });
   }
@@ -108,6 +125,13 @@ export class AuthService {
     }
     current.count += 1;
     if (current.count > 20) throw new DomainError("RATE_LIMITED", "로그인 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.", 429);
+  }
+
+  private assertCredentialAvailable(credential: UserCredential, actor: Actor): void {
+    if (!actor.active) throw new DomainError("ACCOUNT_DISABLED", "비활성화된 계정입니다.", 403);
+    if (credential.lockedUntil && new Date(credential.lockedUntil) > new Date()) {
+      throw new DomainError("ACCOUNT_LOCKED", "로그인 실패가 반복되어 계정이 잠겼습니다. 잠시 후 다시 시도해 주세요.", 423);
+    }
   }
 
   private async credentialForActor(actorId: string): Promise<UserCredential> {

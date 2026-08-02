@@ -12,8 +12,13 @@ export class ApiError extends Error {
 
 export type MutationOptions = { idempotencyKey: string; actorId?: string };
 
-export function newIdempotencyKey() {
-  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `ofd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+export function newIdempotencyKey(): string {
+  const webCrypto = globalThis.crypto;
+  if (!webCrypto?.getRandomValues) throw new Error('Web Crypto is required to create an idempotency key');
+  if (typeof webCrypto.randomUUID === 'function') return webCrypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  webCrypto.getRandomValues(bytes);
+  return `ofd-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export function isExplicitDemoMode() {

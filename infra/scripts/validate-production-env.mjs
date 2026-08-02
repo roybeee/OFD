@@ -1,6 +1,9 @@
 import { pathToFileURL } from 'node:url';
 
 const TRUE = new Set(['1', 'true', 'yes', 'on']);
+const KNOWN_DEVELOPMENT_ENCRYPTION_KEYS = new Set([
+  'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY='
+]);
 
 export function isEnabled(value) {
   return TRUE.has(String(value ?? '').trim().toLowerCase());
@@ -59,6 +62,9 @@ export function validateProductionEnv(env) {
     rejectPlaceholder(errors, env, name);
   }
   const encryptionKey = String(env.ENCRYPTION_KEY ?? '');
+  if (KNOWN_DEVELOPMENT_ENCRYPTION_KEYS.has(encryptionKey)) {
+    errors.push('ENCRYPTION_KEY uses a known development key');
+  }
   if (!/^[A-Za-z0-9+/]{43}=$/.test(encryptionKey) || Buffer.from(encryptionKey, 'base64').length !== 32) {
     errors.push('ENCRYPTION_KEY must be base64 for exactly 32 bytes');
   }

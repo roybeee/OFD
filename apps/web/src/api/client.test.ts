@@ -1,7 +1,20 @@
-import { describe, expect, it } from 'vitest';
-import { normalizeBootstrap } from './client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { newIdempotencyKey, normalizeBootstrap } from './client';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('V2 bootstrap adapter', () => {
+  it('uses Web Crypto entropy when randomUUID is unavailable', () => {
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.fill(0xab);
+      return bytes;
+    });
+    vi.stubGlobal('crypto', { getRandomValues });
+
+    expect(newIdempotencyKey()).toBe(`ofd-${'ab'.repeat(16)}`);
+    expect(getRandomValues).toHaveBeenCalledOnce();
+  });
+
   it('normalizes the domain DTO without inventing demo records', () => {
     const value = normalizeBootstrap({
       meta: { generatedAt: '2026-08-02T00:00:00.000Z' },

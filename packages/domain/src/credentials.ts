@@ -4,6 +4,9 @@ import { invariant } from "./errors.ts";
 const SCRYPT_N = 32_768;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
+const KNOWN_DEVELOPMENT_ENCRYPTION_KEYS = new Set([
+  "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+]);
 
 export function hashPassword(password: string, salt = randomBytes(16)): string {
   assertStrongPassword(password);
@@ -31,6 +34,8 @@ export function assertEncryptionKey(base64Key: string): void {
   const validEncoding = /^[A-Za-z0-9+/]{43}=$/.test(base64Key);
   const key = validEncoding ? Buffer.from(base64Key, "base64") : Buffer.alloc(0);
   invariant(key.length === 32, "INVALID_ENCRYPTION_KEY", "ENCRYPTION_KEY는 base64 32바이트 키여야 합니다.", 503);
+  invariant(!KNOWN_DEVELOPMENT_ENCRYPTION_KEYS.has(base64Key), "KNOWN_DEVELOPMENT_ENCRYPTION_KEY",
+    "ENCRYPTION_KEY에 개발용으로 공개된 키를 사용할 수 없습니다.", 503);
 }
 
 export function encryptMfaSecret(secret: string, base64Key: string): string {

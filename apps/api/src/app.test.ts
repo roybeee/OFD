@@ -50,6 +50,45 @@ describe("OFD v2 API", () => {
     expect(mfa.headers["set-cookie"]).toContain("HttpOnly");
   });
 
+  it("MFA 5회 실패로 잠긴 본사 계정은 기존 challenge의 정답으로도 우회할 수 없다", async () => {
+    const app = await demoApp();
+    const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "hq.finance@ofd.local", password: "OFD-demo-2026!" } });
+    const challengeToken = login.json().challengeToken as string;
+    const validCode = generateTotp("JBSWY3DPEHPK3PXP");
+    const invalidCode = validCode === "000000" ? "000001" : "000000";
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const failed = await app.inject({ method: "POST", url: "/api/v2/auth/mfa",
+        payload: { challengeToken, code: invalidCode } });
+      expect(failed.statusCode).toBe(401);
+      expect(failed.json().error.code).toBe("INVALID_MFA_CODE");
+    }
+
+    const blocked = await app.inject({ method: "POST", url: "/api/v2/auth/mfa",
+      payload: { challengeToken, code: validCode } });
+    expect(blocked.statusCode).toBe(423);
+    expect(blocked.json().error.code).toBe("ACCOUNT_LOCKED");
+  });
+
+  it("관리자 step-up 재인증 실패도 계정 잠금에 누적되어 무제한 추측을 차단한다", async () => {
+    const app = await demoApp();
+    const headers = { "x-demo-actor-id": DEMO_IDS.finance };
+    const validCode = generateTotp("JBSWY3DPEHPK3PXP");
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const failed = await app.inject({ method: "POST", url: "/api/v2/auth/step-up", headers,
+        payload: { password: "wrong-password", code: validCode } });
+      expect(failed.statusCode).toBe(401);
+      expect(failed.json().error.code).toBe("INVALID_CREDENTIALS");
+    }
+
+    const blocked = await app.inject({ method: "POST", url: "/api/v2/auth/step-up", headers,
+      payload: { password: "OFD-demo-2026!", code: validCode } });
+    expect(blocked.statusCode).toBe(423);
+    expect(blocked.json().error.code).toBe("ACCOUNT_LOCKED");
+  });
+
   it("배송 기사 bootstrap은 배정 배송에 필요한 정보 외 재무·타매장 정보를 노출하지 않는다", async () => {
     const app = await demoApp();
     const response = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.driver } });
@@ -316,7 +355,7 @@ describe("OFD v2 API", () => {
     const app = await buildApp({
       env: { NODE_ENV: "production", APP_MODE: "production", PROVIDER_MODE: "mock", LOG_LEVEL: "silent",
         SESSION_SECRET: "a-secure-session-secret-that-is-long-enough", WEB_ORIGIN: "https://ofd.example",
-        ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+        ENCRYPTION_KEY: Buffer.alloc(32, 0xa5).toString("base64"),
         STORAGE_MODE: "s3", S3_REGION: "ap-northeast-2", S3_BUCKET: "ofd", S3_KMS_KEY_ID: "kms-key",
         EMAIL_PROVIDER: "smtp", SMTP_HOST: "smtp.example", EMAIL_FROM: "ofd@example.com" },
       repository: createDemoRepository(), storage: new MockObjectStorage(), logger: false,
