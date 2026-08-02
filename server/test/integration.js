@@ -639,11 +639,11 @@ async function main() {
   log('AI3 관리: 페이지네이션·보존기간 노출', r.status === 200 && r.data.rows.length <= 10
     && r.data.total >= r.data.rows.length && r.data.keepDays === 30);
   {
-    const p1 = await call('ad', 'GET', '/api/audit?limit=5&page=1');
-    const p2 = await call('ad', 'GET', '/api/audit?limit=5&page=2');
+    const p1 = await call('ad', 'GET', '/api/audit?limit=10&page=1');
+    const p2 = await call('ad', 'GET', '/api/audit?limit=10&page=2');
     const ids1 = new Set(p1.data.rows.map(x => x.id));
-    log('AI4 페이지 이동 시 중복 없음', p1.data.rows.length === 5 && p2.data.rows.length > 0
-      && p2.data.rows.every(x => !ids1.has(x.id)));
+    log('AI4 페이지 이동 시 중복 없음(최소 limit 10 적용)', p1.data.rows.length === 10 && p2.data.rows.length > 0
+      && p2.data.rows.every(x => !ids1.has(x.id)) && p1.data.limit === 10);
   }
   r = await call('ad', 'GET', '/api/audit?q=' + encodeURIComponent('매장 정보 수정'));
   log('AI5 키워드 검색', r.data.total > 0 && r.data.rows.every(x => x.act.includes('매장 정보 수정')));
