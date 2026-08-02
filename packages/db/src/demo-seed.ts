@@ -101,12 +101,17 @@ function makeOrder(input: {
 }): PurchaseOrder {
   const lineGross = input.items.map(([product, quantity], index) => ({ id: `${input.id}-line-${index + 1}`, gross: product.unitGross * quantity }));
   const vat = splitVatInclusive(lineGross);
-  const lines: PurchaseOrderLine[] = input.items.map(([product, quantity], index) => ({
-    id: lineGross[index].id,
-    snapshot: { productId: product.id, sku: product.sku, name: product.name, unit: product.unit, unitGross: product.unitGross, taxable: true, taxRate: 10 },
-    quantity,
-    ...vat.lines[index],
-  }));
+  const lines: PurchaseOrderLine[] = input.items.map(([product, quantity], index) => {
+    const pricedLine = lineGross[index];
+    const vatLine = vat.lines[index];
+    if (!pricedLine || !vatLine) throw new Error("주문 품목의 부가세 배분 결과가 누락되었습니다.");
+    return {
+      id: pricedLine.id,
+      snapshot: { productId: product.id, sku: product.sku, name: product.name, unit: product.unit, unitGross: product.unitGross, taxable: true, taxRate: 10 },
+      quantity,
+      ...vatLine,
+    };
+  });
   const time = `${input.date}T09:20:00.000Z`;
   return {
     id: input.id, number: input.number, storeId: input.storeId, status: input.status, source: input.source ?? "native",
