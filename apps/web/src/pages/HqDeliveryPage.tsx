@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bike, CalendarDays, Check, ChevronDown, CircleAlert, Image, MapPin, Route, Truck, UserRound } from '../components/icons';
-import type { BootstrapData, DataSource, Delivery, Order } from '../types';
+import { Bike, CalendarDays, Check, ChevronDown, CircleAlert, Image, MapPin, Truck, UserRound } from '../components/icons';
+import type { BootstrapData, Delivery, Order } from '../types';
 import { Button, EmptyState, MetricCard, StatusBadge } from '../components/ui';
 import { ApiError, mutateV2, newIdempotencyKey } from '../api/client';
 
 type Notify = (message: string, tone?: 'success' | 'info' | 'warning') => void;
 
-export function HqDeliveryPage({ data, source, notify, refresh }: { data: BootstrapData; source: DataSource; notify: Notify; refresh: () => void }) {
+export function HqDeliveryPage({ data, notify, refresh }: { data: BootstrapData; notify: Notify; refresh: () => void }) {
   const [plannedDate, setPlannedDate] = useState(data.allowedDeliveryDates[0] ?? '');
   const [driverByOrder, setDriverByOrder] = useState<Record<string, string>>({});
-  const [demoAssigned, setDemoAssigned] = useState<string[]>([]);
   const [pendingKey, setPendingKey] = useState('');
   const canManage = data.capabilities.includes('hq.shipments.manage');
   const canDispatch = data.capabilities.includes('hq.shipments.dispatch');
   const drivers = (data.availableActors ?? []).filter((actor) => actor.role === 'driver');
   const shipmentOrderIds = new Set(data.deliveries.map((delivery) => delivery.orderId).filter(Boolean));
-  const unassigned = data.orders.filter((order) => order.status === 'approved' && order.source !== 'legacy_unverified' && !shipmentOrderIds.has(order.id) && !demoAssigned.includes(order.id));
+  const unassigned = data.orders.filter((order) => order.status === 'approved' && order.source !== 'legacy_unverified' && !shipmentOrderIds.has(order.id));
   const visibleDeliveries = data.deliveries.filter((delivery) => !plannedDate || delivery.plannedDate === plannedDate);
   const delivered = visibleDeliveries.filter((delivery) => delivery.status === 'delivered');
   const boxCount = visibleDeliveries.reduce((sum, delivery) => sum + delivery.itemCount, 0);
@@ -24,11 +23,10 @@ export function HqDeliveryPage({ data, source, notify, refresh }: { data: Bootst
 
   useEffect(() => {
     if (!data.allowedDeliveryDates.includes(plannedDate)) setPlannedDate(data.allowedDeliveryDates[0] ?? '');
-    setDemoAssigned([]);
   }, [data.allowedDeliveryDates, plannedDate]);
 
   function mutationOptions() {
-    return { idempotencyKey: newIdempotencyKey(), actorId: data.meta.appMode === 'demo' ? data.actor.id : undefined };
+    return { idempotencyKey: newIdempotencyKey() };
   }
 
   function mutationError(error: unknown, fallback: string) {
@@ -45,10 +43,9 @@ export function HqDeliveryPage({ data, source, notify, refresh }: { data: Bootst
     if (!driverId || !plannedDate || !canManage || pendingKey) return;
     setPendingKey(`create:${order.id}`);
     try {
-      if (source === 'live') await mutateV2('/shipments', { orderId: order.id, driverId, plannedDate }, mutationOptions());
-      else setDemoAssigned((current) => [...current, order.id]);
+      await mutateV2('/shipments', { orderId: order.id, driverId, plannedDate }, mutationOptions());
       notify(`${order.storeName} 배송을 ${drivers.find((driver) => driver.id === driverId)?.name ?? '선택한 기사'}에게 배정했습니다.`, 'success');
-      if (source === 'live') refresh();
+      refresh();
     } catch (error) {
       mutationError(error, '배송 배정에 실패했습니다.');
     } finally {
@@ -60,9 +57,9 @@ export function HqDeliveryPage({ data, source, notify, refresh }: { data: Bootst
     if (delivery.status !== 'ready' || !canDispatch || pendingKey) return;
     setPendingKey(`dispatch:${delivery.id}`);
     try {
-      if (source === 'live') await mutateV2(`/shipments/${delivery.id}/dispatch`, { expectedVersion: delivery.version ?? 1 }, mutationOptions());
+      await mutateV2(`/shipments/${delivery.id}/dispatch`, { expectedVersion: delivery.version ?? 1 }, mutationOptions());
       notify(`${delivery.storeName} 배송을 출발 처리했습니다.`, 'success');
-      if (source === 'live') refresh();
+      refresh();
     } catch (error) {
       mutationError(error, '배송 출발 처리에 실패했습니다.');
     } finally {
@@ -76,7 +73,6 @@ export function HqDeliveryPage({ data, source, notify, refresh }: { data: Bootst
         <div><p className="eyebrow"><span /> HQ LOGISTICS</p><h1>배송</h1><p>승인된 발주에 배송일과 기사를 배정하고 출발 상태를 관리합니다.</p></div>
         <div className="heading-tools">
           <label className="date-picker"><CalendarDays size={18} /><span className="sr-only">배송일</span><select value={plannedDate} onChange={(event) => setPlannedDate(event.target.value)} disabled={data.allowedDeliveryDates.length === 0}>{data.allowedDeliveryDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label>
-          <Button variant="secondary" disabled title="경로 최적화 연동 준비 중"><Route size={18} /> 경로 최적화 준비 중</Button>
         </div>
       </section>
 

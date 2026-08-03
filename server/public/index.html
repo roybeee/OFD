@@ -41,8 +41,8 @@ html,body{margin:0;padding:0;background:#EFEAE1}
 #app .tabs a{display:flex;align-items:center;gap:5px;border-bottom:2.5px solid transparent;
   padding:11px 12px;font-size:13px;color:var(--dim);white-space:nowrap;font-weight:700;text-decoration:none}
 #app .tabs a:hover{color:var(--ink)}
-#app .tabs a.v2{color:var(--deep);background:var(--soft)}
-#app .tabs a.v2 small{font-size:8px;color:#fff;background:var(--sig);border-radius:999px;padding:2px 5px}
+#app .tabs a.workflow{color:var(--deep)}
+#app .tabs a.workflow small{font-size:9px;color:var(--dimmer);font-weight:600}
 #app .main{flex:1;overflow-y:auto;padding:20px;min-width:0}
 #app .head{display:flex;justify-content:space-between;align-items:flex-end;
   margin-bottom:15px;gap:14px;flex-wrap:wrap}
@@ -451,7 +451,7 @@ const cap=c=>isHQ()&&CAPC[c]&&CAPC[c].includes(S.me.dept);
 const emsg=e=>(e&&e.data&&EMSG[e.data.error])||'요청을 처리하지 못했습니다.';
 
 /* ---- state ---- */
-let PH='boot',ST0=null,S=null,tab='dash';
+let PH='boot',ST0=null,S=null,tab=new URLSearchParams(location.search).get('tab')||'dash';
 let guideData=null,guideLoading=false,guideErr='',guideSection='all',guideRole='전체',guideQuery='';
 let guideOpen=new Set(),guideSearchTimer=null;
 let pSel=null,salesDate=null,salesStore=null,setMonth=null,settle=null,settleLoading=false;
@@ -651,7 +651,8 @@ function render(){
   if(PH==='gate')return renderGate();
   if(PH!=='app'||!S){$.innerHTML='<div class="boot">불러오는 중…</div>';return;}
   const TB=tabsFor();
-  const v2Href=isHQ()?'/v2/hq/orders?demo=1':'/v2/store/orders?demo=1';
+  const v2Href=isHQ()?'/v2/hq/orders':'/v2/store/orders';
+  const canUseV2=!isHQ()||['master','ops','admin'].includes(S.me.dept);
   if(!TB.find(x=>x[0]===tab))tab='dash';
   $.innerHTML=`
   <div class="top">
@@ -663,7 +664,7 @@ function render(){
       <button class="btn ghost sm" id="logout">로그아웃</button>
     </div>
   </div>
-  <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}<a class="v2" href="${v2Href}">통합 발주·정산 <small>V2</small></a></div>
+  <div class="tabs">${TB.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${l}</button>`).join('')}${canUseV2?`<a class="workflow" href="${v2Href}" aria-label="통합 발주·정산 메뉴">통합 발주·정산 <small>발주부터 정산까지</small></a>`:''}</div>
   <div class="main">${({dash:vDash,guide:vGuide,pipe:vPipe,orders:vOrders,sales:vSales,settle:vSettle,an:vAn,rep:vRep,prod:vProd,open:vOpen,notice:vNotice,stores:vStores,conf:vConf})[tab]()}</div>`;
   bind();
   if(tab==='stores')setTimeout(initNaverMap,0);
@@ -687,9 +688,8 @@ function renderSetup(){
         <div><label>비밀번호 (4자 이상)</label><input id="su_pw" type="password"></div>
         <div><label>비밀번호 확인</label><input id="su_pw2" type="password"></div>
       </div>
-      <div style="margin-bottom:10px"><label class="chk"><input type="checkbox" id="su_demo" checked> 예시 데이터 포함</label></div>
       <button class="btn" id="su_go">마스터 계정 생성</button>
-      <div class="note">부서 계정(관리·운영·영업)은 생성 후 설정 → 계정 관리에서 추가합니다. 접근 통제·숙려기간 게이트·감사 로그가 서버에서 강제됩니다. HTTPS 뒤에서 운영하십시오(README 참고).</div>`}
+      <div class="note">빈 운영 원장으로 시작합니다. 부서 계정(관리·운영·영업)은 생성 후 설정 → 계정 관리에서 추가합니다. 접근 통제·숙려기간 게이트·감사 로그가 서버에서 강제됩니다. HTTPS 뒤에서 운영하십시오(README 참고).</div>`}
     </div>
   </div></div>`;
   const go=$.querySelector('#su_go');
@@ -700,8 +700,9 @@ function renderSetup(){
     if(!/^[a-z0-9_.-]{3,20}$/.test(un))return alert('아이디는 영문 소문자·숫자 3~20자입니다.');
     if(p1.length<4)return alert('비밀번호는 4자 이상이어야 합니다.');
     if(p1!==p2)return alert('비밀번호 확인이 일치하지 않습니다.');
-    try{const r=await api('POST','/api/setup',{username:un,name:nm,password:p1,demo:$.querySelector('#su_demo').checked});
-      setupCodes=r.codes;await loadState();renderSetup();}
+    try{const r=await api('POST','/api/setup',{username:un,name:nm,password:p1});
+      setupCodes=r.codes&&Object.keys(r.codes).length?r.codes:null;await loadState();
+      if(setupCodes)renderSetup();else{PH='app';await refresh();render();}}
     catch(e){alert(emsg(e));}
   };
   const dn=$.querySelector('#su_done');
@@ -726,16 +727,7 @@ function renderGate(){
           <input id="g_code" maxlength="6" class="code" inputmode="numeric"></div>
         <button class="btn" id="g_st" style="width:100%">점주 모드 진입</button></div>
     </div>
-    <div class="note" style="margin-top:14px">모든 인증·권한은 서버에서 검증되며 접속 시도는 감사 로그에 기록됩니다. 인증 시도는 분당 횟수가 제한됩니다.</div>
-    <div class="panel" style="margin-top:14px;text-align:center">
-      <div style="font-weight:800;margin-bottom:4px">통합 발주·정산 V2 파일럿</div>
-      <div style="font-size:11px;color:var(--dim);margin-bottom:10px">발주서 수취부터 배송·정산·세금계산서까지 역할별 전체 흐름을 데모 데이터로 확인합니다.</div>
-      <div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap">
-        <a class="btn" href="/v2/store/orders?demo=1">점주 화면</a>
-        <a class="btn ghost" href="/v2/hq/orders?demo=1">본사 화면</a>
-        <a class="btn ghost" href="/v2/driver/today?demo=1">배송기사 화면</a>
-      </div>
-    </div>
+    <div class="note" style="margin-top:14px">모든 인증·권한은 서버에서 검증되며 접속 시도는 감사 로그에 기록됩니다. 인증 시도는 분당 횟수가 제한됩니다. 로그인 후 워크스테이션 메뉴에서 발주부터 정산까지 한 흐름으로 처리할 수 있습니다.</div>
   </div></div>`;
   $.querySelector('#g_hq').onclick=async()=>{
     try{await api('POST','/api/auth/hq',{username:$.querySelector('#g_un').value.trim(),
@@ -1030,8 +1022,10 @@ function vOrders(){
         <td class="num" style="font-weight:700">${won(orderAmt(o))}원</td>
         <td><span class="pill ${OSCLS[o.status]}">${o.status}</span></td>
         <td style="white-space:nowrap">
-          ${o.status!=='완료'?`<button class="btn sm" data-onext="${o.id}">${OSTAT[OSTAT.indexOf(o.status)+1]}로</button>`:''}
-          <button class="btn danger sm" data-odel="${o.id}">반려</button></td></tr>`;}).join('')}
+          ${o.v2Managed&&o.status==='대기'
+            ? '<a class="btn sm" href="/v2/hq/orders">통합 승인</a>'
+            : `${o.status!=='완료'?`<button class="btn sm" data-onext="${o.id}">${OSTAT[OSTAT.indexOf(o.status)+1]}로</button>`:''}
+              <button class="btn danger sm" data-odel="${o.id}">반려</button>`}</td></tr>`;}).join('')}
       </tbody></table>`:'<div class="empty">발주 내역이 없습니다.</div>'}
     </div>`;
   }
@@ -1162,24 +1156,31 @@ function vSettle(){
       <div class="empty">집계 중…</div>`;
   }
   const rows=settle.rows;
-  const tot=rows.reduce((a,r)=>({sup:a.sup+r.supply,rev:a.rev+r.revenue}),{sup:0,rev:0});
+  const tot=rows.reduce((a,r)=>({sup:a.sup+r.supply,rev:a.rev+r.revenue,unverified:a.unverified+(r.unverifiedSupplyOrders||0)}),{sup:0,rev:0,unverified:0});
   return `
   <div class="head"><div><h1>정산 (본사)</h1>
-    <p>공급 매출 = 출고·완료 발주의 공급가 합계 — 제3조②4호에 따라 밀집(을)에 귀속되는 생산·물류 수익의 기초 수치</p></div>
+    <p>공급 매출 = 승인 당시 금액이 확인된 출고·완료 발주의 공급가 합계 — 제3조②4호에 따라 밀집(을)에 귀속되는 생산·물류 수익의 기초 수치</p></div>
     <div><input type="month" id="st_month" value="${setMonth}" style="width:150px"></div></div>
+  ${tot.unverified?`<div class="note" role="alert" style="margin-bottom:12px;border:1px solid #ECD49C;background:var(--warnsoft);color:#6F4B08;font-size:13px;padding:12px 14px">
+    <b>금액 확인 필요</b> — 승인 당시 단가가 없는 기존 원장 ${tot.unverified}건은 공급 매출 합계에서 제외했습니다. 아래 금액은 확인된 발주만의 부분 합계입니다.
+  </div>`:''}
   <div class="panel">
     <table><thead><tr><th>매장</th><th>구분</th><th class="num">공급 매출(밀집)</th><th class="num">매장 매출</th><th class="num">공급/매출</th><th class="num">로스율</th></tr></thead><tbody>
     ${rows.map(r=>`<tr><td style="font-weight:700">${esc(r.name)}</td>
       <td><span class="pill ${r.type==='직영'?'pl-info':'pl-sig'}">${esc(r.type)}</span></td>
-      <td class="num" style="font-weight:700">${won(r.supply)}원</td>
+      <td class="num" style="font-weight:700">${r.unverifiedSupplyOrders
+        ? `<span>확인된 금액 ${won(r.supply)}원</span><small style="display:block;color:var(--warn);font-weight:700;margin-top:3px">기존 원장 ${r.unverifiedSupplyOrders}건 제외 · 금액 확인 필요</small>`
+        : `${won(r.supply)}원`}</td>
       <td class="num">${won(r.revenue)}원</td>
-      <td class="num" style="color:var(--dim)">${r.revenue>0?(r.supply/r.revenue*100).toFixed(1):'0.0'}%</td>
+      <td class="num" style="color:var(--dim)">${r.unverifiedSupplyOrders?'확인 필요':`${r.revenue>0?(r.supply/r.revenue*100).toFixed(1):'0.0'}%`}</td>
       <td class="num" style="color:${r.lossRate>=8?'var(--risk)':r.lossRate>=4?'var(--warn)':'var(--ok)'}">${r.lossRate.toFixed(1)}%</td></tr>`).join('')}
     <tr><td style="font-weight:800">합계</td><td></td>
-      <td class="num" style="font-weight:800;color:var(--deep)">${won(tot.sup)}원</td>
+      <td class="num" style="font-weight:800;color:var(--deep)">${tot.unverified
+        ? `<span style="color:var(--warn)">금액 확인 필요</span><small style="display:block;color:var(--dim);margin-top:3px">확인된 금액 ${won(tot.sup)}원 · 기존 원장 ${tot.unverified}건 제외</small>`
+        : `${won(tot.sup)}원`}</td>
       <td class="num" style="font-weight:800">${won(tot.rev)}원</td><td></td><td></td></tr>
     </tbody></table>
-    <div class="note">로열티 정산 모듈은 제4조 자료(기존 가맹계약서·로열티 산정기준) 수령 후 요율 반영해 추가합니다. r9(22 vs 26) 해소 전 매장별 귀속 구분을 확정하지 마십시오.</div>
+    <div class="note">승인 당시 단가가 보존된 발주만 공급 매출에 합산합니다. 기존 원장 제외 표시가 있으면 원본 발주서에서 금액을 확인한 뒤 확정하세요. 로열티 정산 모듈은 제4조 자료 수령 후 요율을 반영합니다.</div>
   </div>`;
 }
 
@@ -1709,7 +1710,7 @@ function vConf(){
     <table><thead><tr><th>매장</th><th>제공자</th><th>merchantId</th><th>Access Key</th><th>Secret Key</th><th>활성</th><th></th></tr></thead><tbody>
     ${S.stores.map(st=>{const L=(posConf.links||[]).find(x2=>x2.storeId===st.id)||{};
       return `<tr><td style="font-weight:700">${esc(st.name)}<div style="font-size:10px;font-weight:400;color:${(L.lastResult||'').indexOf('ERR')===0?'var(--risk)':'var(--dimmer)'}">${esc(L.lastResult||'미연동')}</div></td>
-      <td><select id="pp_${st.id}" style="width:104px;padding:5px 6px;font-size:12px"><option ${L.provider!=='mock'?'selected':''}>tossplace</option><option ${L.provider==='mock'?'selected':''}>mock</option></select></td>
+      <td><select id="pp_${st.id}" style="width:104px;padding:5px 6px;font-size:12px"><option selected>tossplace</option></select></td>
       <td><input id="pm_${st.id}" value="${esc(L.merchantId||'')}" placeholder="매장 ID" style="width:100px;padding:5px 7px;font-size:12px"></td>
       <td><input id="pa_${st.id}" type="password" placeholder="${L.hasKeys?'저장됨·변경 시 입력':'x-access-key'}" style="width:128px;padding:5px 7px;font-size:12px"></td>
       <td><input id="ps_${st.id}" type="password" placeholder="${L.hasKeys?'저장됨·변경 시 입력':'x-secret-key'}" style="width:128px;padding:5px 7px;font-size:12px"></td>
@@ -1732,7 +1733,7 @@ function vConf(){
         <div class="backfill-actions">${[[1,'1년 백필'],[3,'3년 백필'],[5,'5년 백필']].map(([y,label])=>`<button class="btn ${y===5?'':'ghost '}sm" data-pbf="${st.id}" data-years="${y}" ${!ready||active?'disabled':''}>${label}</button>`).join('')}</div>
       </div>`;}).join('')}</div>
 
-    <div class="note">토스플레이스 개발자센터(developers.tossplace.com)에서 앱을 만들고 발급받은 API 키와 매장 ID를 입력하십시오. 완료(COMPLETED) 주문만 집계하며, 폐기수량은 점주 마감 입력을 그대로 보존합니다. mock 제공자는 키 없이 파이프라인을 시연·검증하는 용도입니다.</div>
+    <div class="note">토스플레이스 개발자센터(developers.tossplace.com)에서 앱을 만들고 발급받은 API 키와 매장 ID를 입력하십시오. 완료(COMPLETED) 주문만 집계하며, 폐기수량은 점주 마감 입력을 그대로 보존합니다.</div>
   </div>`:`<div class="panel"><div class="empty">POS 연동 정보 불러오는 중…</div></div>`):''}
 
 

@@ -1,9 +1,5 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
-
-async function openDemo(page: Page, path: string, testId: string) {
-  await page.goto(`${path}${path.includes('?') ? '&' : '?'}demo=1`, { waitUntil: 'networkidle' });
-  await expect(page.getByTestId(testId)).toBeVisible();
-}
+import { prepareStoreSession, prepareSubmittedOrderForHq } from './real-fixture';
 
 async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
   const path = testInfo.outputPath(`${name}.png`);
@@ -16,13 +12,15 @@ async function expectDialogKeyboardSafety({
   trigger,
   closeName,
   lastActionName,
+  afterOpen,
   testInfo,
-  screenshotName
+  screenshotName,
 }: {
   page: Page;
   trigger: Locator;
   closeName: string;
   lastActionName: RegExp;
+  afterOpen?: (dialog: Locator) => Promise<void>;
   testInfo: TestInfo;
   screenshotName: string;
 }) {
@@ -34,6 +32,7 @@ async function expectDialogKeyboardSafety({
   const lastAction = dialog.getByRole('button', { name: lastActionName });
   await expect(dialog).toBeVisible();
   await expect(close).toBeFocused();
+  if (afterOpen) await afterOpen(dialog);
 
   await lastAction.focus();
   await page.keyboard.press('Tab');
@@ -49,102 +48,68 @@ async function expectDialogKeyboardSafety({
   await expect(trigger).toBeFocused();
 }
 
-test('role switching requires an explicit demo opt-in', async ({ page }) => {
-  await openDemo(page, '/store/orders?role=store&view=orders', 'store-order-screen');
-  const switcher = page.getByRole('group', { name: '화면 역할 전환' });
-  await expect(switcher).toBeVisible();
-  await switcher.getByRole('button', { name: '본사 운영 화면' }).click();
-  await expect(page.getByTestId('hq-order-screen')).toBeVisible();
-
-  await page.goto('/store/orders', { waitUntil: 'networkidle' });
-  await expect(page.locator('main')).toBeVisible();
-  await expect(page.getByRole('group', { name: '화면 역할 전환' })).toHaveCount(0);
-});
-
-test('store order dialog traps focus, closes with Escape and restores its trigger', async ({ page }, testInfo) => {
-  await openDemo(page, '/store/orders?role=store&view=orders', 'store-order-screen');
+test('실제 점주 발주 창은 빈 수량으로 열리고 키보드 초점을 안전하게 가둔다', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await prepareStoreSession(page);
+  await page.goto('/v2/store/orders', { waitUntil: 'networkidle' });
+  const trigger = page.getByRole('button', { name: /새 발주 시작/ });
   await expectDialogKeyboardSafety({
     page,
-    trigger: page.getByRole('button', { name: /새 발주 시작/ }),
+    trigger,
     closeName: '발주 창 닫기',
     lastActionName: /다음 단계/,
+    afterOpen: async (dialog) => {
+      const quantities = dialog.locator('.quantity-control output');
+      await expect(quantities.first()).toBeVisible();
+      const quantityTexts = await quantities.allTextContents();
+      expect(quantityTexts.length).toBeGreaterThan(0);
+      expect(quantityTexts.every((value) => value.trim() === '0')).toBe(true);
+      await expect(dialog.locator('.wizard-footer').getByText('0박스', { exact: true })).toBeVisible();
+      const next = dialog.getByRole('button', { name: /다음 단계/ });
+      await expect(next).toBeDisabled();
+      await dialog.getByRole('button', { name: /한 박스 추가/ }).first().click();
+      await expect(next).toBeEnabled();
+    },
     testInfo,
-    screenshotName: 'store-order-dialog-open'
+    screenshotName: 'store-order-dialog-live',
   });
 });
 
-test('HQ order drawer traps focus, closes with Escape and restores its row', async ({ page }, testInfo) => {
-  await openDemo(page, '/hq/orders?role=hq&view=orders', 'hq-order-screen');
-  const trigger = page.getByRole('table', { name: '주문 검토 목록' }).getByRole('row').nth(1);
+test('실제 본사 주문 검토 drawer는 Escape와 초점 복원을 지원한다', async ({ page }, testInfo) => {
+  const fixture = await prepareSubmittedOrderForHq(page);
+  await page.goto('/v2/hq/orders', { waitUntil: 'networkidle' });
+  const trigger = page.getByRole('table', { name: '주문 검토 목록' }).getByRole('row').filter({ hasText: fixture.orderNumber });
   await expectDialogKeyboardSafety({
     page,
     trigger,
     closeName: '주문 상세 닫기',
-    lastActionName: /승인하고 배송 준비/,
+    lastActionName: /발주 승인/,
     testInfo,
-    screenshotName: 'hq-order-review-drawer-open'
+    screenshotName: 'hq-order-review-drawer-live',
   });
 });
 
-test('ambiguous deposits cannot be manually linked without selecting a claim', async ({ page }) => {
-  await openDemo(page, '/hq/reconciliation?role=hq&view=reconciliation', 'hq-reconciliation-screen');
-  await expect(page.getByText('일치 후보 2건')).toBeVisible();
-  const blockedActions = page.getByRole('button', { name: '청구 선택 필요' });
-  expect(await blockedActions.count()).toBeGreaterThan(0);
-  for (let index = 0; index < await blockedActions.count(); index += 1) {
-    await expect(blockedActions.nth(index)).toBeDisabled();
-  }
+test('통합 발주 화면에서 기존 워크스테이션으로 돌아갈 수 있다', async ({ page }) => {
+  await prepareStoreSession(page);
+  await page.goto('/v2/store/orders', { waitUntil: 'networkidle' });
+  const home = page.getByRole('link', { name: /워크스테이션 홈/ });
+  await expect(home).toBeVisible();
+  await home.click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#app')).toBeVisible();
 });
 
-test('mobile delivery proof drawer contains overflow and rejects unsafe files', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 360, height: 800 });
-  await openDemo(page, '/driver/today?role=driver&view=today', 'driver-today-screen');
-  await page.locator('.driver-next').getByRole('button', { name: '배송 상세' }).click();
+test('기존 본사 워크스테이션과 통합 발주정산을 같은 탭에서 왕복한다', async ({ page }) => {
+  await prepareSubmittedOrderForHq(page);
+  await page.goto('/', { waitUntil: 'networkidle' });
 
-  const dialog = page.getByRole('dialog');
-  const fileInput = dialog.locator('input[type="file"]');
-  const complete = dialog.getByRole('button', { name: '배송 완료 처리' });
-  await expect(dialog).toBeVisible();
+  const entry = page.getByRole('link', { name: '통합 발주·정산 메뉴' });
+  await expect(entry).toBeVisible();
+  await expect(entry).not.toHaveAttribute('target');
+  await entry.click();
+  await expect(page).toHaveURL(/\/v2\/hq\/orders$/);
 
-  const dimensions = await page.evaluate(() => {
-    const openedDialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    const bounds = openedDialog?.getBoundingClientRect();
-    return {
-      viewportWidth: document.documentElement.clientWidth,
-      pageWidth: document.documentElement.scrollWidth,
-      dialogLeft: bounds?.left ?? -1,
-      dialogRight: bounds?.right ?? Number.POSITIVE_INFINITY,
-      dialogScrollWidth: openedDialog?.scrollWidth ?? Number.POSITIVE_INFINITY,
-      dialogClientWidth: openedDialog?.clientWidth ?? 0
-    };
-  });
-  expect(dimensions.pageWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
-  expect(dimensions.dialogLeft, JSON.stringify(dimensions)).toBeGreaterThanOrEqual(-1);
-  expect(dimensions.dialogRight, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
-  expect(dimensions.dialogScrollWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.dialogClientWidth + 1);
-
-  await fileInput.setInputFiles({
-    name: 'proof.txt',
-    mimeType: 'text/plain',
-    buffer: Buffer.from('not an image')
-  });
-  await expect(page.getByText('JPG, PNG, WEBP 사진만 올릴 수 있어요')).toBeVisible();
-  await expect(complete).toBeDisabled();
-
-  await fileInput.setInputFiles({
-    name: 'proof-too-large.jpg',
-    mimeType: 'image/jpeg',
-    buffer: Buffer.alloc(10 * 1024 * 1024 + 1)
-  });
-  await expect(page.getByText('사진은 10MB 이하만 올릴 수 있어요')).toBeVisible();
-  await expect(complete).toBeDisabled();
-
-  await fileInput.setInputFiles({
-    name: 'proof-safe.jpg',
-    mimeType: 'image/jpeg',
-    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9])
-  });
-  await expect(dialog.getByText('proof-safe.jpg')).toBeVisible();
-  await expect(complete).toBeEnabled();
-  await attachScreenshot(page, testInfo, 'driver-proof-drawer-open-mobile');
+  await page.getByRole('link', { name: /워크스테이션 홈/ }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#app')).toBeVisible();
 });

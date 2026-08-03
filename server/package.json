@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node --no-warnings server.js",
-    "test": "node --no-warnings test/integration.js"
+    "test": "node --no-warnings test/integration.js && node --no-warnings test/v2-real-integration.js"
   },
   "engines": { "node": ">=22.5.0" },
   "license": "UNLICENSED",

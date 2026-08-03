@@ -4,9 +4,9 @@ import { getStatusLabel } from '../lib/workflows';
 import type { Toast } from '../types';
 
 export function StatusBadge({ status }: { status: string }) {
-  const positive = ['approved', 'delivered', 'auto_matched', 'nts_success', 'issued', 'paid'].includes(status);
-  const warning = ['submitted', 'manual_review', 'reviewed', 'scheduled', 'pending', 'queued', 'ready'].includes(status);
-  const danger = ['change_requested', 'overdue', 'failed'].includes(status);
+  const positive = ['approved', 'delivered', 'auto_matched', 'nts_success', 'issued', 'paid', 'internal_statement'].includes(status);
+  const warning = ['submitted', 'manual_review', 'reviewed', 'scheduled', 'pending', 'queued', 'ready', 'nts_pending'].includes(status);
+  const danger = ['change_requested', 'overdue', 'failed', 'cancelled'].includes(status);
   const Icon = positive ? Check : danger ? AlertTriangle : warning ? Clock3 : Info;
   return (
     <span className={`status-badge ${positive ? 'positive' : danger ? 'danger' : warning ? 'warning' : 'neutral'}`}>
@@ -76,9 +76,9 @@ export function ApiConnectionError({ onRetry }: { onRetry: () => void }) {
       <div className="error-symbol"><ServerOff size={31} aria-hidden="true" /></div>
       <p className="eyebrow"><span /> SAFE MODE</p>
       <h1>운영 서버에 연결할 수 없습니다</h1>
-      <p>실제 데이터 대신 데모를 자동으로 표시하지 않았습니다. 네트워크와 API 상태를 확인한 뒤 다시 연결해 주세요.</p>
+      <p>운영 데이터 연결이 복구될 때까지 조회와 업무 처리를 차단했습니다. 네트워크와 API 상태를 확인한 뒤 다시 연결해 주세요.</p>
       <button className="button button-primary" type="button" onClick={onRetry}><RefreshCcw size={18} aria-hidden="true" /> 다시 연결</button>
-      <small>화면 시연이 필요할 때만 주소 끝에 <code>?demo=1</code>을 명시적으로 붙여 주세요.</small>
+      <small>연결 문제가 계속되면 계정 관리자에게 문의해 주세요.</small>
     </main>
   );
 }
