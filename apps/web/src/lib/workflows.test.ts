@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { canApproveInvoice, canCompleteDelivery, grossToVatParts, validateDeliveryPhoto } from './workflows';
+import { calculateCartTotals, canApproveInvoice, canCompleteDelivery, validateDeliveryPhoto } from './workflows';
 
 describe('financial and operational invariants', () => {
-  it('splits VAT-inclusive amounts without losing a won', () => {
-    expect(grossToVatParts(13_431_700)).toEqual({ supply: 12_210_636, vat: 1_221_064, gross: 13_431_700 });
+  it('matches the canonical document-level VAT split including one-won rounding', () => {
+    expect(calculateCartTotals([{ unitGross: 2_218, quantity: 2 }]))
+      .toEqual({ supply: 4_033, vat: 403, gross: 4_436, configured: true });
+    expect(calculateCartTotals([{ unitGross: 0, quantity: 1 }]).configured).toBe(false);
   });
 
   it('enforces maker-checker separation', () => {

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
-    "build:render": "tsc --noEmit -p tsconfig.json && VITE_DEMO_MODE=true vite build --base=/v2/ --outDir=../../server/public/v2 --emptyOutDir",
+    "build:render": "tsc --noEmit -p tsconfig.json && vite build --mode production --base=/v2/ --outDir=../../server/public/v2 --emptyOutDir",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",

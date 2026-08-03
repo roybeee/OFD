@@ -1,10 +1,8 @@
 export type Role = 'store' | 'hq' | 'driver';
-export type DataSource = 'live' | 'demo';
-
 export type ProviderMeta = {
   apiVersion: string;
-  appMode: 'demo' | 'test' | 'production' | string;
-  providerMode: 'mock' | 'production' | string;
+  appMode: string;
+  providerMode: 'disabled' | 'production' | string;
   externalIssueEnabled: boolean;
 };
 
@@ -27,9 +25,11 @@ export type Order = {
   createdAt: string;
   deliveryDate: string;
   itemCount: number;
-  grossAmount: number;
+  grossAmount: number | null;
+  supplyAmount: number | null;
+  vatAmount: number | null;
   status: OrderStatus;
-  paymentTerm: 'prepaid' | 'monthly_credit';
+  paymentTerm: 'prepaid' | 'monthly_credit' | 'unconfigured';
   risk?: 'price_changed' | 'new_store' | 'over_credit' | null;
   ownerName?: string;
   version: number;
@@ -37,13 +37,13 @@ export type Order = {
   storeAddress?: string;
   source?: 'native' | 'legacy_unverified';
   changeRequest?: { reason: string; requestedBy: string; requestedAt: string };
-  lines?: Array<{ id: string; productId?: string; name: string; unit: string; quantity: number; unitGross: number; gross: number }>;
+  lines?: Array<{ id: string; productId?: string; name: string; unit: string; quantity: number; unitGross: number | null; gross: number | null; supply: number | null; vat: number | null }>;
   timeline: Array<{ label: string; at?: string; active?: boolean; done?: boolean }>;
 };
 
 export type Delivery = {
   id: string;
-  sequence: number;
+  sequence?: number;
   storeName: string;
   address: string;
   phone: string;
@@ -95,11 +95,11 @@ export type Invoice = {
 
 export type DocumentItem = {
   id: string;
-  type: 'monthly_statement' | 'tax_invoice' | 'delivery_statement' | 'payment_request';
+  type: 'monthly_statement' | 'tax_invoice' | 'internal_statement' | 'delivery_statement' | 'payment_request';
   title: string;
   period: string;
   amount: number;
-  status: 'issued' | 'scheduled' | 'paid' | 'pending';
+  status: Invoice['status'] | 'scheduled' | 'paid' | 'pending';
   downloadUrl?: string;
 };
 

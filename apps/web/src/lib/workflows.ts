@@ -1,6 +1,15 @@
-export function grossToVatParts(gross: number) {
-  const supply = Math.round((gross * 100) / 110);
-  return { supply, vat: gross - supply, gross };
+export function calculateCartTotals(lines: Array<{ unitGross: number; quantity: number }>) {
+  let gross = 0;
+  for (const line of lines) {
+    if (!Number.isSafeInteger(line.unitGross) || line.unitGross <= 0
+      || !Number.isSafeInteger(line.quantity) || line.quantity <= 0
+      || !Number.isSafeInteger(gross + line.unitGross * line.quantity)) {
+      return { gross, supply: 0, vat: 0, configured: false };
+    }
+    gross += line.unitGross * line.quantity;
+  }
+  const supply = Number((BigInt(gross) * 100n + 55n) / 110n);
+  return { gross, supply, vat: gross - supply, configured: true };
 }
 
 export function canApproveInvoice(input: { preparedBy: string; actorId: string; actorRole: string }) {
@@ -18,7 +27,8 @@ export function validateDeliveryPhoto(file: File) {
   return null;
 }
 
-export function formatMoney(value: number) {
+export function formatMoney(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) return '금액 확인 불가';
   return new Intl.NumberFormat('ko-KR').format(value) + '원';
 }
 
@@ -44,6 +54,7 @@ export function getStatusLabel(status: string) {
     draft: '초안',
     reviewed: '검토 완료',
     queued: '발행 대기',
+    nts_pending: '국세청 처리 중',
     nts_success: '국세청 전송 완료',
     failed: '실패',
     internal_statement: '내부거래 명세',

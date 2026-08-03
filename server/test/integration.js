@@ -1,5 +1,7 @@
 /* 통합 테스트 v2 — 부서 계정 RBAC 포함. 실행: node --no-warnings test/integration.js */
 'use strict';
+process.env.ALLOW_DEMO_SEED = '1';
+process.env.ALLOW_MOCK_POS = '1';
 process.env.DB_PATH = '/tmp/ofd_t2_' + Date.now() + '.db';
 process.env.PORT = '8899';
 process.env.POS_BACKFILL_RUNNER = '0';
@@ -24,6 +26,13 @@ const R = [];
 const log = (n, ok, x) => { R.push(ok); console.log((ok ? '  OK  ' : 'FAIL  ') + n + (ok ? '' : '   << ' + (x || ''))); };
 const kstToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 const addD = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const approveManagedOrder = (jar, orderId, version, key) => call(
+  jar,
+  'POST',
+  '/api/v2/orders/' + orderId + '/approve',
+  { expectedVersion: version },
+  { 'Idempotency-Key': key },
+);
 
 async function main() {
   await new Promise(r => server.listen(8899, r));
@@ -116,21 +125,32 @@ async function main() {
   /* ===== G. 발주 수명주기 (점주 생성 → 운영 전이) ===== */
   r = await call('owner', 'POST', '/api/orders', { items: [{ skuId: 'k4', qty: 100 }] });
   const oid = r.data.id;
-  log('G1 점주 발주 생성', r.status === 200 && !!oid);
-  for (const want of ['승인', '입금확인', '출고']) {
+  log('G1 점주 발주 생성', r.status === 200 && !!oid && r.data.managedBy === 'v2' && r.data.version === 2);
+  r = await call('op', 'POST', '/api/orders/' + oid + '/advance', {});
+  log('G2 기존 화면 직접 승인 차단·통합 승인 안내', r.status === 409 && r.data.error === 'V2_ORDER_MANAGED' && r.data.use === '/v2/hq/orders');
+  r = await approveManagedOrder('op', oid, 2, 'legacy-order-approve-001');
+  for (const want of ['입금확인', '출고']) {
     r = await call('op', 'POST', '/api/orders/' + oid + '/advance', {});
     if (r.data.status !== want) break;
   }
-  log('G2 운영: 대기→출고 전이', r.data.status === '출고');
+  log('G3 통합 승인 후 기존 출고 흐름 연계', r.data.status === '출고');
 
   /* ===== H. 관리 계정 — 정산·SKU·감사 ===== */
   await call('ad', 'POST', '/api/auth/hq', { username: 'adm1', password: 'pwadm1' });
   r = await call('ad', 'GET', '/api/bootstrap');
   log('H1 관리 스코프: audit·orders(read) O / leads·users X', !!r.data.audit && !!r.data.orders && !r.data.leads && !r.data.users);
+  const legacySettleId = 'legacy-settle-unverified';
+  db.prepare(`INSERT INTO orders(id,store_id,date,deliver_date,status,memo,items,mt,del)
+    VALUES(?,?,?,?,?,?,?,?,0)`).run(legacySettleId, 's2', t, t, '출고', '기존 원장 정산 검증', JSON.stringify([{ skuId: 'k4', qty: 1 }]), Date.now());
+  const originalK4Supply = db.prepare('SELECT supply FROM skus WHERE id=?').get('k4').supply;
+  db.prepare('UPDATE skus SET supply=? WHERE id=?').run(9999, 'k4');
   r = await call('ad', 'GET', '/api/settle?month=' + t.slice(0, 7));
   const rowS2 = r.data.rows.find(x => x.storeId === 's2');
-  log('H2 관리: 정산 조회 — 출고 144,000', r.status === 200 && rowS2.supply === 144000);
+  log('H2 관리: 승인 스냅샷 정산 — 현재 단가 변경 후에도 출고 144,000·기존 원장 1건 제외 명시',
+    r.status === 200 && rowS2.supply === 144000 && rowS2.unverifiedSupplyOrders === 1);
   log('H3 정산: 대기 발주(o1) 제외', r.data.rows.every(x => x.supply === (x.storeId === 's2' ? 144000 : 0)));
+  db.prepare('UPDATE skus SET supply=? WHERE id=?').run(originalK4Supply, 'k4');
+  db.prepare('DELETE FROM orders WHERE id=?').run(legacySettleId);
   r = await call('ad', 'POST', '/api/orders/' + oid + '/advance', {});
   log('H4 관리: 발주 전이 403(읽기만)', r.status === 403);
   r = await call('ad', 'POST', '/api/skus', { name: '두바이초코', price: 6500 });
@@ -304,6 +324,8 @@ async function main() {
   await call('own2', 'PUT', '/api/closings', { date: satD, items: [{ skuId: 'k1', sold: 999, waste: 4 }], mode: 'replace' });
   r = await call('op2', 'POST', '/api/pos/sync/s2', { date: satD });
   log('S4 주말 동기화: 7행·매출 471,000·미매칭 1종', r.status === 200 && r.data.lines === 7 && r.data.revenue === 471000 && r.data.unmatched.length === 1 && r.data.unmatched[0] === '신메뉴딸기');
+  log('S4b POS 출처: mock 테스트 행을 실매출과 구분해 저장',
+    db.prepare('SELECT COUNT(*) n FROM pos_sales WHERE store_id=? AND date=? AND source=?').get('s2', satD, 'mock').n === 7);
   chk = await call('own2', 'GET', '/api/bootstrap');
   let cSat = chk.data.sales.find(c => c.date === satD);
   const sk1 = cSat.items.find(i => i.skuId === 'k1'), sk2 = cSat.items.find(i => i.skuId === 'k2');
@@ -662,7 +684,8 @@ async function main() {
     log('AH2 출고 전 입고 없음 → 폐기·로스율 null(N/A)', chk.data.hasOrder === false
       && chk.data.totals.wasteRate === null
       && chk.data.items.every(x => x.received === null && x.waste === null && x.wasteRate === null && x.lossAmount === null));
-    for (const st of ['승인', '입금확인', '출고']) await call('op2', 'POST', '/api/orders/' + oid + '/advance', {});
+    await approveManagedOrder('op2', oid, o.data.version, 'waste-order-approve-' + oid);
+    for (const st of ['입금확인', '출고']) await call('op2', 'POST', '/api/orders/' + oid + '/advance', {});
     chk = await call('ad', 'GET', '/api/waste?storeId=s2&date=' + satD);
     const w1 = chk.data.items.find(x => x.skuId === 'k2');
     const w2 = chk.data.items.find(x => x.skuId === 'k4');
@@ -679,7 +702,8 @@ async function main() {
       && cAuto.items.find(i => i.skuId === 'k2').sold === 30
       && cAuto.items.find(i => i.skuId === 'k4').waste === 5);
     o = await call('op2', 'POST', '/api/orders', { storeId: 's2', deliverDate: monD, items: [{ skuId: 'k2', qty: 5 }] });
-    for (const st of ['승인', '입금확인', '출고']) await call('op2', 'POST', '/api/orders/' + o.data.id + '/advance', {});
+    await approveManagedOrder('op2', o.data.id, o.data.version, 'waste-order-approve-' + o.data.id);
+    for (const st of ['입금확인', '출고']) await call('op2', 'POST', '/api/orders/' + o.data.id + '/advance', {});
     chk = await call('ad', 'GET', '/api/waste?storeId=s2&date=' + monD);
     const w3 = chk.data.items.find(x => x.skuId === 'k2');
     log('AH6 판매>입고: 폐기 0·초과분 표기', w3.waste === 0 && w3.over === w3.sold - 5 && w3.over > 0);
@@ -807,16 +831,18 @@ async function main() {
   r = await call('ad', 'POST', '/api/admin/purge-demo', {});
   log('Z1 관리: 삭제 403(마스터 전용)', r.status === 403);
   r = await call('m', 'POST', '/api/admin/purge-demo', {});
-  log('Z2 삭제 실행: 매장3·마감3·리드2·발주1·공지1',
+  log('Z2 삭제 실행: 알려진 예시 매장·원장·고정 SKU·mock POS를 함께 정리',
     r.status === 200 && r.data.counts.stores === 3 && r.data.counts.closings === 3
-    && r.data.counts.leads === 2 && r.data.counts.orders === 1 && r.data.counts.notices === 1);
+    && r.data.counts.leads === 2 && r.data.counts.orders === 1 && r.data.counts.notices === 1
+    && r.data.counts.skus >= 9 && r.data.counts.mockPosSales > 0);
   chk = await call('m', 'GET', '/api/bootstrap');
   log('Z3 시드 매장 제거·실매장 유지', !chk.data.stores.some(s => ['s1', 's2', 's3'].includes(s.id))
-    && chk.data.stores.some(s => s.id === 's77') && !chk.data.sales.some(c => c.storeId === 's2' && ['c1','c2','c3'].includes(c.id)));
+    && chk.data.stores.some(s => s.id === 's77') && !chk.data.sales.some(c => c.storeId === 's2' && ['c1','c2','c3'].includes(c.id))
+    && !chk.data.skus.some(s => /^k(?:[1-9]|10)$/.test(s.id)));
   r = await call('own2', 'GET', '/api/bootstrap');
   log('Z4 삭제 매장 점주 세션 즉시 무효', r.status === 401);
   r = await call('m', 'POST', '/api/admin/purge-demo', {});
-  log('Z5 재실행 멱등(0건)', r.status === 200 && r.data.counts.stores === 0 && r.data.counts.closings === 0);
+  log('Z5 재실행 멱등(0건)', r.status === 200 && r.data.counts.stores === 0 && r.data.counts.closings === 0 && r.data.counts.skus === 0);
 
   /* ===== R. UI ===== */
   const ui = await fetch(BASE + '/');
@@ -848,15 +874,23 @@ async function main() {
   log('R8 매장 운영 가이드: 미검수 알레르기 정보를 공란으로 오인하지 않게 표시',
     uiText.includes("const allergensHidden=hidden.includes('allergens')")
     && uiText.includes('알레르기 · 본사 확인 중'));
-  log('R9 통합 발주·정산 V2: 기존 메뉴에서 역할별 실서비스 경로로 연결',
-    uiText.includes('통합 발주·정산')
-    && uiText.includes("isHQ()?'/v2/hq/orders?demo=1':'/v2/store/orders?demo=1'"));
-  const v2 = await fetch(BASE + '/v2/store/orders?demo=1');
-  const v2Hq = await fetch(BASE + '/v2/hq/orders?demo=1');
-  const v2Driver = await fetch(BASE + '/v2/driver/today?demo=1');
+  const workflowTag = (uiText.match(/<a class="workflow"[^>]*aria-label="통합 발주·정산 메뉴"[^>]*>/) || [])[0] || '';
+  log('R9 통합 발주·정산: 인증 후 역할별 실서비스 경로를 동일 탭으로 연결',
+    uiText.includes('통합 발주·정산') && uiText.includes('발주부터 정산까지')
+    && uiText.includes("isHQ()?'/v2/hq/orders':'/v2/store/orders'")
+    && workflowTag && !/\btarget\s*=/.test(workflowTag)
+    && !uiText.includes('?demo=1') && !uiText.includes('V2 파일럿')
+    && !uiText.includes('데모 데이터로 확인합니다.') && !uiText.includes('id="su_demo"')
+    && uiText.includes('빈 운영 원장으로 시작합니다'));
+  log('R9b 정산 화면: 기존 원장 제외 건수와 불완전 합계를 확정값처럼 숨기지 않음',
+    uiText.includes('unverifiedSupplyOrders') && uiText.includes('기존 원장')
+    && uiText.includes('금액 확인 필요') && uiText.includes('확인된 금액'));
+  const v2 = await fetch(BASE + '/v2/store/orders');
+  const v2Hq = await fetch(BASE + '/v2/hq/orders');
+  const v2Driver = await fetch(BASE + '/v2/driver/today');
   const v2Text = await v2.text();
   const v2Asset = (v2Text.match(/src="([^"]+\.js)"/) || [])[1];
-  log('R10 V2 SPA: 점주·본사·기사 직접 경로에서 배포 셸 제공',
+  log('R10 V2 SPA: 점주·본사·기사 직접 경로에서 데모 쿼리 없이 배포 셸 제공',
     v2.status === 200 && v2Hq.status === 200 && v2Driver.status === 200
     && v2Text.includes('<div id="root"></div>')
     && typeof v2Asset === 'string' && v2Asset.startsWith('/v2/assets/'));

@@ -91,16 +91,46 @@ CREATE TABLE IF NOT EXISTS notices(id TEXT PRIMARY KEY, date TEXT, title TEXT, b
 CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, ts INTEGER, actor TEXT, action TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS sessions(th TEXT PRIMARY KEY, role TEXT, store_id TEXT, user_id TEXT,
   created INTEGER, expires INTEGER);
+CREATE TABLE IF NOT EXISTS v2_order_details(
+  order_id TEXT PRIMARY KEY,
+  order_number TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL,
+  lines_snapshot TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  submitted_at INTEGER,
+  approved_by TEXT,
+  approved_at INTEGER,
+  change_reason TEXT,
+  change_requested_by TEXT,
+  change_requested_at INTEGER,
+  cancelled_by TEXT,
+  cancelled_at INTEGER,
+  cancellation_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS v2_idempotency(
+  actor_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  response_json TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  expires INTEGER NOT NULL,
+  PRIMARY KEY(actor_id, idempotency_key)
+);
 CREATE INDEX IF NOT EXISTS idx_close ON closings(store_id, date);
 CREATE INDEX IF NOT EXISTS idx_ord ON orders(store_id, date);
+CREATE INDEX IF NOT EXISTS idx_v2_idem_expiry ON v2_idempotency(expires);
 `);
 try { db.exec('ALTER TABLE sessions ADD COLUMN user_id TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE v2_order_details ADD COLUMN version INTEGER NOT NULL DEFAULT 1'); } catch (e) {}
 db.exec(`
 CREATE TABLE IF NOT EXISTS pos_links(store_id TEXT PRIMARY KEY, provider TEXT, merchant_id TEXT,
   access_key_enc TEXT, secret_key_enc TEXT, active INTEGER DEFAULT 1,
   last_sync INTEGER, last_result TEXT, mt INTEGER, del INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS pos_sales(id TEXT PRIMARY KEY, store_id TEXT, date TEXT, hour INTEGER,
-  sku_id TEXT, raw_name TEXT, qty INTEGER, amount INTEGER, mt INTEGER);
+  sku_id TEXT, raw_name TEXT, qty INTEGER, amount INTEGER, mt INTEGER, source TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_pos ON pos_sales(store_id, date, hour, raw_name);
 CREATE INDEX IF NOT EXISTS idx_pos_sd ON pos_sales(store_id, date);
 CREATE TABLE IF NOT EXISTS sku_aliases(alias TEXT PRIMARY KEY, sku_id TEXT, mt INTEGER);
@@ -114,6 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_pos_bf_store ON pos_backfills(store_id, created D
 try { db.exec('ALTER TABLE skus ADD COLUMN category TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE skus ADD COLUMN store_id TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE sku_aliases ADD COLUMN store_id TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE pos_sales ADD COLUMN source TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE orders ADD COLUMN deliver_date TEXT'); db.exec('UPDATE orders SET deliver_date=date WHERE deliver_date IS NULL'); } catch (e) {}
 /* 서버 재시작만으로 과거 백필이 다시 실행되지 않도록 중단 상태로 보존한다. 수동 버튼으로만 재개. */
 db.prepare("UPDATE pos_backfills SET status='interrupted', last_error=CASE WHEN last_error IS NULL OR last_error='' THEN '서버 재시작으로 중단됨 — 같은 기간 버튼을 눌러 재개' ELSE last_error END, mt=? WHERE status IN ('queued','running')")
@@ -339,7 +370,16 @@ const allSkus = () => db.prepare('SELECT * FROM skus WHERE del=0 ORDER BY rowid'
 const allUsers = () => db.prepare('SELECT * FROM users WHERE del=0 ORDER BY rowid').all().map(mUser);
 const ordersOf = sid => (sid
   ? db.prepare('SELECT * FROM orders WHERE del=0 AND store_id=? ORDER BY date DESC, mt DESC').all(sid)
-  : db.prepare('SELECT * FROM orders WHERE del=0 ORDER BY date DESC, mt DESC').all()).map(mOrder);
+  : db.prepare('SELECT * FROM orders WHERE del=0 ORDER BY date DESC, mt DESC').all()).map(row => {
+    const order = mOrder(row);
+    const details = v2OrderDetails(row.id);
+    return {
+      ...order,
+      v2Managed: !!details,
+      v2Source: details ? details.source : null,
+      v2Version: details ? details.version : null,
+    };
+  });
 const closingsOf = sid => (sid
   ? db.prepare('SELECT * FROM closings WHERE del=0 AND store_id=? ORDER BY date DESC').all(sid)
   : db.prepare('SELECT * FROM closings WHERE del=0 ORDER BY date DESC').all()).map(mClosing);
@@ -508,7 +548,9 @@ async function tossFetchRange(link, fromDate, toDate) {
   for (const L of agg.values()) (byDate[L.date] || (byDate[L.date] = [])).push({ hour: L.hour, name: L.name, qty: L.qty, amount: L.amount });
   return byDate;
 }
+const mockPosAllowed = () => process.env.NODE_ENV !== 'production' && process.env.ALLOW_MOCK_POS === '1';
 function mockDay(date) {
+  if (!mockPosAllowed()) throw new Error('MOCK_POS_DISABLED');
   const wknd = (d => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w === 0 || w === 6; })(date);
   const P = { '우유크림도넛': 4200, '버터피스타치오': 5800, '신메뉴딸기': 4500 };
   const plan = wknd
@@ -528,6 +570,7 @@ const providers = {
   mock: {
     async fetchDay(link, date) { return mockDay(date); },
     async fetchRange(link, fromDate, toDate) {
+      if (!mockPosAllowed()) throw new Error('MOCK_POS_DISABLED');
       const out = {};
       for (let d = fromDate; d <= toDate; d = addDays(d, 1)) out[d] = mockDay(d);
       return out;
@@ -572,16 +615,18 @@ function rebuildClosingFromPos(storeId, date) {
 function activePosDriver(storeId) {
   const link = db.prepare('SELECT * FROM pos_links WHERE store_id=? AND del=0 AND active=1').get(storeId);
   if (!link) throw new Error('NO_LINK');
+  if (link.provider === 'mock' && !mockPosAllowed()) throw new Error('MOCK_POS_DISABLED');
   const drv = providers[link.provider];
   if (!drv) throw new Error('BAD_PROVIDER');
   return { link, drv };
 }
-function saveStoreDay(storeId, date, lines) {
+function saveStoreDay(storeId, date, lines, source) {
   const M = now();
+  const provenance = source === 'tossplace' || source === 'mock' ? source : 'unknown';
   db.exec('BEGIN');
   try {
     db.prepare('DELETE FROM pos_sales WHERE store_id=? AND date=?').run(storeId, date); /* 일 단위 전량 재계산 → 멱등 */
-    const ins = db.prepare('INSERT INTO pos_sales(id,store_id,date,hour,sku_id,raw_name,qty,amount,mt) VALUES(?,?,?,?,?,?,?,?,?)');
+    const ins = db.prepare('INSERT INTO pos_sales(id,store_id,date,hour,sku_id,raw_name,qty,amount,mt,source) VALUES(?,?,?,?,?,?,?,?,?,?)');
     let matched = 0, revenue = 0; const missSet = new Set();
     for (const L of lines) {
       const qty = Math.max(0, Math.trunc(Number(L.qty) || 0));
@@ -589,7 +634,7 @@ function saveStoreDay(storeId, date, lines) {
       const kid = resolveSku(L.name, storeId);
       if (kid) matched += qty; else missSet.add(L.name);
       revenue += amount;
-      ins.run(uid('x'), storeId, date, L.hour | 0, kid, L.name, qty, amount, M);
+      ins.run(uid('x'), storeId, date, L.hour | 0, kid, L.name, qty, amount, M, provenance);
     }
     db.exec('COMMIT');
     rebuildClosingFromPos(storeId, date);
@@ -601,7 +646,7 @@ function saveStoreDay(storeId, date, lines) {
 }
 async function syncStoreDay(storeId, date, actorName, quiet) {
   const { link, drv } = activePosDriver(storeId);
-  const res = saveStoreDay(storeId, date, await drv.fetchDay(link, date));
+  const res = saveStoreDay(storeId, date, await drv.fetchDay(link, date), link.provider);
   if (!quiet) audit(actorName || '스케줄러', 'POS 동기화', ((db.prepare('SELECT name FROM stores WHERE id=?').get(storeId) || {}).name || storeId) + ' ' + date + ' (' + res.lines + '행)');
   return res;
 }
@@ -611,7 +656,7 @@ async function syncStoreRange(storeId, fromDate, toDate) {
   let revenue = 0, lines = 0, days = 0;
   for (let d = fromDate; d <= toDate; d = addDays(d, 1)) {
     const dayLines = grouped ? (grouped[d] || []) : await drv.fetchDay(link, d);
-    const r = saveStoreDay(storeId, d, dayLines);
+    const r = saveStoreDay(storeId, d, dayLines, link.provider);
     revenue += r.revenue; lines += r.lines; days++;
   }
   return { from: fromDate, to: toDate, days, revenue, lines };
@@ -816,6 +861,439 @@ function computeSalesReport(from, to, unit, storeIds, skuSel) {
     rows, perStoreTotal, grand };
 }
 
+/* ---------------- V2 실운영 SQLite 어댑터 ----------------
+ * 기존 서버의 인증 세션·매장·SKU·발주 원장을 그대로 사용한다. 실제 연동이
+ * 없는 배송기사/은행/세금계산서 기능은 capability를 발급하지 않고 503으로 닫는다.
+ */
+const V2_IDEMPOTENCY_TTL = 24 * 3600e3;
+const V2_MAX_ORDER_LINES = 99;
+const V2_MAX_LINE_QUANTITY = 10000;
+
+function v2DomainError(status, code, message, details) {
+  const error = new Error(message);
+  error.v2 = { status, code, message, details };
+  return error;
+}
+function v2Fail(status, code, message, details) { throw v2DomainError(status, code, message, details); }
+function v2Error(res, status, code, message, details) {
+  return send(res, status, { error: Object.assign({ code, message, requestId: uid('r') }, details === undefined ? {} : { details }) });
+}
+function v2Actor(sess) {
+  if (sess.role === 'store') {
+    const store = db.prepare('SELECT * FROM stores WHERE id=? AND del=0').get(sess.storeId);
+    if (!store) v2Fail(403, 'STORE_GONE', '운영 중인 매장을 찾을 수 없습니다.');
+    return { id: 'store:' + store.id, name: store.name + ' 점주', role: 'store_owner', storeIds: [store.id], active: true, authVersion: store.mt || 1 };
+  }
+  const role = sess.user.dept === 'master' ? 'hq_master'
+    : sess.user.dept === 'ops' ? 'hq_ops'
+      : sess.user.dept === 'admin' ? 'hq_finance' : 'auditor';
+  return { id: sess.user.id, name: sess.user.name, role, storeIds: [], active: true, authVersion: sess.user.mt || 1 };
+}
+function v2Capabilities(sess) {
+  if (sess.role === 'store') {
+    return ['store.orders.read', 'store.orders.create', 'store.orders.submit', 'store.orders.cancel'];
+  }
+  const capabilities = [];
+  if (hasCap(sess.user, 'orders') || hasCap(sess.user, 'settle')) capabilities.push('hq.orders.read');
+  if (hasCap(sess.user, 'orders')) capabilities.push('hq.orders.approve', 'hq.orders.change_request');
+  return capabilities;
+}
+function v2AllowedDeliveryDates() {
+  const dates = [];
+  const today = kstToday();
+  for (let offset = 1; offset <= 21 && dates.length < 14; offset++) {
+    const date = addDays(today, offset);
+    if (new Date(date + 'T00:00:00Z').getUTCDay() !== 0) dates.push(date);
+  }
+  return dates;
+}
+function v2TaxFromSupply(supply) {
+  const vat = Math.round(supply * 0.1);
+  return { supply, vat, gross: supply + vat };
+}
+function v2SplitVatInclusive(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return { gross: 0, supply: 0, vat: 0, lines: [] };
+  let gross = 0;
+  const allocations = lines.map((line, index) => {
+    if (!line || typeof line.id !== 'string' || !line.id
+      || !Number.isSafeInteger(line.gross) || line.gross < 0) {
+      v2Fail(400, 'INVALID_MONEY', 'VAT 계산에 사용할 금액 행이 올바르지 않습니다.');
+    }
+    gross += line.gross;
+    if (!Number.isSafeInteger(gross)) v2Fail(400, 'MONEY_OVERFLOW', '발주 금액이 허용 범위를 벗어났습니다.');
+    return {
+      id: line.id, gross: line.gross, index,
+      base: Number((BigInt(line.gross) * 100n) / 110n),
+      remainder: Number((BigInt(line.gross) * 100n) % 110n)
+    };
+  });
+  const supply = Number((BigInt(gross) * 100n + 55n) / 110n);
+  let remaining = supply - allocations.reduce((sum, line) => sum + line.base, 0);
+  const priority = [...allocations].sort((a, b) => b.remainder - a.remainder || a.id.localeCompare(b.id) || a.index - b.index);
+  const extra = new Set();
+  for (let cursor = 0; cursor < remaining; cursor++) extra.add(priority[cursor].index);
+  const resultLines = allocations.map(line => {
+    const lineSupply = line.base + (extra.has(line.index) ? 1 : 0);
+    return { id: line.id, gross: line.gross, supply: lineSupply, vat: line.gross - lineSupply };
+  });
+  return { gross, supply, vat: gross - supply, lines: resultLines };
+}
+function v2Iso(value, fallbackDate) {
+  const time = Number(value);
+  if (Number.isFinite(time) && time > 0) return new Date(time).toISOString();
+  if (isDate(fallbackDate)) return new Date(fallbackDate + 'T00:00:00+09:00').toISOString();
+  return new Date().toISOString();
+}
+function v2OrderNumber(orderId, date, legacy) {
+  return (legacy ? 'LEGACY' : 'PO') + '-' + String(date || kstToday()).replace(/-/g, '') + '-' + String(orderId).slice(-6).toUpperCase();
+}
+function v2LegacySnapshots(order, skuRows) {
+  const skuMap = new Map(skuRows.map(row => [row.id, row]));
+  return J(order.items).map((item, index) => {
+    const sku = skuMap.get(String(item.skuId));
+    const quantity = Math.max(0, Number(item.qty) | 0);
+    return {
+      id: order.id + '-line-' + (index + 1),
+      snapshot: {
+        productId: String(item.skuId), sku: String(item.skuId),
+        name: sku ? sku.name : '삭제되었거나 확인이 필요한 상품', unit: '박스', unitGross: null,
+        taxable: true, taxRate: 10
+      },
+      quantity, gross: null, supply: null, vat: null
+    };
+  }).filter(line => line.quantity > 0);
+}
+function v2OrderDetails(orderId) {
+  return db.prepare('SELECT * FROM v2_order_details WHERE order_id=?').get(orderId) || null;
+}
+function v2SnapshotOrderItems(storeId, orderId, rawItems) {
+  if (!Array.isArray(rawItems) || rawItems.length < 1 || rawItems.length > V2_MAX_ORDER_LINES) {
+    v2Fail(400, 'INVALID_ORDER_ITEMS', '발주 품목은 1~99개까지 입력할 수 있습니다.');
+  }
+  const permitted = allSkus().filter(sku => !sku.storeId || sku.storeId === storeId);
+  const productMap = new Map(permitted.map(product => [product.id, product]));
+  const seen = new Set();
+  const legacyItems = [];
+  const snapshots = [];
+  let grossTotal = 0;
+  rawItems.forEach((raw, index) => {
+    const productId = String(raw && raw.productId || '');
+    const quantity = raw && raw.quantity;
+    if (!productId || seen.has(productId)) v2Fail(400, 'INVALID_ORDER_ITEMS', '중복되지 않은 상품 식별자가 필요합니다.');
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > V2_MAX_LINE_QUANTITY) {
+      v2Fail(400, 'INVALID_QUANTITY', '품목 수량은 1~10,000 범위의 정수여야 합니다.');
+    }
+    const product = productMap.get(productId);
+    if (!product) v2Fail(404, 'PRODUCT_NOT_FOUND', '선택할 수 없는 상품이 포함되어 있습니다.');
+    const unitSupply = Number(product.supply);
+    if (!Number.isSafeInteger(unitSupply) || unitSupply <= 0) {
+      v2Fail(409, 'PRODUCT_PRICE_NOT_CONFIGURED', product.name + '의 공급가를 먼저 등록해 주세요.');
+    }
+    const unitGross = v2TaxFromSupply(unitSupply).gross;
+    const lineGross = unitGross * quantity;
+    if (!Number.isSafeInteger(lineGross) || !Number.isSafeInteger(grossTotal + lineGross)) {
+      v2Fail(400, 'MONEY_OVERFLOW', '발주 금액이 허용 범위를 벗어났습니다.');
+    }
+    seen.add(productId);
+    grossTotal += lineGross;
+    legacyItems.push({ skuId: productId, qty: quantity });
+    snapshots.push({
+      id: orderId + '-line-' + (index + 1),
+      snapshot: {
+        productId, sku: productId, name: product.name, unit: '박스', unitGross,
+        taxable: true, taxRate: 10
+      },
+      quantity, gross: lineGross
+    });
+  });
+  const vat = v2SplitVatInclusive(snapshots.map(line => ({ id: line.id, gross: line.gross })));
+  const taxById = new Map(vat.lines.map(line => [line.id, line]));
+  return {
+    legacyItems,
+    snapshots: snapshots.map(line => ({ ...line, supply: taxById.get(line.id).supply, vat: taxById.get(line.id).vat })),
+    totals: { gross: vat.gross, supply: vat.supply, vat: vat.vat }
+  };
+}
+function v2StoreView(store) {
+  return {
+    id: store.id, code: store.id, name: store.name,
+    business: { businessNumber: '', legalName: store.name, representativeName: '', address: store.addr || '', phone: store.phone || '', businessType: '', businessCategory: '', email: '' },
+    billingCycle: 'unconfigured', paymentMethod: 'unconfigured', notificationPhone: store.phone || '', active: true, version: store.mt || 1
+  };
+}
+function v2ProductView(sku) {
+  const unitSupply = Number.isSafeInteger(sku.supply) && sku.supply > 0 ? sku.supply : 0;
+  return { id: sku.id, sku: sku.id, name: sku.name, unit: '박스', unitGross: v2TaxFromSupply(unitSupply).gross, category: sku.category || '기타', taxable: true, taxRate: 10, active: unitSupply > 0 };
+}
+function v2OrderStatus(order, details) {
+  if (details && details.change_reason) return 'change_requested';
+  return ({ '대기': 'submitted', '승인': 'approved', '입금확인': 'approved', '출고': 'approved', '완료': 'approved', '취소': 'cancelled' })[order.status] || 'rejected';
+}
+function v2OrderView(order, storeMap, skuRows) {
+  const details = v2OrderDetails(order.id);
+  let lines = details ? J(details.lines_snapshot) : v2LegacySnapshots(order, skuRows);
+  if (!Array.isArray(lines)) lines = [];
+  const amountVerified = !!details && details.source === 'native';
+  const totals = amountVerified ? lines.reduce((sum, line) => {
+    if (![line.gross, line.supply, line.vat].every(value => Number.isSafeInteger(value) && value >= 0)) {
+      v2Fail(409, 'ORDER_SNAPSHOT_INVALID', '승인 금액 스냅샷이 손상되어 주문 금액을 표시할 수 없습니다.');
+    }
+    return { gross: sum.gross + line.gross, supply: sum.supply + line.supply, vat: sum.vat + line.vat };
+  }, { gross: 0, supply: 0, vat: 0 }) : { gross: null, supply: null, vat: null };
+  const status = v2OrderStatus(order, details);
+  const createdAt = details ? v2Iso(details.created_at, order.date) : v2Iso(null, order.date);
+  return {
+    id: order.id, number: details ? details.order_number : v2OrderNumber(order.id, order.date, true),
+    storeId: order.store_id, status, source: details ? details.source : 'legacy_unverified',
+    requestedDeliveryDate: order.deliver_date || order.date, note: order.memo || '', lines,
+    gross: totals.gross, supply: totals.supply, vat: totals.vat,
+    createdBy: details ? details.created_by : 'legacy',
+    submittedAt: details && details.submitted_at ? v2Iso(details.submitted_at) : createdAt,
+    ...(details && details.approved_at ? { approvedAt: v2Iso(details.approved_at), approvedBy: details.approved_by || '' } : {}),
+    ...(details && details.change_reason ? { changeRequest: { reason: details.change_reason, requestedBy: details.change_requested_by || '', requestedAt: v2Iso(details.change_requested_at) } } : {}),
+    ...(status === 'cancelled' ? { cancelledBy: details && details.cancelled_by || '', cancelledAt: v2Iso(details && details.cancelled_at, order.date), cancellationReason: details && details.cancellation_reason || '' } : {}),
+    createdAt, updatedAt: v2Iso(order.mt, order.date), version: details ? details.version : 1,
+    storeSnapshot: storeMap.get(order.store_id) || null
+  };
+}
+function v2Bootstrap(sess) {
+  const actor = v2Actor(sess);
+  const stores = sess.role === 'store'
+    ? db.prepare('SELECT * FROM stores WHERE id=? AND del=0').all(sess.storeId)
+    : db.prepare('SELECT * FROM stores WHERE del=0 ORDER BY name').all();
+  const storeIds = new Set(stores.map(store => store.id));
+  const skuRows = sess.role === 'store'
+    ? db.prepare('SELECT * FROM skus WHERE del=0 AND (store_id IS NULL OR store_id=?) ORDER BY rowid').all(sess.storeId)
+    : db.prepare('SELECT * FROM skus WHERE del=0 ORDER BY rowid').all();
+  const orderRows = sess.role === 'store'
+    ? db.prepare('SELECT * FROM orders WHERE del=0 AND store_id=? ORDER BY date DESC, mt DESC').all(sess.storeId)
+    : (hasCap(sess.user, 'orders') || hasCap(sess.user, 'settle')
+      ? db.prepare('SELECT * FROM orders WHERE del=0 ORDER BY date DESC, mt DESC').all() : []);
+  const storeViews = stores.map(v2StoreView);
+  const storeMap = new Map(storeViews.map(store => [store.id, store]));
+  const orders = orderRows.filter(order => storeIds.has(order.store_id)).map(order => v2OrderView(order, storeMap, skuRows));
+  const shipments = orderRows.filter(order => storeIds.has(order.store_id) && (order.status === '출고' || order.status === '완료')).map(order => ({
+    id: 'legacy-shipment-' + order.id, number: 'SHIP-' + order.id, orderId: order.id, storeId: order.store_id,
+    status: order.status === '완료' ? 'delivered' : 'out_for_delivery',
+    lines: (orders.find(item => item.id === order.id)?.lines || []).map(line => ({ orderLineId: line.id, quantity: line.quantity })),
+    plannedDate: order.deliver_date || order.date, ...(order.status === '완료' ? { deliveredAt: v2Iso(order.mt, order.date) } : {}),
+    version: v2OrderDetails(order.id)?.version || 1
+  }));
+  return {
+    meta: { apiVersion: 'v2-sqlite', appMode: 'production', providerMode: 'disabled', externalIssueEnabled: false, generatedAt: new Date().toISOString() },
+    capabilities: v2Capabilities(sess), allowedDeliveryDates: v2AllowedDeliveryDates(), currentActor: actor,
+    availableActors: [], headquarters: { email: '' }, stores: storeViews, products: skuRows.map(mSku).map(v2ProductView),
+    orders, shipments, receipts: [], paymentRequests: [], bankTransactions: [], manualMatchCandidates: [], settlements: [], taxInvoices: [], auditEvents: [],
+    metrics: { ordersAwaitingApproval: orders.filter(order => order.status === 'submitted').length, deliveriesToday: 0, paymentsNeedReview: 0, invoicesNeedApproval: 0, openReceivables: 0 }
+  };
+}
+function v2Canonical(value) {
+  if (Array.isArray(value)) return value.map(v2Canonical);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).sort().forEach(key => { out[key] = v2Canonical(value[key]); });
+    return out;
+  }
+  return value;
+}
+function v2ActorKey(sess) { return sess.role === 'store' ? 'store:' + sess.storeId : 'user:' + sess.user.id; }
+function v2Idempotent(req, res, sess, route, body, successStatus, operation) {
+  const key = String(req.headers['idempotency-key'] || '');
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(key)) {
+    return v2Error(res, 400, 'IDEMPOTENCY_KEY_REQUIRED', '8~128자의 Idempotency-Key 헤더가 필요합니다.');
+  }
+  const actorId = v2ActorKey(sess);
+  const requestHash = sha256(req.method + '\n' + route + '\n' + JSON.stringify(v2Canonical(body)));
+  db.prepare('DELETE FROM v2_idempotency WHERE expires < ?').run(now());
+  const replay = db.prepare('SELECT * FROM v2_idempotency WHERE actor_id=? AND idempotency_key=?').get(actorId, key);
+  if (replay) {
+    if (replay.request_hash !== requestHash) return v2Error(res, 409, 'IDEMPOTENCY_KEY_REUSED', '같은 멱등 키를 다른 요청에 사용할 수 없습니다.');
+    return send(res, replay.status_code, JSON.parse(replay.response_json), { 'Idempotency-Replayed': 'true' });
+  }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const raced = db.prepare('SELECT * FROM v2_idempotency WHERE actor_id=? AND idempotency_key=?').get(actorId, key);
+    if (raced) {
+      if (raced.request_hash !== requestHash) v2Fail(409, 'IDEMPOTENCY_KEY_REUSED', '같은 멱등 키를 다른 요청에 사용할 수 없습니다.');
+      db.exec('COMMIT');
+      return send(res, raced.status_code, JSON.parse(raced.response_json), { 'Idempotency-Replayed': 'true' });
+    }
+    const response = operation();
+    const created = now();
+    db.prepare(`INSERT INTO v2_idempotency(actor_id,idempotency_key,request_hash,status_code,response_json,created,expires)
+      VALUES(?,?,?,?,?,?,?)`).run(actorId, key, requestHash, successStatus, JSON.stringify(response), created, created + V2_IDEMPOTENCY_TTL);
+    db.exec('COMMIT');
+    return send(res, successStatus, response, { 'Idempotency-Replayed': 'false' });
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch (rollbackError) {}
+    throw error;
+  }
+}
+function v2RequireVersion(details, value) {
+  if (!Number.isInteger(value) || value < 1) v2Fail(400, 'INVALID_VERSION', '올바른 주문 버전이 필요합니다.');
+  const current = details ? details.version : 1;
+  if (current !== value) v2Fail(409, 'VERSION_CONFLICT', '다른 사용자가 주문을 먼저 변경했습니다.', { currentVersion: current });
+}
+function v2RequireOrder(orderId) {
+  const order = db.prepare('SELECT * FROM orders WHERE id=? AND del=0').get(orderId);
+  if (!order) v2Fail(404, 'ORDER_NOT_FOUND', '발주서를 찾을 수 없습니다.');
+  return order;
+}
+function v2StoredOrderView(orderId) {
+  const order = v2RequireOrder(orderId);
+  const stores = db.prepare('SELECT * FROM stores WHERE del=0').all().map(v2StoreView);
+  const storeMap = new Map(stores.map(store => [store.id, store]));
+  return v2OrderView(order, storeMap, db.prepare('SELECT * FROM skus').all());
+}
+function v2OrderDetailsBackup() {
+  return db.prepare(`SELECT d.* FROM v2_order_details d
+    JOIN orders o ON o.id=d.order_id WHERE o.del=0 ORDER BY d.created_at,d.order_id`).all().map(row => ({
+    orderId: row.order_id,
+    orderNumber: row.order_number,
+    source: row.source,
+    lines: J(row.lines_snapshot),
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    submittedAt: row.submitted_at,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    changeReason: row.change_reason,
+    changeRequestedBy: row.change_requested_by,
+    changeRequestedAt: row.change_requested_at,
+    cancelledBy: row.cancelled_by,
+    cancelledAt: row.cancelled_at,
+    cancellationReason: row.cancellation_reason,
+    version: row.version
+  }));
+}
+function v2NormalizeImportedNativePair(orderInput, detailInput) {
+  if (!orderInput || typeof orderInput !== 'object' || !detailInput || typeof detailInput !== 'object') return null;
+  const orderId = String(orderInput.id || '').trim();
+  const storeId = String(orderInput.storeId || orderInput.store_id || '').trim();
+  const deliveryDate = String(orderInput.deliverDate || orderInput.deliver_date || orderInput.date || '');
+  const status = String(orderInput.status || '');
+  const items = orderInput.items;
+  const lines = detailInput.lines;
+  const version = Number(detailInput.version);
+  if (!orderId || orderId !== String(detailInput.orderId || '').trim() || !storeId
+    || !isDate(String(orderInput.date || '')) || !isDate(deliveryDate)
+    || ![...OSTAT, '취소'].includes(status) || !Array.isArray(items) || !Array.isArray(lines)
+    || items.length < 1 || items.length !== lines.length || items.length > V2_MAX_ORDER_LINES
+    || detailInput.source !== 'native' || !Number.isSafeInteger(version) || version < 2
+    || !Number.isSafeInteger(orderInput.mt) || orderInput.mt <= 0) return null;
+  const orderNumber = String(detailInput.orderNumber || '').trim();
+  const createdBy = String(detailInput.createdBy || '').trim();
+  if (!orderNumber || orderNumber.length > 100 || !createdBy || createdBy.length > 200
+    || !Number.isSafeInteger(detailInput.createdAt) || detailInput.createdAt <= 0
+    || !Number.isSafeInteger(detailInput.submittedAt) || detailInput.submittedAt <= 0) return null;
+  const optionalText = value => value === undefined || value === null || String(value).trim() === '' ? null : String(value).trim();
+  const optionalTime = value => value === undefined || value === null ? null
+    : Number.isSafeInteger(value) && value > 0 ? value : NaN;
+  const approvedBy = optionalText(detailInput.approvedBy);
+  const approvedAt = optionalTime(detailInput.approvedAt);
+  const changeReason = optionalText(detailInput.changeReason);
+  const changeRequestedBy = optionalText(detailInput.changeRequestedBy);
+  const changeRequestedAt = optionalTime(detailInput.changeRequestedAt);
+  const cancelledBy = optionalText(detailInput.cancelledBy);
+  const cancelledAt = optionalTime(detailInput.cancelledAt);
+  const cancellationReason = optionalText(detailInput.cancellationReason);
+  if ([approvedAt, changeRequestedAt, cancelledAt].some(value => Number.isNaN(value))
+    || (changeReason && (!changeRequestedBy || !changeRequestedAt || status !== '대기'))
+    || (status === '취소' && (!cancelledBy || !cancelledAt || !cancellationReason))
+    || (['승인', '입금확인', '출고', '완료'].includes(status) && (!approvedBy || !approvedAt))) return null;
+  const seen = new Set();
+  const normalizedItems = [];
+  const normalizedLines = [];
+  for (let index = 0; index < lines.length; index++) {
+    const sourceLine = lines[index];
+    const sourceItem = items[index];
+    if (!sourceLine || typeof sourceLine !== 'object' || !sourceItem || typeof sourceItem !== 'object') return null;
+    const snapshot = sourceLine.snapshot;
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    const lineId = String(sourceLine.id || '').trim();
+    const productId = String(snapshot.productId || '').trim();
+    const skuId = String(sourceItem.skuId || '').trim();
+    const quantity = Number(sourceLine.quantity);
+    const itemQuantity = Number(sourceItem.qty);
+    const unitGross = Number(snapshot.unitGross);
+    const gross = Number(sourceLine.gross);
+    const supply = Number(sourceLine.supply);
+    const vat = Number(sourceLine.vat);
+    if (!lineId || lineId.length > 200 || seen.has(lineId) || !productId || productId !== skuId
+      || !Number.isInteger(quantity) || quantity < 1 || quantity > V2_MAX_LINE_QUANTITY || quantity !== itemQuantity
+      || !Number.isSafeInteger(unitGross) || unitGross <= 0 || !Number.isSafeInteger(gross) || gross !== unitGross * quantity
+      || !Number.isSafeInteger(supply) || supply < 0 || !Number.isSafeInteger(vat) || vat < 0 || gross !== supply + vat
+      || snapshot.taxable !== true || snapshot.taxRate !== 10) return null;
+    seen.add(lineId);
+    normalizedItems.push({ skuId, qty: quantity });
+    normalizedLines.push({
+      id: lineId,
+      snapshot: {
+        productId, sku: String(snapshot.sku || productId), name: String(snapshot.name || '').slice(0, 300),
+        unit: String(snapshot.unit || '박스').slice(0, 50), unitGross, taxable: true, taxRate: 10
+      },
+      quantity, gross, supply, vat
+    });
+  }
+  let canonical;
+  try { canonical = v2SplitVatInclusive(normalizedLines.map(line => ({ id: line.id, gross: line.gross }))); }
+  catch (error) { return null; }
+  if (canonical.lines.some((line, index) => line.supply !== normalizedLines[index].supply || line.vat !== normalizedLines[index].vat)) return null;
+  return {
+    order: {
+      id: orderId, storeId, date: String(orderInput.date), deliverDate: deliveryDate, status,
+      memo: String(orderInput.memo || '').slice(0, 500), items: normalizedItems, mt: orderInput.mt
+    },
+    detail: {
+      orderId, orderNumber, source: 'native', lines: normalizedLines, createdBy,
+      createdAt: detailInput.createdAt, submittedAt: detailInput.submittedAt,
+      approvedBy, approvedAt, changeReason, changeRequestedBy, changeRequestedAt,
+      cancelledBy, cancelledAt, cancellationReason, version
+    }
+  };
+}
+function v2ImportNativeOrders(orderList, detailList) {
+  const result = { nIns: 0, nUpd: 0, nSkip: 0, nOrderIns: 0 };
+  const orders = new Map((Array.isArray(orderList) ? orderList : []).filter(item => item && item.id).map(item => [String(item.id), item]));
+  (Array.isArray(detailList) ? detailList : []).forEach(detailInput => {
+    const pair = v2NormalizeImportedNativePair(orders.get(String(detailInput && detailInput.orderId || '')), detailInput);
+    if (!pair || v2OrderDetails(pair.order.id)) { result.nSkip++; return; }
+    if (!db.prepare('SELECT 1 FROM stores WHERE id=? AND del=0').get(pair.order.storeId)) { result.nSkip++; return; }
+    const numberOwner = db.prepare('SELECT order_id FROM v2_order_details WHERE order_number=?').get(pair.detail.orderNumber);
+    if (numberOwner && numberOwner.order_id !== pair.order.id) { result.nSkip++; return; }
+    const existingOrder = db.prepare('SELECT * FROM orders WHERE id=? AND del=0').get(pair.order.id);
+    if (existingOrder) {
+      const sameBase = existingOrder.store_id === pair.order.storeId && existingOrder.date === pair.order.date
+        && (existingOrder.deliver_date || existingOrder.date) === pair.order.deliverDate
+        && existingOrder.status === pair.order.status && (existingOrder.memo || '') === pair.order.memo
+        && JSON.stringify(J(existingOrder.items)) === JSON.stringify(pair.order.items) && existingOrder.mt === pair.order.mt;
+      if (!sameBase) { result.nSkip++; return; }
+    }
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!existingOrder) {
+        db.prepare(`INSERT INTO orders(id,store_id,date,deliver_date,status,memo,items,mt,del)
+          VALUES(?,?,?,?,?,?,?,?,0)`).run(pair.order.id, pair.order.storeId, pair.order.date, pair.order.deliverDate,
+          pair.order.status, pair.order.memo, JSON.stringify(pair.order.items), pair.order.mt);
+        result.nOrderIns++;
+      }
+      const d = pair.detail;
+      db.prepare(`INSERT INTO v2_order_details(order_id,order_number,source,lines_snapshot,created_by,created_at,
+        submitted_at,approved_by,approved_at,change_reason,change_requested_by,change_requested_at,
+        cancelled_by,cancelled_at,cancellation_reason,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(d.orderId, d.orderNumber, d.source, JSON.stringify(d.lines), d.createdBy, d.createdAt, d.submittedAt,
+          d.approvedBy, d.approvedAt, d.changeReason, d.changeRequestedBy, d.changeRequestedAt,
+          d.cancelledBy, d.cancelledAt, d.cancellationReason, d.version);
+      db.exec('COMMIT');
+      result.nIns++;
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch (rollbackError) {}
+      result.nSkip++;
+    }
+  });
+  return result;
+}
+
 /* ---------------- 시드 ---------------- */
 function seed(demo) {
   const M = now();
@@ -898,7 +1376,7 @@ const server = http.createServer(async (req, res) => {
   const p = u.pathname;
   try {
     if (req.method === 'GET' && (p === '/v2' || p === '/v2/')) {
-      res.writeHead(302, { Location: '/v2/store/orders?demo=1', 'Cache-Control': 'no-store' });
+      res.writeHead(302, { Location: '/v2/store/orders', 'Cache-Control': 'no-store' });
       return res.end();
     }
     if (req.method === 'GET' && /^\/v2\/assets\/[A-Za-z0-9._-]+$/.test(p)) {
@@ -923,6 +1401,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/health') return send(res, 200, { ok: true, ts: now() });
     if (!p.startsWith('/api/')) return err(res, 404, 'NOT_FOUND');
 
+    if (req.method === 'GET' && p === '/api/e2e/qa-guard') {
+      const expected = String(process.env.E2E_QA_TOKEN || '');
+      const received = String(req.headers['x-ofd-e2e-token'] || '');
+      if (process.env.E2E_QA_MODE !== '1' || expected.length < 16) return err(res, 404, 'NOT_FOUND');
+      const expectedHash = Buffer.from(sha256(expected), 'hex');
+      const receivedHash = Buffer.from(sha256(received), 'hex');
+      if (!crypto.timingSafeEqual(expectedHash, receivedHash)) return err(res, 403, 'E2E_QA_GUARD');
+      return send(res, 200, { ok: true, environment: 'qa' });
+    }
+
     const sess = getSession(req);
     const mut = req.method !== 'GET';
     if (mut && req.headers['x-ofd'] !== '1' && p !== '/api/webhooks/tossplace') return err(res, 403, 'CSRF');
@@ -944,8 +1432,11 @@ const server = http.createServer(async (req, res) => {
       const uidM = uid('u');
       db.prepare('INSERT INTO users(id,username,name,dept,pw_hash,active,mt) VALUES(?,?,?,?,?,1,?)')
         .run(uidM, un, String(body.name || '마스터').trim() || '마스터', 'master', pwHash(body.password), now());
-      const codes = seed(body.demo !== false);
-      audit('시스템', '초기 설정', '마스터 계정 ' + un + ' 생성' + (body.demo !== false ? ' (예시 데이터 포함)' : ''));
+      /* 운영 기본은 빈 원장이다. 예시 데이터는 명시적인 로컬 통합 테스트에서만 허용한다. */
+      const useDemoSeed = process.env.NODE_ENV !== 'production'
+        && body.demo === true && process.env.ALLOW_DEMO_SEED === '1';
+      const codes = useDemoSeed ? seed(true) : {};
+      audit('시스템', '초기 설정', '마스터 계정 ' + un + ' 생성' + (useDemoSeed ? ' (테스트 예시 데이터 포함)' : ' (빈 운영 원장)'));
       const tok = makeSession('hq', null, uidM);
       return send(res, 200, { ok: true, codes }, { 'Set-Cookie': sessCookie(tok) });
     }
@@ -975,6 +1466,10 @@ const server = http.createServer(async (req, res) => {
       if (sess) { db.prepare('DELETE FROM sessions WHERE th=?').run(sess.th); audit(actorOf(sess), '세션 종료', ''); }
       return send(res, 200, { ok: true }, { 'Set-Cookie': clearCookie() });
     }
+    if (p === '/api/v2/auth/logout' && req.method === 'POST') {
+      if (sess) { db.prepare('DELETE FROM sessions WHERE th=?').run(sess.th); audit(actorOf(sess), 'V2 세션 종료', ''); }
+      return send(res, 200, { ok: true }, { 'Set-Cookie': clearCookie() });
+    }
 
     /* ---- 토스플레이스 웹훅 수신 (공개 — 토스 서버가 호출) ---- */
     if (p === '/api/webhooks/tossplace' && req.method === 'POST') {
@@ -995,6 +1490,134 @@ const server = http.createServer(async (req, res) => {
     const actor = actorOf(sess);
     const deny = cap => { if (sess.role !== 'hq' || !hasCap(HU, cap)) { err(res, 403, 'FORBIDDEN', { need: cap }); return true; } return false; };
     const denyAny = caps => { if (sess.role !== 'hq' || !caps.some(c => hasCap(HU, c))) { err(res, 403, 'FORBIDDEN', { need: caps.join('|') }); return true; } return false; };
+
+    /* ---- V2: 기존 실 SQLite 원장에 연결되는 범위만 제공 ---- */
+    if (p === '/api/v2/bootstrap' && req.method === 'GET') return send(res, 200, v2Bootstrap(sess));
+
+    if (p === '/api/v2/bank-sync' || p.startsWith('/api/v2/payments/')) {
+      return v2Error(res, 503, 'BANK_PROVIDER_DISABLED', '실계좌 수집 제공자가 설정되지 않아 입금 대사를 실행할 수 없습니다.');
+    }
+    if (p.startsWith('/api/v2/invoices/') || p.startsWith('/api/v2/settlements')) {
+      return v2Error(res, 503, 'INVOICE_PROVIDER_DISABLED', '사업자 정보와 전자세금계산서 제공자가 설정되지 않아 발행할 수 없습니다.');
+    }
+    if (p === '/api/v2/shipments' || p.startsWith('/api/v2/shipments/')) {
+      return v2Error(res, 503, 'DELIVERY_WORKFLOW_DISABLED', '배송기사 계정과 증빙 저장소가 설정되지 않아 배송 변경을 실행할 수 없습니다.');
+    }
+
+    if (p === '/api/v2/orders/submit-new' && req.method === 'POST') {
+      if (sess.role !== 'store') return v2Error(res, 403, 'FORBIDDEN', '점주 계정만 발주서를 제출할 수 있습니다.');
+      return v2Idempotent(req, res, sess, p, body, 201, () => {
+        const storeId = String(body.storeId || '');
+        if (storeId !== sess.storeId) v2Fail(403, 'STORE_SCOPE_DENIED', '자기 매장의 발주서만 제출할 수 있습니다.');
+        if (!db.prepare('SELECT 1 FROM stores WHERE id=? AND del=0').get(storeId)) v2Fail(404, 'STORE_NOT_FOUND', '운영 중인 매장을 찾을 수 없습니다.');
+        const deliveryDate = String(body.requestedDeliveryDate || '');
+        if (!isDate(deliveryDate) || !v2AllowedDeliveryDates().includes(deliveryDate)) {
+          v2Fail(400, 'DELIVERY_DATE_NOT_ALLOWED', '선택 가능한 입고 예정일을 다시 확인해 주세요.');
+        }
+        const orderId = uid('o');
+        const priced = v2SnapshotOrderItems(storeId, orderId, body.items);
+        const created = now();
+        const note = String(body.note || '').trim().slice(0, 500);
+        db.prepare('INSERT INTO orders(id,store_id,date,deliver_date,status,memo,items,mt) VALUES(?,?,?,?,?,?,?,?)')
+          .run(orderId, storeId, kstToday(), deliveryDate, '대기', note, JSON.stringify(priced.legacyItems), created);
+        db.prepare(`INSERT INTO v2_order_details(
+          order_id,order_number,source,lines_snapshot,created_by,created_at,submitted_at,version
+        ) VALUES(?,?,?,?,?,?,?,2)`).run(
+          orderId, v2OrderNumber(orderId, kstToday(), false), 'native', JSON.stringify(priced.snapshots),
+          v2Actor(sess).id, created, created
+        );
+        audit(actor, 'V2 발주 제출', ((db.prepare('SELECT name FROM stores WHERE id=?').get(storeId) || {}).name || storeId) + ' · ' + priced.totals.gross.toLocaleString('ko-KR') + '원');
+        return { order: v2StoredOrderView(orderId) };
+      });
+    }
+
+    const v2ChangeMatch = p.match(/^\/api\/v2\/orders\/([\w-]+)\/change-request$/);
+    if (v2ChangeMatch && req.method === 'POST') {
+      if (sess.role !== 'hq' || !hasCap(HU, 'orders')) return v2Error(res, 403, 'FORBIDDEN', '운영 권한이 필요합니다.');
+      return v2Idempotent(req, res, sess, p, body, 200, () => {
+        const order = v2RequireOrder(v2ChangeMatch[1]);
+        const details = v2OrderDetails(order.id);
+        if (!details || details.source !== 'native') v2Fail(409, 'LEGACY_READ_ONLY', '기존 발주는 V2에서 읽기 전용으로만 제공합니다.');
+        v2RequireVersion(details, body.expectedVersion);
+        if (order.status !== '대기' || details.change_reason) v2Fail(409, 'ORDER_STATE_CONFLICT', '승인 대기 중인 발주서만 변경 요청할 수 있습니다.');
+        const reason = String(body.reason || '').trim();
+        if (reason.length < 3 || reason.length > 500) v2Fail(400, 'INVALID_CHANGE_REASON', '변경 요청 사유를 3~500자로 입력해 주세요.');
+        const changed = now();
+        db.prepare(`UPDATE v2_order_details SET change_reason=?,change_requested_by=?,change_requested_at=?,version=version+1 WHERE order_id=? AND version=?`)
+          .run(reason, v2Actor(sess).id, changed, order.id, details.version);
+        db.prepare('UPDATE orders SET mt=? WHERE id=?').run(changed, order.id);
+        audit(actor, 'V2 발주 변경 요청', order.id + ' — ' + reason);
+        return { order: v2StoredOrderView(order.id) };
+      });
+    }
+
+    const v2ResubmitMatch = p.match(/^\/api\/v2\/orders\/([\w-]+)\/resubmit$/);
+    if (v2ResubmitMatch && req.method === 'POST') {
+      if (sess.role !== 'store') return v2Error(res, 403, 'FORBIDDEN', '점주 계정만 발주서를 다시 제출할 수 있습니다.');
+      return v2Idempotent(req, res, sess, p, body, 200, () => {
+        const order = v2RequireOrder(v2ResubmitMatch[1]);
+        if (order.store_id !== sess.storeId) v2Fail(403, 'STORE_SCOPE_DENIED', '자기 매장의 발주서만 변경할 수 있습니다.');
+        const details = v2OrderDetails(order.id);
+        if (!details || details.source !== 'native') v2Fail(409, 'LEGACY_READ_ONLY', '기존 발주는 V2에서 읽기 전용으로만 제공합니다.');
+        v2RequireVersion(details, body.expectedVersion);
+        if (order.status !== '대기' || !details.change_reason) v2Fail(409, 'ORDER_STATE_CONFLICT', '변경 요청을 받은 발주서만 다시 제출할 수 있습니다.');
+        const deliveryDate = String(body.requestedDeliveryDate || '');
+        if (!isDate(deliveryDate) || !v2AllowedDeliveryDates().includes(deliveryDate)) {
+          v2Fail(400, 'DELIVERY_DATE_NOT_ALLOWED', '선택 가능한 입고 예정일을 다시 확인해 주세요.');
+        }
+        const priced = v2SnapshotOrderItems(order.store_id, order.id, body.items);
+        const changed = now();
+        const note = body.note === undefined ? order.memo : String(body.note || '').trim().slice(0, 500);
+        db.prepare("UPDATE orders SET deliver_date=?,status='대기',memo=?,items=?,mt=? WHERE id=?")
+          .run(deliveryDate, note, JSON.stringify(priced.legacyItems), changed, order.id);
+        db.prepare(`UPDATE v2_order_details SET lines_snapshot=?,source='native',submitted_at=?,approved_by=NULL,approved_at=NULL,
+          change_reason=NULL,change_requested_by=NULL,change_requested_at=NULL,cancelled_by=NULL,cancelled_at=NULL,cancellation_reason=NULL,
+          version=version+1 WHERE order_id=? AND version=?`)
+          .run(JSON.stringify(priced.snapshots), changed, order.id, details.version);
+        audit(actor, 'V2 발주 재제출', order.id + ' · ' + priced.totals.gross.toLocaleString('ko-KR') + '원');
+        return { order: v2StoredOrderView(order.id) };
+      });
+    }
+
+    const v2CancelMatch = p.match(/^\/api\/v2\/orders\/([\w-]+)\/cancel$/);
+    if (v2CancelMatch && req.method === 'POST') {
+      if (sess.role !== 'store') return v2Error(res, 403, 'FORBIDDEN', '점주 계정만 발주를 취소할 수 있습니다.');
+      return v2Idempotent(req, res, sess, p, body, 200, () => {
+        const order = v2RequireOrder(v2CancelMatch[1]);
+        if (order.store_id !== sess.storeId) v2Fail(403, 'STORE_SCOPE_DENIED', '자기 매장의 발주서만 취소할 수 있습니다.');
+        const details = v2OrderDetails(order.id);
+        if (!details || details.source !== 'native') v2Fail(409, 'LEGACY_READ_ONLY', '기존 발주는 V2에서 읽기 전용으로만 제공합니다.');
+        v2RequireVersion(details, body.expectedVersion);
+        if (order.status !== '대기') v2Fail(409, 'ORDER_STATE_CONFLICT', '승인 전 발주서만 취소할 수 있습니다.');
+        const reason = String(body.reason || '').trim();
+        if (reason.length < 3 || reason.length > 500) v2Fail(400, 'INVALID_CANCELLATION_REASON', '취소 사유를 3~500자로 입력해 주세요.');
+        const changed = now();
+        db.prepare("UPDATE orders SET status='취소',mt=? WHERE id=?").run(changed, order.id);
+        db.prepare(`UPDATE v2_order_details SET cancelled_by=?,cancelled_at=?,cancellation_reason=?,
+          change_reason=NULL,change_requested_by=NULL,change_requested_at=NULL,version=version+1 WHERE order_id=? AND version=?`)
+          .run(v2Actor(sess).id, changed, reason, order.id, details.version);
+        audit(actor, 'V2 발주 취소', order.id + ' — ' + reason);
+        return { order: v2StoredOrderView(order.id) };
+      });
+    }
+
+    const v2ApproveMatch = p.match(/^\/api\/v2\/orders\/([\w-]+)\/approve$/);
+    if (v2ApproveMatch && req.method === 'POST') {
+      if (sess.role !== 'hq' || !hasCap(HU, 'orders')) return v2Error(res, 403, 'FORBIDDEN', '운영 권한이 필요합니다.');
+      return v2Idempotent(req, res, sess, p, body, 200, () => {
+        const order = v2RequireOrder(v2ApproveMatch[1]);
+        const details = v2OrderDetails(order.id);
+        if (!details || details.source !== 'native') v2Fail(409, 'LEGACY_READ_ONLY', '기존 발주는 V2에서 읽기 전용으로만 제공합니다.');
+        v2RequireVersion(details, body.expectedVersion);
+        if (order.status !== '대기' || details.change_reason) v2Fail(409, 'ORDER_STATE_CONFLICT', '변경 요청이 없는 승인 대기 발주서만 승인할 수 있습니다.');
+        const changed = now();
+        db.prepare("UPDATE orders SET status='승인',mt=? WHERE id=?").run(changed, order.id);
+        db.prepare(`UPDATE v2_order_details SET approved_by=?,approved_at=?,version=version+1 WHERE order_id=? AND version=?`)
+          .run(v2Actor(sess).id, changed, order.id, details.version);
+        audit(actor, 'V2 발주 승인', order.id);
+        return { order: v2StoredOrderView(order.id) };
+      });
+    }
 
     if (p === '/api/store-guide' && req.method === 'GET') {
       if (sess.role === 'store') {
@@ -1161,24 +1784,51 @@ const server = http.createServer(async (req, res) => {
       let dd = String(body.deliverDate || '').trim();
       if (dd && !isDate(dd)) return err(res, 400, 'BAD_DATE');
       if (!dd) dd = addDays(kstToday(), 1); /* 기본: 익일 배송 */
-      db.prepare('INSERT INTO orders(id,store_id,date,deliver_date,status,memo,items,mt) VALUES(?,?,?,?,?,?,?,?)')
-        .run(id, sid, kstToday(), dd, '대기', String(body.memo || ''), JSON.stringify(items), now());
+      const created = now();
+      const priced = v2SnapshotOrderItems(sid, id, items.map(item => ({ productId: item.skuId, quantity: item.qty })));
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare('INSERT INTO orders(id,store_id,date,deliver_date,status,memo,items,mt) VALUES(?,?,?,?,?,?,?,?)')
+          .run(id, sid, kstToday(), dd, '대기', String(body.memo || '').slice(0, 500), JSON.stringify(priced.legacyItems), created);
+        db.prepare(`INSERT INTO v2_order_details(
+          order_id,order_number,source,lines_snapshot,created_by,created_at,submitted_at,version
+        ) VALUES(?,?,?,?,?,?,?,2)`).run(
+          id, v2OrderNumber(id, kstToday(), false), 'native', JSON.stringify(priced.snapshots),
+          v2Actor(sess).id, created, created
+        );
+        db.exec('COMMIT');
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch (rollbackError) {}
+        throw error;
+      }
       audit(actor, '발주 제출', (db.prepare('SELECT name FROM stores WHERE id=?').get(sid) || {}).name);
-      return send(res, 200, { id });
+      return send(res, 200, { id, managedBy: 'v2', version: 2 });
     }
     if ((m = p.match(/^\/api\/orders\/([\w-]+)\/advance$/)) && req.method === 'POST') {
       if (deny('orders')) return;
       const r = db.prepare('SELECT * FROM orders WHERE id=? AND del=0').get(m[1]);
       if (!r) return err(res, 404, 'NOT_FOUND');
+      const details = v2OrderDetails(r.id);
+      if (details && r.status === '대기') return err(res, 409, 'V2_ORDER_MANAGED', { use: '/v2/hq/orders' });
       const i = OSTAT.indexOf(r.status);
       if (i < 0 || i >= OSTAT.length - 1) return err(res, 409, 'FINAL_STATE');
-      db.prepare('UPDATE orders SET status=?, mt=? WHERE id=?').run(OSTAT[i + 1], now(), m[1]);
-      if (OSTAT[i + 1] === '출고') rebuildClosingFromPos(r.store_id, r.deliver_date || r.date); /* 입고 확정 → 폐기 자동 재계산 */
+      const changed = now();
+      if (details) db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare('UPDATE orders SET status=?, mt=? WHERE id=?').run(OSTAT[i + 1], changed, m[1]);
+        if (details) db.prepare('UPDATE v2_order_details SET version=version+1 WHERE order_id=?').run(r.id);
+        if (OSTAT[i + 1] === '출고') rebuildClosingFromPos(r.store_id, r.deliver_date || r.date); /* 입고 확정 → 폐기 자동 재계산 */
+        if (details) db.exec('COMMIT');
+      } catch (error) {
+        if (details) { try { db.exec('ROLLBACK'); } catch (rollbackError) {} }
+        throw error;
+      }
       audit(actor, '발주 상태', (db.prepare('SELECT name FROM stores WHERE id=?').get(r.store_id) || {}).name + ' → ' + OSTAT[i + 1]);
-      return send(res, 200, { status: OSTAT[i + 1] });
+      return send(res, 200, { status: OSTAT[i + 1], ...(details ? { version: details.version + 1 } : {}) });
     }
     if ((m = p.match(/^\/api\/orders\/([\w-]+)$/)) && req.method === 'DELETE') {
       if (deny('orders')) return;
+      if (v2OrderDetails(m[1])) return err(res, 409, 'V2_ORDER_MANAGED', { use: '/v2/hq/orders' });
       db.prepare('UPDATE orders SET del=1, mt=? WHERE id=?').run(now(), m[1]);
       audit(actor, '발주 반려', m[1]);
       return send(res, 200, { ok: true });
@@ -1427,16 +2077,30 @@ const server = http.createServer(async (req, res) => {
       const skuMap = {}; allSkus().forEach(k => { skuMap[k.id] = k; });
       const rows = allStores().map(s => {
         let sup = 0;
+        let unverifiedSupplyOrders = 0;
         ordersOf(s.id).forEach(o => {
-          if (o.date.slice(0, 7) === month && (o.status === '출고' || o.status === '완료'))
-            o.items.forEach(i => { const k = skuMap[i.skuId]; if (k) sup += k.supply * i.qty; });
+          if (o.date.slice(0, 7) !== month || (o.status !== '출고' && o.status !== '완료')) return;
+          const details = v2OrderDetails(o.id);
+          if (!details || details.source !== 'native') {
+            unverifiedSupplyOrders++;
+            return;
+          }
+          const lines = J(details.lines_snapshot);
+          if (!lines.length || !lines.every(line => Number.isSafeInteger(line.supply) && line.supply >= 0)) {
+            v2Fail(409, 'SETTLEMENT_SNAPSHOT_INVALID', '승인 금액 스냅샷이 손상되어 정산할 수 없습니다.');
+          }
+          const orderSupply = lines.reduce((sum, line) => sum + line.supply, 0);
+          if (!Number.isSafeInteger(orderSupply) || !Number.isSafeInteger(sup + orderSupply)) {
+            v2Fail(409, 'SETTLEMENT_MONEY_OVERFLOW', '정산 금액이 허용 범위를 벗어났습니다.');
+          }
+          sup += orderSupply;
         });
         let rev = 0, sold = 0, waste = 0;
         closingsOf(s.id).forEach(c => {
           if (c.date.slice(0, 7) !== month) return;
           c.items.forEach(i => { const k = skuMap[i.skuId]; if (k) rev += k.price * i.sold; sold += i.sold; waste += i.waste; });
         });
-        return { storeId: s.id, name: s.name, type: s.type, supply: sup, revenue: rev,
+        return { storeId: s.id, name: s.name, type: s.type, supply: sup, unverifiedSupplyOrders, revenue: rev,
           lossRate: sold + waste > 0 ? waste / (sold + waste) * 100 : 0 };
       });
       return send(res, 200, { month, rows });
@@ -1464,6 +2128,7 @@ const server = http.createServer(async (req, res) => {
       if (!stRow) return err(res, 404, 'STORE_NOT_FOUND');
       const ex = db.prepare('SELECT * FROM pos_links WHERE store_id=?').get(sid);
       const provider = body.provider === 'mock' ? 'mock' : 'tossplace';
+      if (provider === 'mock' && !mockPosAllowed()) return err(res, 400, 'MOCK_POS_DISABLED');
       const akEnc = String(body.accessKey || '').trim() ? encSecret(String(body.accessKey).trim()) : (ex ? ex.access_key_enc : null);
       const skEnc = String(body.secretKey || '').trim() ? encSecret(String(body.secretKey).trim()) : (ex ? ex.secret_key_enc : null);
       const mid = body.merchantId !== undefined ? String(body.merchantId).trim() : (ex ? ex.merchant_id : '');
@@ -1486,13 +2151,19 @@ const server = http.createServer(async (req, res) => {
       if (deny('pos')) return;
       const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) ? body.date : kstToday();
       try { const r2 = await syncStoreDay(m[1], date, actor); return send(res, 200, r2); }
-      catch (e) { return err(res, 502, 'SYNC_FAIL', { reason: e.message || String(e) }); }
+      catch (e) {
+        if (e.message === 'MOCK_POS_DISABLED') return err(res, 403, 'MOCK_POS_DISABLED');
+        return err(res, 502, 'SYNC_FAIL', { reason: e.message || String(e) });
+      }
     }
     if ((m = p.match(/^\/api\/pos\/test\/([\w-]+)$/)) && req.method === 'POST') {
       if (deny('pos')) return;
       const link = db.prepare('SELECT * FROM pos_links WHERE store_id=? AND del=0').get(m[1]);
       if (!link) return err(res, 404, 'NO_LINK');
-      if (link.provider === 'mock') return send(res, 200, { ok: true, provider: 'mock', detail: 'mock 제공자는 항상 통과합니다' });
+      if (link.provider === 'mock') {
+        if (!mockPosAllowed()) return err(res, 403, 'MOCK_POS_DISABLED');
+        return send(res, 200, { ok: true, provider: 'mock', detail: '테스트 전용 mock 제공자' });
+      }
       const ak = decSecret(link.access_key_enc), sk = decSecret(link.secret_key_enc);
       if (!ak || !sk) return send(res, 200, { ok: false, step: 'KEY', detail: '키 복호화 실패 — Access/Secret Key를 다시 입력·저장하십시오' });
       try {
@@ -1513,6 +2184,8 @@ const server = http.createServer(async (req, res) => {
     }
     if ((m = p.match(/^\/api\/pos\/backfill\/([\w-]+)$/)) && req.method === 'POST') {
       if (deny('pos')) return;
+      const posLink = db.prepare('SELECT provider FROM pos_links WHERE store_id=? AND del=0 AND active=1').get(m[1]);
+      if (posLink && posLink.provider === 'mock' && !mockPosAllowed()) return err(res, 403, 'MOCK_POS_DISABLED');
       if (body.years !== undefined) {
         const years = Number(body.years);
         if (![1, 3, 5].includes(years)) return err(res, 400, 'BACKFILL_YEARS');
@@ -1703,6 +2376,26 @@ const server = http.createServer(async (req, res) => {
       counts.closings = mark('closings', ['c1', 'c2', 'c3']);
       counts.notices = mark('notices', ['n1']);
       counts.stores = mark('stores', ['s1', 's2', 's3']);
+      const retiredSkuIds = [];
+      [
+        ['k1', '우유크림도넛', 4200, 2016], ['k2', '버터피스타치오', 5800, 2784],
+        ['k3', '크림브륄레', 4700, 2256], ['k4', '오리지널', 3000, 1440],
+        ['k5', '시나몬슈가', 3400, 1632], ['k6', '보스턴크림', 4900, 2352],
+        ['k7', '티라미수', 5800, 2784], ['k8', '피넛버터', 5800, 2784],
+        ['k9', '초코크런치', 3800, 1824], ['k10', '메이플피칸', 5000, 2400]
+      ].forEach(([id, name, price, supply]) => {
+        const changed = db.prepare('UPDATE skus SET del=1, mt=? WHERE id=? AND name=? AND price=? AND supply=? AND del=0')
+          .run(M, id, name, price, supply).changes;
+        if (changed) retiredSkuIds.push(id);
+      });
+      counts.skus = retiredSkuIds.length;
+      counts.mockPosSales = db.prepare("DELETE FROM pos_sales WHERE source='mock' OR store_id IN ('s1','s2','s3')").run().changes;
+      counts.detachedSales = 0;
+      counts.aliases = db.prepare("DELETE FROM sku_aliases WHERE store_id IN ('s1','s2','s3')").run().changes;
+      retiredSkuIds.forEach(skuId => {
+        counts.detachedSales += db.prepare("UPDATE pos_sales SET sku_id=NULL WHERE sku_id=? AND (source IS NULL OR source<>'mock')").run(skuId).changes;
+        counts.aliases += db.prepare('DELETE FROM sku_aliases WHERE sku_id=?').run(skuId).changes;
+      });
       ['s1', 's2', 's3'].forEach(sid => {
         db.prepare("DELETE FROM sessions WHERE role='store' AND store_id=?").run(sid);
         db.prepare('UPDATE pos_links SET del=1, active=0, mt=? WHERE store_id=?').run(M, sid);
@@ -1873,6 +2566,7 @@ const server = http.createServer(async (req, res) => {
         orders: ordersOf(null), sales: closingsOf(null), notices: allNotices(),
         users: allUsers(),
         aliases: db.prepare('SELECT * FROM sku_aliases').all().map(a => ({ alias: a.alias, skuId: a.sku_id, mt: a.mt })),
+        v2OrderDetails: v2OrderDetailsBackup(),
         logs: db.prepare('SELECT * FROM audit ORDER BY ts').all().map(a => ({ mt: a.ts, who: a.actor, act: a.action + (a.detail ? ' — ' + a.detail : '') }))
       });
     }
@@ -1899,7 +2593,11 @@ const server = http.createServer(async (req, res) => {
         x => [x.id, x.name, x.type || '가맹', x.region || '', x.addr || '', x.phone || '', g(x, 'openDate', 'open_date') || '', x.mt || now(), x.del ? 1 : 0]);
       const r3 = mergeTable(d.leads, 'leads', ['id', 'name', 'phone', 'area', 'store_name', 'stage', 'doc_date', 'advisor', 'open_target', 'memo', 'flag', 'created', 'mt', 'del'],
         x => [x.id, x.name, x.phone || '', x.area || '', g(x, 'storeName', 'store_name') || '', x.stage | 0, g(x, 'docDate', 'doc_date') || '', x.advisor ? 1 : 0, g(x, 'openTarget', 'open_target') || '', x.memo || '', x.flag ? 1 : 0, x.created || '', x.mt || now(), x.del ? 1 : 0]);
-      const r4 = mergeTable(d.orders, 'orders', ['id', 'store_id', 'date', 'deliver_date', 'status', 'memo', 'items', 'mt', 'del'],
+      const nativeImportIds = new Set((Array.isArray(d.v2OrderDetails) ? d.v2OrderDetails : [])
+        .filter(item => item && item.orderId).map(item => String(item.orderId)));
+      const legacyImportOrders = (Array.isArray(d.orders) ? d.orders : [])
+        .filter(item => item && !nativeImportIds.has(String(item.id)) && !v2OrderDetails(String(item.id || '')));
+      const r4 = mergeTable(legacyImportOrders, 'orders', ['id', 'store_id', 'date', 'deliver_date', 'status', 'memo', 'items', 'mt', 'del'],
         x => [x.id, g(x, 'storeId', 'store_id'), x.date, g(x, 'deliverDate', 'deliver_date') || x.date, x.status || '대기', x.memo || '', JSON.stringify(x.items || []), x.mt || now(), x.del ? 1 : 0]);
       const r5 = mergeTable(d.sales, 'closings', ['id', 'store_id', 'date', 'items', 'mt', 'del'],
         x => [x.id, g(x, 'storeId', 'store_id'), x.date, JSON.stringify(x.items || []), x.mt || now(), x.del ? 1 : 0]);
@@ -1932,12 +2630,16 @@ const server = http.createServer(async (req, res) => {
         if (gl && gl.act) db.prepare('INSERT INTO audit(id,ts,actor,action,detail) VALUES(?,?,?,?,?)')
           .run(uid('g'), gl.mt || now(), (gl.who || '-') + ' (이관)', gl.act, '');
       });
-      audit(actor, '백업 가져오기(병합)', JSON.stringify({ skus: r1, stores: r2, leads: r3, orders: r4, closings: r5, notices: r6, users: r7 }));
-      return send(res, 200, { ok: true, merged: { skus: r1, stores: r2, leads: r3, orders: r4, closings: r5, notices: r6, users: r7 } });
+      const r9 = v2ImportNativeOrders(d.orders, d.v2OrderDetails);
+      r4.nIns += r9.nOrderIns;
+      const merged = { skus: r1, stores: r2, leads: r3, orders: r4, closings: r5, notices: r6, users: r7, v2OrderDetails: r9 };
+      audit(actor, '백업 가져오기(병합)', JSON.stringify(merged));
+      return send(res, 200, { ok: true, merged });
     }
 
     return err(res, 404, 'NOT_FOUND');
   } catch (e) {
+    if (e && e.v2) return v2Error(res, e.v2.status, e.v2.code, e.v2.message, e.v2.details);
     if (e && (e.message === 'BAD_JSON' || e.message === 'TOO_LARGE')) return err(res, 400, e.message);
     console.error(e);
     return err(res, 500, 'SERVER_ERROR');

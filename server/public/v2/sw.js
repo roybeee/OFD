@@ -1,6 +1,6 @@
-const CACHE = 'ofd-workstation-v2-shell-2';
+const CACHE = 'ofd-workstation-v2-shell-3';
 const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, '');
-const FALLBACK = `${BASE}/store/orders?demo=1`;
+const FALLBACK = `${BASE}/store/orders`;
 const SHELL = [FALLBACK, `${BASE}/manifest.webmanifest`, `${BASE}/ofd-mark.svg`];
 
 self.addEventListener('install', (event) => {

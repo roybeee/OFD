@@ -29,8 +29,8 @@ export function browserPathFor(logicalPath: string, basePath: string) {
   return `${base}${path}`;
 }
 
-export function canAccessPath(path: string, capabilities: string[], explicitDemo = false) {
-  return explicitDemo || capabilities.includes(pathCapability[path]);
+export function canAccessPath(path: string, capabilities: string[]) {
+  return capabilities.includes(pathCapability[path]);
 }
 
 export function defaultPathFor(capabilities: string[]) {
