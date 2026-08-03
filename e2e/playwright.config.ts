@@ -31,7 +31,7 @@ export default defineConfig({
     colorScheme: 'light',
   },
   ...(externalBaseUrl ? {} : { webServer: {
-    command: 'node e2e/start-v2-stack.mjs',
+    command: 'node start-v2-stack.mjs',
     url: 'http://127.0.0.1:5173/',
     reuseExistingServer: false,
     timeout: 180_000,

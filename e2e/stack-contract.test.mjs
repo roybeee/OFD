@@ -8,6 +8,7 @@ const read = (path) => readFile(new URL(path, root), 'utf8');
 test('Playwright uses the V2 stack and never the legacy publisher or SQLite server', async () => {
   const [config, stack] = await Promise.all([read('e2e/playwright.config.ts'), read('e2e/start-v2-stack.mjs')]);
   assert.doesNotMatch(`${config}\n${stack}`, /legacy-server|build:render|server\/public\/v2|sqlite/i);
+  assert.match(config, /command:\s*'node start-v2-stack\.mjs'/);
   assert.match(stack, /apps\/api\/src\/server\.ts/);
   assert.match(stack, /apps\/worker\/src\/main\.ts/);
   assert.match(stack, /node_modules\/vite\/bin\/vite\.js/);
