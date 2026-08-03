@@ -15,7 +15,12 @@ export function deriveClaims(change: AggregateChange): AggregateClaim[] {
     : [];
   switch (change.type) {
     case "bank_transaction": return claim("bank.provider", value.providerId);
-    case "shipment": return claim("shipment.order", value.orderId);
+    case "shipment": {
+      const order = claim("shipment.order", value.orderId);
+      const route = typeof value.driverId === "string" && typeof value.plannedDate === "string" && Number.isInteger(value.routeSequence)
+        ? claim("shipment.driver_date_sequence", `${value.driverId}:${value.plannedDate}:${String(value.routeSequence)}`) : [];
+      return [...order, ...route];
+    }
     case "receipt": return claim("receipt.shipment", value.shipmentId);
     case "tax_invoice": {
       const part = typeof value.invoiceGroupId === "string" && Number.isInteger(value.partNumber)
@@ -23,9 +28,14 @@ export function deriveClaims(change: AggregateChange): AggregateClaim[] {
       const generation = value.partNumber === 1 && value.issueType !== "modified" ? claim("invoice.settlement_generation", value.settlementId) : [];
       return [...part, ...generation];
     }
-    case "payment_request": return value.orderId ? claim("prepayment.order", value.orderId) : [];
+    case "payment_request": return [
+      ...(value.orderId ? claim("prepayment.order", value.orderId) : []),
+      ...(value.settlementId ? claim("payment.settlement", value.settlementId) : []),
+    ];
+    case "document": return typeof value.kind === "string" && typeof value.aggregateId === "string" && Number.isInteger(value.sourceVersion)
+      ? claim("document.source", `${value.kind}:${value.aggregateId}:${String(value.sourceVersion)}`) : [];
     case "settlement": {
-      const period = typeof value.storeId === "string" && typeof value.periodStart === "string" && typeof value.periodEnd === "string"
+      const period = value.kind === "monthly" && typeof value.storeId === "string" && typeof value.periodStart === "string" && typeof value.periodEnd === "string"
         ? claim("settlement.period", `${value.storeId}:${value.periodStart}:${value.periodEnd}`) : [];
       const receipts = Array.isArray(value.receiptIds)
         ? value.receiptIds.flatMap((receiptId) => claim("settlement.receipt", receiptId)) : [];

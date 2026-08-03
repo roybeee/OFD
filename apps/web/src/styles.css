@@ -95,6 +95,22 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .auth-error { padding: 9px 11px; border-radius: 8px; color: var(--red); background: var(--red-soft); font-size: 10px; }
 .auth-back { min-height: 36px; color: var(--muted); background: transparent; font-size: 10px; text-decoration: underline; }
 .auth-card > small { display: block; margin-top: 18px; color: var(--muted-2); font-size: 9px; text-align: center; }
+.logout-recovery { width: min(100% - 40px,1480px); display: flex; align-items: center; gap: 10px; margin: 16px auto 0; padding: 12px 14px; border: 1px solid #f2c6c2; border-radius: 12px; background: var(--red-soft); color: #8c2d27; }
+.logout-recovery > div { min-width: 0; flex: 1; }
+.logout-recovery strong { font-size: 12px; }
+.logout-recovery p { margin-top: 3px; font-size: 10px; line-height: 1.45; }
+.logout-recovery .button { flex: none; }
+.field-hint { color: var(--muted-2); font-size: 10px; line-height: 1.5; font-weight: 500; }
+.form-alert { padding: 10px 12px; border: 1px solid #f2c6c2; border-radius: 9px; color: #9d2f29; background: var(--red-soft); font-size: 11px; line-height: 1.5; }
+.step-up-dialog { width: min(460px, 100%); max-height: calc(100vh - 40px); padding: 25px; border: 1px solid var(--line); border-radius: 18px; background: white; box-shadow: var(--shadow-lg); overflow-y: auto; animation: rise-in .2s ease; }
+.step-up-dialog > header { display: flex; align-items: center; gap: 13px; }
+.step-up-dialog > header .auth-symbol { width: 44px; height: 44px; margin: 0; }
+.step-up-dialog > header h2 { margin-top: 4px; font-size: 21px; }
+.step-up-dialog > p { margin-top: 15px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.step-up-dialog form { display: grid; gap: 14px; margin-top: 20px; }
+.step-up-dialog form label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 750; }
+.step-up-dialog form input { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: white; }
+.step-up-dialog form footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 .page { width: min(100% - 40px, 1480px); min-height: calc(100vh - 180px); margin: 0 auto; padding: 30px 0 0; outline: 0; }
 .page-driver { width: min(100% - 40px, 1120px); }
@@ -120,6 +136,48 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .button-ghost { background: transparent; }
 .button-danger { background: var(--red); color: white; }
 .panel { min-width: 0; border: 1px solid var(--line); border-radius: 15px; background: rgba(255,255,255,.9); box-shadow: var(--shadow-sm); overflow: hidden; }
+
+/* HQ account administration */
+.account-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.account-metrics article { min-width: 0; display: flex; align-items: center; gap: 11px; padding: 15px 17px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.84); box-shadow: var(--shadow-sm); }
+.account-metrics article > span, .panel-symbol { width: 40px; height: 40px; display: grid; place-items: center; flex: none; border-radius: 11px; color: var(--orange-dark); background: var(--orange-soft); }
+.account-metrics article div { min-width: 0; display: flex; flex-direction: column; }
+.account-metrics small { color: var(--muted); font-size: 10px; }
+.account-metrics strong { margin-top: 2px; font-size: 17px; }
+.accounts-layout { display: grid; grid-template-columns: minmax(310px,390px) minmax(0,1fr); align-items: start; gap: 16px; }
+.account-create-panel > header, .account-list-panel > header { min-height: 78px; display: flex; align-items: center; gap: 12px; padding: 15px 17px; border-bottom: 1px solid var(--line); }
+.account-create-panel > header h2, .account-list-panel > header h2 { font-size: 16px; }
+.account-create-panel > header p, .account-list-panel > header p { margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.account-create-panel form { display: grid; gap: 14px; padding: 17px; }
+.account-create-panel form > label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 750; }
+.account-create-panel input, .account-create-panel select { width: 100%; min-height: 45px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 9px; background: white; }
+.account-create-panel form > .button { width: 100%; }
+.store-assignment { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.store-assignment legend { padding: 0 5px; color: var(--ink); font-size: 11px; font-weight: 800; }
+.store-assignment > p { color: var(--muted); font-size: 10px; }
+.store-assignment > div { max-height: 142px; display: grid; gap: 4px; margin-top: 8px; overflow-y: auto; }
+.store-assignment label { min-height: 40px; display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px; color: var(--ink); font-size: 11px; cursor: pointer; }
+.store-assignment label:hover { background: #f8f5f1; }
+.store-assignment input { width: 18px; min-height: 18px; accent-color: var(--orange-dark); }
+.account-list-panel > header { justify-content: space-between; }
+.account-list-panel > header > strong { min-width: 44px; color: var(--orange-dark); font-size: 13px; text-align: right; }
+.account-loading, .account-load-error { min-height: 170px; display: grid; place-items: center; padding: 24px; color: var(--muted); font-size: 12px; text-align: center; }
+.account-load-error { align-content: center; gap: 12px; color: var(--red); }
+.account-list { margin: 0; padding: 8px; list-style: none; }
+.account-list li { min-width: 0; display: grid; grid-template-columns: 42px minmax(150px,1.4fr) minmax(130px,1fr) auto; align-items: center; gap: 12px; padding: 13px 10px; border-bottom: 1px solid var(--line); }
+.account-list li:last-child { border-bottom: 0; }
+.account-list li.inactive { background: #faf9f7; opacity: .72; }
+.account-avatar { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: var(--ink); color: white; font-size: 13px; font-weight: 800; }
+.account-identity, .account-security { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.account-identity strong { font-size: 12px; }
+.account-identity span, .account-identity small, .account-security small { max-width: 100%; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.account-security em { color: var(--red); font-size: 9px; font-style: normal; font-weight: 750; }
+.account-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: 999px; color: var(--muted); background: #efeeeb; font-size: 9px; font-weight: 800; }
+.account-status.active { color: var(--green); background: var(--green-soft); }
+.account-actions { display: flex; gap: 6px; }
+.account-actions .button { min-height: 38px; padding: 0 10px; font-size: 10px; }
+.accounts-page > .safety-strip { margin-top: 16px; }
+.account-reset-dialog > header > .icon-button { margin-left: auto; }
 .panel-heading { min-height: 74px; padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #eeeae4; }
 .panel-heading > div:first-child { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .panel-heading h2 { font-size: 15px; font-weight: 800; }
@@ -891,6 +949,9 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
   .match-action { grid-column: 1 / -1; justify-content: flex-end; padding-top: 6px; border-top: 1px dashed var(--line); }
   .closing-progress { grid-template-columns: 1fr; }
   .dispatch-card { grid-template-columns: 30px minmax(0,1fr) 130px auto; }
+  .accounts-layout { grid-template-columns: 1fr; }
+  .account-create-panel form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .account-create-panel form > .store-assignment, .account-create-panel form > .form-alert, .account-create-panel form > .button { grid-column: 1 / -1; }
 }
 
 /* Tablet: switch dense finance tables to cards before their fixed columns can clip. */
@@ -967,6 +1028,13 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
   .dispatch-card { grid-template-columns: 30px minmax(0,1fr) auto; }
   .driver-select { grid-column: 2; }
   .dispatch-card .button { grid-column: 3; grid-row: 1 / 3; }
+  .logout-recovery { width: min(100% - 28px,1480px); align-items: stretch; flex-direction: column; }
+  .logout-recovery .button { width: 100%; }
+  .account-metrics { grid-template-columns: 1fr; }
+  .account-list li { grid-template-columns: 40px minmax(0,1fr) auto; align-items: start; }
+  .account-security { grid-column: 2; }
+  .account-actions { grid-column: 2 / -1; width: 100%; }
+  .account-actions .button { flex: 1; }
 }
 
 @media (max-width: 500px) {
@@ -1068,6 +1136,481 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
   .app-footer { align-items: flex-start; flex-direction: column; gap: 4px; }
   .toast-region { right: 12px; bottom: 12px; width: calc(100% - 24px); }
   .skeleton-grid { grid-template-columns: 1fr; }
+  .account-create-panel form { grid-template-columns: 1fr; padding: 14px; }
+  .account-create-panel form > .store-assignment, .account-create-panel form > .form-alert, .account-create-panel form > .button { grid-column: auto; }
+  .account-list li { grid-template-columns: 36px minmax(0,1fr); gap: 9px; }
+  .account-avatar { width: 36px; height: 36px; }
+  .account-security, .account-actions { grid-column: 2; }
+  .account-actions { flex-direction: column; }
+  .step-up-dialog { width: 100%; max-height: 94vh; padding: 20px 16px; border-radius: 16px 16px 0 0; }
+  .step-up-dialog form footer { display: grid; grid-template-columns: 1fr 1fr; }
+}
+
+/* Finance lifecycle additions */
+.settlement-panel { margin-top: 12px; }
+.settlement-draft-form { display: grid; grid-template-columns: 1.1fr 1fr 1fr auto; align-items: end; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #faf9f7; }
+.settlement-draft-form label, .lifecycle-reason { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 700; }
+.settlement-draft-form input, .settlement-draft-form select, .lifecycle-reason select { min-height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: white; color: var(--ink); font: inherit; }
+.settlement-list { display: grid; gap: 8px; padding: 12px; }
+.settlement-card { display: grid; grid-template-columns: minmax(180px,1fr) minmax(160px,.8fr) auto auto; align-items: center; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; }
+.settlement-card > div:first-child { display: flex; flex-direction: column; gap: 3px; }
+.settlement-card small, .settlement-card span { color: var(--muted); font-size: 8px; }
+.settlement-card strong { font-size: 11px; }
+.maker-summary { display: flex; flex-wrap: wrap; gap: 5px; }
+.maker-summary span { padding: 4px 7px; border-radius: 6px; background: #f3f1ed; }
+.invoice-error { color: var(--red) !important; }
+.maker-checker > div { grid-template-columns: 1fr 24px 1fr 24px 1fr; }
+.lifecycle-reason { margin-top: 12px; padding: 12px; border: 1px solid #eed7c7; border-radius: 10px; background: var(--orange-pale); }
+.lifecycle-reason small { font-weight: 400; line-height: 1.5; }
+.drawer-action-note { align-self: center; color: var(--muted); font-size: 9px; }
+
+@media (max-width: 720px) {
+  .settlement-draft-form { grid-template-columns: 1fr; padding: 14px; }
+  .settlement-card { grid-template-columns: 1fr auto; }
+  .settlement-card .maker-summary { grid-column: 1 / -1; }
+  .settlement-card > .button { grid-column: 1 / -1; width: 100%; }
+  .maker-checker > div { grid-template-columns: 1fr; }
+  .invoice-drawer > footer { grid-template-columns: 1fr; }
+}
+
+/*
+ * Mobile legibility system
+ *
+ * Operational decisions should be readable at arm's length. The desktop UI keeps
+ * its dense workstation rhythm, while handheld screens use a consumer-app scale:
+ * 15-16px body copy, 20px section titles and 52px touch targets.
+ */
+@media (max-width: 720px) {
+  body { font-size: 16px; line-height: 1.55; color: #14191f; }
+  .header-main,
+  .context-bar,
+  .page,
+  .app-footer,
+  .page-driver { width: min(100% - 32px, 1480px); }
+
+  /* A shorter, clearer app chrome leaves more room for the work itself. */
+  .header-main { min-height: 70px; gap: 10px; padding-block: 11px; }
+  .brand { gap: 10px; }
+  .brand-mark { width: 27px; height: 32px; grid-template-columns: repeat(3, 6px); }
+  .brand-copy strong { font-size: 18px; line-height: 1.25; }
+  .header-actions { gap: 8px; }
+  .legacy-home-link,
+  .logout-button { min-height: 50px; padding-inline: 14px; border-radius: 13px; font-size: 14px; }
+  .role-switcher { padding: 3px; border-radius: 13px; }
+  .role-switcher button { min-height: 48px; padding-inline: 10px; border-radius: 10px; font-size: 14px; }
+  .context-bar { min-height: 62px; }
+  .primary-nav button { min-height: 62px; gap: 6px; padding-inline: 10px; font-size: 14px; line-height: 1.3; }
+  .primary-nav button svg { width: 21px; height: 21px; }
+  .primary-nav button::after { height: 4px; }
+  .source-pill { min-width: 36px; min-height: 36px; padding-inline: 9px; }
+  .source-pill span { width: 9px; height: 9px; }
+
+  .page { min-height: calc(100vh - 156px); padding-top: 28px; }
+  .page-heading,
+  .driver-greeting { gap: 16px; margin-bottom: 24px; }
+  .page-heading h1,
+  .driver-greeting h1 { margin-top: 6px; font-size: 32px; line-height: 1.16; letter-spacing: -.045em; }
+  .page-heading > div:first-child > p:last-child,
+  .driver-greeting > div > p:last-child { margin-top: 9px; font-size: 16px; line-height: 1.55; }
+  .eyebrow { gap: 8px; font-size: 12px; line-height: 1.4; letter-spacing: .13em; }
+  .eyebrow span { width: 22px; }
+  .heading-tools { gap: 10px; }
+  .search-field,
+  .date-picker { min-height: 56px; gap: 10px; padding-inline: 16px; border-radius: 14px; }
+  .search-field input,
+  .date-picker input { min-height: 52px; font-size: 16px; }
+  .last-sync,
+  .deadline-badge { min-height: 48px; padding-inline: 14px; border-radius: 12px; font-size: 14px; }
+
+  .button { min-height: 52px; padding-inline: 18px; border-radius: 13px; font-size: 15px; letter-spacing: -.015em; }
+  .icon-button { width: 50px; height: 50px; border-radius: 14px; }
+  .panel { border-radius: 18px; }
+  .panel-heading { min-height: 92px; gap: 14px; padding: 18px; }
+  .panel-heading > div:first-child { gap: 12px; }
+  .panel-heading h2 { font-size: 20px; line-height: 1.3; }
+  .panel-heading p { margin-top: 5px; font-size: 14px; line-height: 1.5; }
+  .section-number { min-width: 34px; font-size: 12px; }
+  .count-badge { min-width: 48px; min-height: 34px; padding-inline: 11px; font-size: 14px; }
+  .status-badge { min-height: 32px; gap: 6px; padding-inline: 11px; font-size: 13px; }
+
+  .metrics-grid,
+  .store-metrics,
+  .driver-metrics { gap: 12px; margin-block: 16px 18px; }
+  .metric-card { min-height: 120px; gap: 13px; padding: 17px; border-radius: 17px; }
+  .metric-icon { width: 46px; height: 46px; border-radius: 13px; }
+  .metric-icon svg { width: 23px; height: 23px; }
+  .metric-card p { font-size: 14px; line-height: 1.35; font-weight: 700; }
+  .metric-card strong { margin-top: 4px; font-size: 22px; line-height: 1.15; }
+  .metric-card small { margin-top: 6px; font-size: 13px; line-height: 1.4; }
+
+  /* Store ordering: one clear action and one readable progress story per card. */
+  .store-hero { min-height: 210px; gap: 22px; padding: 24px; border-radius: 20px; }
+  .hero-kicker { margin-bottom: 10px; font-size: 13px; }
+  .store-hero h2 { font-size: 27px; line-height: 1.22; }
+  .store-hero p { margin-top: 9px; font-size: 15px; line-height: 1.55; }
+  .deadline { margin-top: 17px; padding: 9px 12px; border-radius: 10px; font-size: 14px; }
+  .store-hero > .button { min-height: 56px; }
+  .store-layout { gap: 16px; }
+  .action-list { padding: 10px; }
+  .action-card { min-height: 104px; grid-template-columns: 50px minmax(0, 1fr) auto; gap: 14px; padding: 15px; border-radius: 14px; }
+  .action-icon { width: 50px; height: 50px; border-radius: 14px; }
+  .action-icon svg { width: 24px; height: 24px; }
+  .action-label { margin-bottom: 4px; font-size: 12px; }
+  .action-copy strong { font-size: 17px; line-height: 1.35; }
+  .action-copy small { margin-top: 4px; font-size: 14px; line-height: 1.45; }
+  .order-summary-line { padding: 17px 18px 7px; font-size: 14px; }
+  .order-summary-line strong { font-size: 17px; }
+  .progress-timeline { padding: 20px 10px 15px; }
+  .progress-timeline li { gap: 8px; }
+  .timeline-marker { width: 32px; height: 32px; }
+  .timeline-line { top: 15px; left: calc(50% + 16px); width: calc(100% - 32px); }
+  .progress-timeline strong { font-size: 12px; line-height: 1.35; }
+  .progress-timeline small { margin-top: 3px; font-size: 11px; line-height: 1.35; }
+  .timeline-note,
+  .order-change-notice { margin: 6px 14px 10px; padding: 12px 14px; border-radius: 11px; font-size: 13px; line-height: 1.5; }
+  .timeline-order-actions { gap: 9px; padding: 6px 14px 13px; }
+  .repeat-panel { margin-top: 16px; }
+  .repeat-order { gap: 13px; padding: 17px; }
+  .repeat-icon { width: 46px; height: 46px; }
+  .repeat-order > div:nth-child(2) strong { font-size: 16px; }
+  .repeat-order p { margin-top: 4px; font-size: 13px; line-height: 1.45; }
+  .repeat-amount { font-size: 16px; }
+
+  /* HQ order queue: cards replace the compressed desktop table. */
+  .attention-banner { gap: 14px; padding: 18px; border-radius: 17px; }
+  .attention-symbol { width: 48px; height: 48px; border-radius: 14px; }
+  .attention-banner strong { font-size: 17px; line-height: 1.35; }
+  .attention-banner p { margin-top: 6px; font-size: 14px; line-height: 1.55; }
+  .attention-banner button { gap: 6px; font-size: 15px; }
+  .queue-toolbar { min-height: 128px; gap: 16px; padding: 19px; }
+  .queue-toolbar h2 { font-size: 21px; }
+  .queue-toolbar p { margin-top: 6px; font-size: 14px; line-height: 1.5; }
+  .filter-chips { gap: 5px; padding: 4px; border-radius: 13px; }
+  .filter-chips button { min-height: 50px; padding-inline: 10px; border-radius: 10px; font-size: 14px; }
+  .filter-chips button span { min-width: 24px; min-height: 24px; font-size: 12px; }
+  .order-table { padding: 10px; }
+  .order-table-row { gap: 16px 12px; margin-bottom: 10px; padding: 18px; border-radius: 15px; }
+  .order-table-row > span[data-label]::before,
+  .invoice-row > span[data-label]::before { margin-bottom: 5px; font-size: 13px; font-weight: 650; }
+  .store-cell { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; }
+  .store-avatar { width: 44px; height: 44px; border-radius: 12px; }
+  .order-table-row strong { font-size: 16px; line-height: 1.35; }
+  .order-table-row small { margin-top: 4px; font-size: 13px; line-height: 1.45; }
+  .store-cell em { margin-top: 5px; font-size: 13px; }
+  .queue-empty { min-height: 190px; gap: 10px; }
+  .queue-empty strong { font-size: 16px; }
+  .queue-empty button { font-size: 15px; }
+
+  /* Dialogs and drawers use the same scale as the page behind them. */
+  .wizard-header,
+  .review-drawer > header,
+  .delivery-drawer > header { min-height: 86px; padding: 17px 18px; }
+  .wizard-kicker,
+  .drawer-kicker { font-size: 13px; }
+  .wizard-header h2,
+  .review-drawer h2,
+  .delivery-drawer h2 { margin-top: 4px; font-size: 22px; line-height: 1.3; }
+  .wizard-steps { padding-inline: 10px; }
+  .wizard-steps li { min-height: 68px; gap: 6px; }
+  .wizard-steps li > span { width: 28px; height: 28px; font-size: 13px; }
+  .wizard-steps strong { font-size: 13px; line-height: 1.25; }
+  .wizard-content,
+  .drawer-body,
+  .delivery-drawer-body { padding: 18px; }
+  .wizard-tip { margin-bottom: 15px; padding: 13px 14px; border-radius: 11px; font-size: 14px; line-height: 1.5; }
+  .product-grid { gap: 12px; }
+  .product-card { gap: 12px; padding: 14px; border-radius: 15px; }
+  .product-copy h3 { margin-top: 5px; font-size: 16px; }
+  .product-copy p,
+  .product-copy small { font-size: 13px; line-height: 1.4; }
+  .recommend-badge { padding: 4px 7px; font-size: 12px; }
+  .product-copy > strong { padding-top: 6px; font-size: 16px; }
+  .quantity-control output,
+  .inline-quantity span { font-size: 15px; }
+  .review-lines,
+  .delivery-choice { padding: 17px; border-radius: 15px; }
+  .review-lines h3,
+  .delivery-choice h3,
+  .final-review h3 { font-size: 18px; }
+  .review-line { min-height: 74px; gap: 12px; }
+  .review-line strong { font-size: 15px; }
+  .review-line small { font-size: 13px; }
+  .radio-card { min-height: 72px; padding: 13px; border-radius: 13px; }
+  .radio-card strong { font-size: 16px; }
+  .radio-card small { font-size: 13px; }
+  .notice-box { padding: 13px; border-radius: 11px; font-size: 13px; }
+  .final-review > p { margin-top: 7px; font-size: 14px; line-height: 1.55; }
+  .final-summary { padding: 10px 15px; }
+  .final-summary > div { min-height: 48px; font-size: 14px; }
+  .final-summary .total { min-height: 58px; font-size: 17px; }
+  .final-summary .total dd { font-size: 22px; }
+  .confirm-check { min-height: 62px; padding: 14px; border-radius: 12px; font-size: 14px; }
+  .wizard-footer,
+  .review-drawer > footer,
+  .delivery-drawer > footer { min-height: 90px; gap: 10px; padding: 14px 18px; }
+  .wizard-footer > div:first-child span { font-size: 14px; }
+  .wizard-footer > div:first-child strong { font-size: 21px; }
+  .wizard-footer > div:first-child small { font-size: 12px; }
+  .risk-box { padding: 16px; }
+  .risk-box strong { font-size: 16px; }
+  .risk-box p { margin-top: 5px; font-size: 13px; line-height: 1.5; }
+  .review-block { margin-bottom: 14px; padding: 17px; border-radius: 14px; }
+  .review-block h3 { margin-bottom: 12px; font-size: 17px; }
+  .check-list { gap: 12px; }
+  .check-list li { gap: 10px; font-size: 14px; line-height: 1.5; }
+  .block-title span { font-size: 13px; }
+  .sample-lines > div { min-height: 48px; font-size: 14px; }
+  .sample-lines small { font-size: 12px; }
+  .review-total { padding-top: 14px; font-size: 16px; }
+  .review-total strong { font-size: 21px; }
+  .note-field { gap: 8px; font-size: 14px; }
+  .note-field textarea { min-height: 104px; padding: 13px; border-radius: 11px; font-size: 16px; line-height: 1.5; }
+  .audit-notice { margin-top: 10px; font-size: 12px; line-height: 1.55; }
+
+  /* Delivery, finance, documents and account screens share the same floor. */
+  .dispatch-list,
+  .driver-routes,
+  .match-list,
+  .invoice-list,
+  .document-list { padding: 10px; }
+  .dispatch-card { min-height: 112px; gap: 12px; padding: 15px; }
+  .dispatch-sequence { width: 36px; height: 36px; font-size: 14px; }
+  .dispatch-card > div:nth-child(2) strong,
+  .driver-routes header strong,
+  .bank-entry strong,
+  .invoice-candidate strong { font-size: 16px; }
+  .dispatch-card p,
+  .dispatch-card small,
+  .driver-routes header small,
+  .bank-entry small,
+  .invoice-candidate small { font-size: 13px; line-height: 1.45; }
+  .driver-select select { min-height: 52px; padding-inline: 13px 34px; border-radius: 12px; font-size: 16px; }
+  .driver-select svg { top: 17px; }
+  .driver-routes article { padding: 16px; border-radius: 14px; }
+  .driver-avatar { width: 44px; height: 44px; font-size: 16px; }
+  .driver-routes dt { font-size: 13px; }
+  .driver-routes dd { font-size: 16px; }
+  .capacity-note { font-size: 13px; line-height: 1.5; }
+  .match-card { gap: 12px; padding: 16px; border-radius: 14px; }
+  .bank-icon { width: 46px; height: 46px; }
+  .bank-entry span:last-child,
+  .invoice-candidate span,
+  .matched-check { font-size: 14px; }
+  .reverse-reason span { font-size: 13px; }
+  .reverse-reason input { min-height: 50px; padding-inline: 13px; font-size: 16px; }
+  .reconcile-rule { padding: 16px; border-radius: 13px; }
+  .reconcile-rule strong { font-size: 15px; }
+  .reconcile-rule p { margin-top: 4px; font-size: 13px; line-height: 1.5; }
+  .invoice-row { gap: 14px 10px; margin-bottom: 10px; padding: 17px; border-radius: 14px; }
+  .invoice-row > span { font-size: 14px; }
+  .invoice-row strong { font-size: 16px; }
+  .invoice-row small,
+  .invoice-row em { font-size: 13px; line-height: 1.45; }
+  .closing-progress { padding: 22px; border-radius: 18px; }
+  .closing-copy h2 { font-size: 24px; }
+  .closing-copy p { margin-top: 7px; font-size: 14px; line-height: 1.5; }
+  .closing-progress li > span { width: 36px; height: 36px; font-size: 13px; }
+  .closing-progress li strong { font-size: 14px; }
+  .closing-progress li small { font-size: 12px; }
+  .safety-strip { gap: 13px; padding: 17px; border-radius: 15px; }
+  .safety-strip strong { font-size: 16px; }
+  .safety-strip p { margin-top: 5px; font-size: 13px; line-height: 1.5; }
+  .safe-mode { padding: 7px 9px; font-size: 12px; }
+  .paper-title { padding: 16px; }
+  .paper-title span { font-size: 18px; }
+  .paper-title small,
+  .business-grid small,
+  .business-grid span { font-size: 12px; }
+  .business-grid strong { font-size: 15px; }
+  .invoice-paper dl > div { min-height: 46px; font-size: 14px; }
+  .invoice-paper .total { font-size: 17px; }
+  .invoice-paper .total dd { font-size: 21px; }
+  .maker-checker h3 { font-size: 17px; }
+  .maker-checker small,
+  .maker-checker em,
+  .maker-checker > p { font-size: 12px; line-height: 1.5; }
+  .maker-checker strong { font-size: 15px; }
+  .person-dot { width: 34px; height: 34px; font-size: 13px; }
+  .billing-hero { padding: 23px; border-radius: 18px; }
+  .billing-hero p { font-size: 15px; }
+  .billing-hero h2 { font-size: 32px; }
+  .billing-hero small { font-size: 13px; }
+  .compact-select { font-size: 14px; }
+  .compact-select select { min-height: 50px; font-size: 16px; }
+  .document-row { min-height: 104px; gap: 12px; padding: 15px 10px; }
+  .document-icon { width: 46px; height: 46px; border-radius: 13px; }
+  .document-copy small,
+  .document-copy span { font-size: 13px; line-height: 1.45; }
+  .document-copy strong,
+  .document-amount strong { font-size: 16px; }
+  .ledger-help,
+  .proof-strip { padding: 18px; border-radius: 15px; }
+  .ledger-help strong,
+  .proof-strip strong { font-size: 16px; }
+  .ledger-help p,
+  .proof-strip p { font-size: 13px; line-height: 1.55; }
+
+  .account-metrics { gap: 12px; }
+  .account-metrics article { gap: 13px; padding: 17px; border-radius: 15px; }
+  .account-metrics article > span,
+  .panel-symbol { width: 46px; height: 46px; border-radius: 13px; }
+  .account-metrics small { font-size: 14px; }
+  .account-metrics strong { font-size: 22px; }
+  .account-create-panel > header,
+  .account-list-panel > header { min-height: 90px; padding: 18px; }
+  .account-create-panel > header h2,
+  .account-list-panel > header h2 { font-size: 19px; }
+  .account-create-panel > header p,
+  .account-list-panel > header p { font-size: 13px; line-height: 1.5; }
+  .account-create-panel form { gap: 16px; padding: 18px; }
+  .account-create-panel form > label,
+  .store-assignment legend { font-size: 14px; }
+  .account-create-panel input,
+  .account-create-panel select { min-height: 52px; padding-inline: 13px; font-size: 16px; }
+  .store-assignment > p,
+  .store-assignment label { font-size: 13px; }
+  .account-list li { gap: 12px; padding: 16px 12px; }
+  .account-avatar { width: 44px; height: 44px; font-size: 15px; }
+  .account-identity strong { font-size: 16px; }
+  .account-identity span,
+  .account-identity small,
+  .account-security small,
+  .account-security em,
+  .account-status { font-size: 13px; }
+  .account-actions .button { min-height: 48px; font-size: 14px; }
+
+  /* Driver screens prioritize street-readable names, times and proof controls. */
+  .driver-next { gap: 15px; padding: 22px; border-radius: 20px; }
+  .next-sequence { width: 62px; height: 72px; }
+  .next-sequence span { font-size: 11px; }
+  .next-copy h2 { font-size: 25px; }
+  .next-copy > p { font-size: 15px; line-height: 1.45; }
+  .next-copy > small { font-size: 13px; line-height: 1.45; }
+  .driver-stop-list { padding: 10px 12px 16px; }
+  .driver-stop-list li { gap: 10px; padding-block: 9px; }
+  .stop-sequence { width: 38px; height: 38px; font-size: 14px; }
+  .stop-card { min-height: 112px; gap: 12px; padding: 15px; border-radius: 15px; }
+  .stop-time strong { font-size: 18px; }
+  .stop-time small { font-size: 12px; }
+  .stop-copy h3 { font-size: 18px; }
+  .next-badge { font-size: 12px; }
+  .stop-copy p,
+  .stop-copy > small { font-size: 13px; line-height: 1.45; }
+  .stop-detail { font-size: 14px; }
+  .driver-safety { padding: 17px; border-radius: 15px; }
+  .driver-safety strong { font-size: 16px; }
+  .driver-safety p { font-size: 13px; line-height: 1.5; }
+  .destination-card strong { font-size: 17px; }
+  .destination-card p { font-size: 14px; line-height: 1.45; }
+  .delivery-check,
+  .proof-form { padding: 17px; border-radius: 14px; }
+  .delivery-check h3,
+  .proof-form h3 { font-size: 18px; }
+  .delivery-check > div { min-height: 62px; }
+  .delivery-check strong { font-size: 15px; }
+  .delivery-check small,
+  .proof-heading > small { font-size: 13px; }
+  .required-label { font-size: 12px; }
+  .photo-upload { min-height: 150px; border-radius: 13px; }
+  .photo-upload strong { font-size: 16px; }
+  .photo-upload span { font-size: 13px; }
+  .photo-preview span { font-size: 15px; }
+  .photo-preview small { font-size: 13px; }
+  .recipient-field { gap: 8px; }
+  .recipient-field > span { font-size: 14px; }
+  .recipient-field em { font-size: 12px; }
+  .recipient-field input { min-height: 54px; padding-inline: 14px; font-size: 16px; }
+  .photo-required,
+  .completion-effect p { font-size: 13px; line-height: 1.5; }
+
+  .settlement-panel { margin-top: 16px; }
+  .settlement-draft-form { gap: 14px; padding: 18px; }
+  .settlement-draft-form label,
+  .lifecycle-reason { font-size: 14px; }
+  .settlement-draft-form input,
+  .settlement-draft-form select,
+  .lifecycle-reason select { min-height: 52px; font-size: 16px; }
+  .settlement-list { gap: 10px; padding: 10px; }
+  .settlement-card { gap: 12px; padding: 16px; border-radius: 14px; }
+  .settlement-card small,
+  .settlement-card span { font-size: 13px; }
+  .settlement-card strong { font-size: 16px; }
+  .maker-summary span { padding: 6px 9px; }
+  .lifecycle-reason { padding: 15px; border-radius: 13px; }
+  .drawer-action-note { font-size: 13px; }
+
+  .toast { min-height: 68px; grid-template-columns: 24px minmax(0, 1fr) 44px; padding: 10px 8px 10px 15px; border-radius: 15px; font-size: 14px; line-height: 1.45; }
+  .app-footer { gap: 5px; padding-block: 22px 30px; font-size: 13px; line-height: 1.45; }
+  .empty-state { min-height: 190px; }
+  .empty-state p { font-size: 14px; }
+  .field-hint,
+  .form-alert { font-size: 13px; line-height: 1.5; }
+}
+
+@media (max-width: 500px) {
+  .header-main,
+  .context-bar,
+  .page,
+  .app-footer,
+  .page-driver { width: calc(100% - 32px); }
+  .header-main { gap: 8px; padding-block: 10px; }
+  .brand { min-height: 40px; }
+  .brand-copy strong { font-size: 18px; }
+  .header-actions { gap: 7px; }
+  .legacy-home-link { flex: 1; }
+  .logout-button { min-width: 82px; }
+  .primary-nav button { min-height: 60px; font-size: 14px; }
+  .page-heading h1,
+  .driver-greeting h1 { font-size: 30px; }
+
+  .metrics-grid,
+  .store-metrics,
+  .driver-metrics { grid-template-columns: 1fr 1fr; }
+  .metric-card { min-height: 126px; align-items: flex-start; flex-direction: column; gap: 10px; }
+  .metric-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .hq-metrics .metric-card { grid-column: auto; }
+
+  .action-card { grid-template-columns: 50px minmax(0, 1fr) 24px; }
+  .progress-timeline { padding-inline: 6px; }
+  .progress-timeline strong { font-size: 11px; }
+  .progress-timeline small { font-size: 10px; }
+
+  .order-table-row { grid-template-columns: 1fr 1fr; }
+  .order-table-row > span:last-child { right: 16px; }
+  .review-drawer,
+  .delivery-drawer { height: min(94%, 900px); border-radius: 22px 22px 0 0; }
+  .review-drawer > footer,
+  .delivery-drawer > footer { grid-template-columns: 1fr 1.35fr; }
+
+  .wizard-header { min-height: 82px; padding: 15px 16px; }
+  .wizard-header h2 { font-size: 20px; }
+  .wizard-steps li { min-height: 72px; }
+  .wizard-steps strong { font-size: 12px; }
+  .wizard-content { padding: 16px; }
+  .product-card { grid-template-columns: 72px minmax(0, 1fr); grid-template-rows: auto auto; align-items: center; }
+  .product-visual { grid-column: 1; grid-row: 1 / 3; width: 72px; height: 88px; }
+  .quantity-control { grid-column: 2; grid-row: 2; justify-self: end; grid-template-columns: 48px 42px 48px; }
+  .quantity-control button,
+  .inline-quantity button,
+  .quantity-control output,
+  .inline-quantity span { min-height: 48px; height: 48px; }
+  .wizard-footer { gap: 12px; padding: 12px 16px; }
+  .wizard-buttons { grid-template-columns: minmax(100px, .7fr) minmax(0, 1.3fr); }
+
+  .billing-actions,
+  .ledger-help,
+  .proof-strip { gap: 10px; }
+  .document-row { grid-template-columns: 46px minmax(0, 1fr) 24px; }
+  .document-amount { gap: 6px; }
+
+  .driver-next { grid-template-columns: 62px minmax(0, 1fr); }
+  .stop-card { grid-template-columns: 66px minmax(0, 1fr); }
+  .stop-detail { min-height: 50px; }
+
+  .step-up-dialog { padding: 24px 18px; border-radius: 22px 22px 0 0; }
+  .step-up-dialog > p,
+  .step-up-dialog form label { font-size: 14px; }
+  .step-up-dialog form input { min-height: 54px; font-size: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

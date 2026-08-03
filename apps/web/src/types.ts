@@ -4,6 +4,8 @@ export type ProviderMeta = {
   appMode: string;
   providerMode: 'disabled' | 'production' | string;
   externalIssueEnabled: boolean;
+  operationalDate?: string;
+  timeZone?: string;
 };
 
 export type Product = {
@@ -73,6 +75,33 @@ export type BankMatch = {
   candidateOptions?: Array<{ paymentRequestId: string; bankTransactionId: string; storeName: string; version: number; label: string }>;
 };
 
+export type PaymentRequestStatus = 'pending' | 'matching' | 'manual_review' | 'paid' | 'reversed' | 'cancelled';
+export type PaymentRequestItem = {
+  id: string; storeId: string; storeName: string; orderId?: string; settlementId?: string;
+  amount: number; dueDate: string; status: PaymentRequestStatus; depositorHint: string;
+  matchedBankTransactionId?: string; version: number; createdAt: string; overdue: boolean;
+};
+
+export type BankTransactionItem = {
+  id: string; providerId: string; accountId: string; occurredAt: string; amount: number;
+  direction: 'credit' | 'debit'; memo: string; matched: boolean; version: number;
+};
+
+export type ManualMatchCandidate = {
+  paymentRequestId: string; bankTransactionId: string; storeId: string; storeName: string;
+  amount: number; requestVersion: number; label: string;
+};
+
+export type SettlementStatus = 'open' | 'draft' | 'reviewed' | 'approved' | 'locked';
+export type SettlementItem = {
+  id: string; storeId: string; storeName: string; periodStart: string; periodEnd: string;
+  status: SettlementStatus; receiptIds: string[]; grossAmount: number; supplyAmount: number; vatAmount: number;
+  reviewedBy?: string; reviewedByName?: string; reviewedAt?: string;
+  approvedBy?: string; approvedByName?: string; approvedAt?: string; version: number;
+};
+
+export type ModificationReasonCode = '01' | '02' | '03' | '04' | '05' | '06';
+
 export type Invoice = {
   id: string;
   storeName: string;
@@ -91,6 +120,25 @@ export type Invoice = {
   supplierBusinessNumber?: string;
   recipientName?: string;
   recipientBusinessNumber?: string;
+  settlementId?: string;
+  invoiceGroupId?: string;
+  partNumber?: number;
+  partCount?: number;
+  issueType?: 'normal' | 'internal_statement' | 'modified';
+  reviewedBy?: string;
+  reviewedByName?: string;
+  approvedBy?: string;
+  approvedByName?: string;
+  serialNumber?: string;
+  failureReason?: string;
+  originalInvoiceId?: string;
+  originalNtsConfirmNumber?: string;
+  modificationReasonCode?: ModificationReasonCode;
+  preparedAt?: string;
+  reviewedAt?: string;
+  approvedAt?: string;
+  retryCount?: number;
+  lastRetriedAt?: string;
 };
 
 export type DocumentItem = {
@@ -100,7 +148,10 @@ export type DocumentItem = {
   period: string;
   amount: number;
   status: Invoice['status'] | 'scheduled' | 'paid' | 'pending';
-  downloadUrl?: string;
+  downloadDocumentId?: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
 };
 
 export type BootstrapData = {
@@ -110,14 +161,32 @@ export type BootstrapData = {
   orders: Order[];
   deliveries: Delivery[];
   bankMatches: BankMatch[];
+  paymentRequests: PaymentRequestItem[];
+  bankTransactions: BankTransactionItem[];
+  manualMatchCandidates: ManualMatchCandidate[];
+  settlements: SettlementItem[];
   invoices: Invoice[];
   documents: DocumentItem[];
   generatedAt: string;
   supportEmail?: string;
   availableActors?: Array<{ id: string; name: string; role: string }>;
+  drivers: Array<{ id: string; name: string }>;
+  stores: Array<{ id: string; name: string }>;
   capabilities: string[];
   allowedDeliveryDates: string[];
+  routeDates: string[];
   meta: ProviderMeta;
+};
+
+export type PublicActor = { id: string; name: string; role: string; storeIds: string[] };
+export type ProvisionableActorRole = 'store_owner' | 'store_staff' | 'driver' | 'hq_ops' | 'hq_finance' | 'hq_master' | 'auditor';
+export type AdminActorSummary = PublicActor & {
+  active: boolean;
+  version: number;
+  email: string;
+  mfaEnabled: boolean;
+  lastLoginAt?: string;
+  lockedUntil?: string;
 };
 
 export type Toast = { id: number; tone: 'success' | 'info' | 'warning'; message: string };

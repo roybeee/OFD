@@ -176,17 +176,23 @@ export function createDemoSeed(now = new Date("2026-08-02T05:30:00.000Z")): Aggr
     version: 1,
   };
   const settlement: Settlement = {
-    id: "00000000-0000-4000-8000-000000007001", storeId: DEMO_IDS.storeDoksan, periodStart: "2026-07-01", periodEnd: "2026-07-31",
+    id: "00000000-0000-4000-8000-000000007001", storeId: DEMO_IDS.storeDoksan, kind: "monthly", periodStart: "2026-07-01", periodEnd: "2026-07-31",
     status: "draft", receiptIds: [receipt.id], gross: receipt.gross, supply: receipt.supply, vat: receipt.vat, version: 1,
   };
   const invoice: TaxInvoice = {
     id: "00000000-0000-4000-8000-000000008001", storeId: DEMO_IDS.storeDoksan, settlementId: settlement.id,
     invoiceGroupId: "00000000-0000-4000-8000-000000008000", partNumber: 1, partCount: 1,
     providerManagementKey: popbillManagementKey("00000000-0000-4000-8000-000000008001"),
-    issueType: "normal", status: "reviewed", issueDate: "2026-07-31", supplier: hqBusiness, recipient: doksanStore.business,
+    issueType: "normal", status: "reviewed", issueDate: "2026-07-31", dueDate: "2026-08-10",
+    supplier: hqBusiness, recipient: doksanStore.business,
     gross: settlement.gross, supply: settlement.supply, vat: settlement.vat, preparedBy: DEMO_IDS.finance,
     reviewedBy: DEMO_IDS.finance, lines: [{ id: receipt.id, description: "식자재 공급", quantity: 1,
       gross: settlement.gross, supply: settlement.supply, vat: settlement.vat }], version: 2,
+  };
+  const settlementPaymentRequest: PaymentRequest = {
+    id: "00000000-0000-4000-8000-000000006002", storeId: DEMO_IDS.storeDoksan, settlementId: settlement.id,
+    amount: settlement.gross, dueDate: "2026-08-10", status: "paid", depositorHint: "박독산", version: 1,
+    createdAt: "2026-08-01T00:00:00.000Z",
   };
   const notification: Notification = {
     id: "00000000-0000-4000-8000-000000009001", actorId: DEMO_IDS.owner, storeId: DEMO_IDS.storeDoksan,
@@ -204,6 +210,7 @@ export function createDemoSeed(now = new Date("2026-08-02T05:30:00.000Z")): Aggr
     { type: "shipment", id: deliveredShipment.id, storeId: deliveredShipment.storeId, expectedVersion: null, value: deliveredShipment },
     { type: "receipt", id: receipt.id, storeId: receipt.storeId, expectedVersion: null, value: receipt },
     { type: "payment_request", id: paymentRequest.id, storeId: paymentRequest.storeId, expectedVersion: null, value: paymentRequest },
+    { type: "payment_request", id: settlementPaymentRequest.id, storeId: settlementPaymentRequest.storeId, expectedVersion: null, value: settlementPaymentRequest },
     { type: "bank_transaction", id: bankTransaction.id, expectedVersion: null, value: bankTransaction },
     { type: "bank_transaction", id: ambiguousTransaction.id, expectedVersion: null, value: ambiguousTransaction },
     { type: "settlement", id: settlement.id, storeId: settlement.storeId, expectedVersion: null, value: settlement },

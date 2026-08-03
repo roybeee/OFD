@@ -42,7 +42,7 @@ export function DriverTodayPage({ data, notify, refresh }: { data: BootstrapData
       const upload = await mutateV2<{ objectKey: string; uploadUrl: string; requiredHeaders?: Record<string, string> }>(`/shipments/${delivery.id}/proof-upload`, { contentType }, { idempotencyKey: newIdempotencyKey() });
       const uploadResponse = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType, ...upload.requiredHeaders }, body: file });
       if (!uploadResponse.ok) throw new Error('배송 사진 저장에 실패했습니다.');
-      await mutateV2(`/shipments/${delivery.id}/deliver`, { expectedVersion: delivery.version ?? 1, photoKey: upload.objectKey, recipientName, capturedAt: new Date().toISOString() }, { idempotencyKey: newIdempotencyKey() });
+      await mutateV2(`/shipments/${delivery.id}/deliver`, { expectedVersion: delivery.version ?? 1, photoKey: upload.objectKey, recipientName }, { idempotencyKey: newIdempotencyKey() });
       setSelected(null);
       notify(`${delivery.storeName} 배송 완료와 수취 증빙이 저장되었습니다.`, 'success');
       refresh();

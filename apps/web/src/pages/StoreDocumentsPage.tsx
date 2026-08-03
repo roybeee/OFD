@@ -3,12 +3,14 @@ import { ArrowDownToLine, CalendarDays, ChevronRight, CircleDollarSign, FileChec
 import { formatMoney } from '../lib/workflows';
 import type { BootstrapData } from '../types';
 import { Button, MetricCard, StatusBadge } from '../components/ui';
+import { getDocumentDownloadV2 } from '../api/client';
 
 const documentNames = { monthly_statement: '월 정산서', tax_invoice: '전자세금계산서', internal_statement: '내부거래 명세서', delivery_statement: '거래명세서', payment_request: '결제 요청서' };
 
 export function StoreDocumentsPage({ data, notify }: { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void }) {
   const monthOptions = useMemo(() => [...new Set(data.documents.map((document) => documentMonth(document.period, document.title, data.generatedAt)))].filter(Boolean), [data.documents, data.generatedAt]);
   const [month, setMonth] = useState(monthOptions[0] ?? '');
+  const [openingId, setOpeningId] = useState<string | null>(null);
   const visibleDocuments = month ? data.documents.filter((document) => documentMonth(document.period, document.title, data.generatedAt) === month) : data.documents;
   const pendingRequests = data.documents.filter((document) => document.type === 'payment_request' && document.status === 'pending');
   const pending = pendingRequests.reduce((sum, document) => sum + document.amount, 0);
@@ -16,10 +18,20 @@ export function StoreDocumentsPage({ data, notify }: { data: BootstrapData; noti
   const issuedStatement = data.documents.find((document) => document.type === 'monthly_statement' && document.status === 'issued');
   const nextInvoice = data.documents.find((document) => document.type === 'tax_invoice' && !['nts_success', 'issued', 'failed', 'cancelled'].includes(document.status));
 
-  function openDocument(url: string | undefined, title: string) {
-    if (!url) return;
-    window.open(url, '_blank', 'noopener,noreferrer');
-    notify(`${title} 원본을 새 창에서 열었습니다.`, 'info');
+  async function openDocument(documentId: string | undefined, title: string) {
+    if (!documentId || openingId) return;
+    const target = window.open('', '_blank');
+    if (!target) { notify('팝업이 차단되었습니다. 브라우저에서 새 창 열기를 허용해 주세요.', 'warning'); return; }
+    target.opener = null;
+    setOpeningId(documentId);
+    try {
+      const result = await getDocumentDownloadV2(documentId);
+      target.location.href = result.downloadUrl;
+      notify(`${title} 원본을 새 창에서 열었습니다. 링크는 ${Math.round(result.expiresInSeconds / 60)}분 동안 유효합니다.`, 'info');
+    } catch (error) {
+      target.close();
+      notify(error instanceof Error ? error.message : '문서 원본을 열지 못했습니다.', 'warning');
+    } finally { setOpeningId(null); }
   }
 
   function contactFinance() {
@@ -35,7 +47,7 @@ export function StoreDocumentsPage({ data, notify }: { data: BootstrapData; noti
 
       <section className="billing-hero">
         <div><span className="hero-kicker"><CalendarDays size={15} /> {currentRequest?.title ?? '미결제 정산 없음'}</span><p>{currentRequest?.period ?? '현재 납부할 결제 요청이 없습니다'}</p><h2>{formatMoney(pending)}</h2><small>{currentRequest ? '부가세 포함 · 확정 문서 기준' : '새 결제 요청이 생성되면 이곳에 표시됩니다'}</small></div>
-        {issuedStatement?.downloadUrl && <div className="billing-actions"><Button variant="secondary" onClick={() => openDocument(issuedStatement.downloadUrl, issuedStatement.title)}><ArrowDownToLine size={18} /> 정산서 원본 열기</Button></div>}
+        {issuedStatement?.downloadDocumentId && <div className="billing-actions"><Button variant="secondary" disabled={Boolean(openingId)} onClick={() => openDocument(issuedStatement.downloadDocumentId, issuedStatement.title)}><ArrowDownToLine size={18} /> {openingId === issuedStatement.downloadDocumentId ? '원본 준비 중…' : '정산서 원본 열기'}</Button></div>}
       </section>
 
       <section className="metrics-grid">
@@ -52,7 +64,7 @@ export function StoreDocumentsPage({ data, notify }: { data: BootstrapData; noti
               <span className={`document-icon doc-${document.type}`}><ReceiptText size={21} aria-hidden="true" /></span>
               <span className="document-copy"><small>{documentNames[document.type]}</small><strong>{document.title}</strong><span>{document.period}</span></span>
               <span className="document-amount"><StatusBadge status={document.status} /><strong>{formatMoney(document.amount)}</strong></span>
-              {document.downloadUrl && <button type="button" className="icon-button" onClick={() => openDocument(document.downloadUrl, document.title)} aria-label={`${document.title} 원본 열기`} title="원본 열기"><ChevronRight size={20} aria-hidden="true" /></button>}
+              {document.downloadDocumentId && <button type="button" className="icon-button" disabled={Boolean(openingId)} onClick={() => openDocument(document.downloadDocumentId, document.title)} aria-label={`${document.title} 원본 열기`} title={openingId === document.downloadDocumentId ? '원본 준비 중' : '원본 열기'}><ChevronRight size={20} aria-hidden="true" /></button>}
             </div>
           ))}
           {visibleDocuments.length === 0 && <p className="panel-empty-copy">선택한 기간에 생성된 문서가 없습니다.</p>}

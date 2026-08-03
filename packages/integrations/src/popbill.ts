@@ -13,9 +13,16 @@ export interface SmsResult {
   receiptId: string;
 }
 
+export interface TaxInvoiceOriginalDocument {
+  bytes: Uint8Array;
+  mimeType: "application/pdf";
+  fileName: string;
+}
+
 export interface PopbillProvider {
   issueTaxInvoice(invoice: TaxInvoice): Promise<TaxInvoiceIssueResult>;
   getTaxInvoiceStatus(invoice: TaxInvoice): Promise<TaxInvoiceIssueResult | undefined>;
+  getTaxInvoiceOriginal(invoice: TaxInvoice): Promise<TaxInvoiceOriginalDocument | undefined>;
   fetchBankTransactions(from: string, to: string): Promise<BankTransaction[]>;
   sendSms(to: string, body: string, requestKey?: string): Promise<SmsResult>;
 }
@@ -37,6 +44,15 @@ export class MockPopbillProvider implements PopbillProvider {
 
   async getTaxInvoiceStatus(invoice: TaxInvoice): Promise<TaxInvoiceIssueResult | undefined> { return this.invoices.get(invoice.id); }
 
+  async getTaxInvoiceOriginal(invoice: TaxInvoice): Promise<TaxInvoiceOriginalDocument | undefined> {
+    if (!this.invoices.has(invoice.id) && !invoice.providerReceiptId) return undefined;
+    return {
+      bytes: new TextEncoder().encode(`%PDF-1.4\n% OFD MOCK TAX INVOICE ${invoice.providerManagementKey}\n%%EOF\n`),
+      mimeType: "application/pdf",
+      fileName: `${invoice.providerManagementKey}.pdf`,
+    };
+  }
+
   async fetchBankTransactions(_from: string, _to: string): Promise<BankTransaction[]> {
     return [];
   }
@@ -57,6 +73,9 @@ interface PopbillTaxService {
     success: CallbackSuccess<{ code?: number; message?: string; ntsConfirmNum?: string }>, error: CallbackError): void;
   getInfo(corpNum: string, mgtKeyType: "SELL", mgtKey: string, userId: string,
     success: CallbackSuccess<{ itemKey?: string; ntsconfirmNum?: string; stateCode?: number; writeDate?: string }>, error: CallbackError): void;
+  /** Official Popbill SDK GetPDFURL API returns a short-lived original PDF URL. */
+  getPDFURL?(corpNum: string, mgtKeyType: "SELL", mgtKey: string, userId: string,
+    success: CallbackSuccess<string>, error: CallbackError): void;
 }
 
 interface PopbillBankService {
@@ -156,8 +175,19 @@ export class ProductionPopbillProvider implements PopbillProvider {
         itemName: line.description, qty: String(line.quantity), supplyCost: String(line.supply), tax: String(line.vat) })),
       ...(invoice.issueType === "modified" ? { modifyCode: Number(invoice.modificationReasonCode), orgNTSConfirmNum: invoice.originalNtsConfirmNumber } : {}),
     };
-    const existing = await this.getTaxInvoiceStatus(invoice);
-    if (existing) return existing;
+    let existing: TaxInvoiceIssueResult | undefined;
+    try {
+      existing = await this.getTaxInvoiceStatus(invoice);
+    } catch (error) {
+      throw outcomeUnknown(invoice, error);
+    }
+    if (existing) {
+      if (existing.ntsStatus === "failed" || existing.ntsStatus === "cancelled") {
+        throw new DomainError("POPBILL_ISSUE_NOT_ACTIVE", "실패하거나 취소된 관리키는 재발행에 사용할 수 없습니다.", 409,
+          { ntsStatus: existing.ntsStatus, providerManagementKey: invoice.providerManagementKey });
+      }
+      return existing;
+    }
     let result: { code?: number; message?: string; ntsConfirmNum?: string };
     try {
       result = await new Promise<{ code?: number; message?: string; ntsConfirmNum?: string }>((resolve, reject) => {
@@ -165,13 +195,22 @@ export class ProductionPopbillProvider implements PopbillProvider {
           this.config.popbillUserId!, resolve, (error) => reject(toProviderError(error)));
       });
     } catch (error) {
-      const reconciled = await this.getTaxInvoiceStatus(invoice);
-      if (reconciled) return reconciled;
-      throw error;
+      try {
+        const reconciled = await this.getTaxInvoiceStatus(invoice);
+        if (reconciled) return reconciled;
+      } catch (reconcileError) {
+        throw outcomeUnknown(invoice, error, reconcileError);
+      }
+      throw outcomeUnknown(invoice, error);
     }
     if (result.code !== 1) throw new DomainError("POPBILL_ISSUE_REJECTED", result.message ?? "Popbill 발행이 거절되었습니다.", 502, { providerCode: result.code });
-    const reconciled = await this.getTaxInvoiceStatus(invoice);
-    if (!reconciled) throw new DomainError("POPBILL_AMBIGUOUS_RESULT", "발행 응답 후 관리키 조회에서 실제 문서를 확인하지 못했습니다.", 502);
+    let reconciled: TaxInvoiceIssueResult | undefined;
+    try {
+      reconciled = await this.getTaxInvoiceStatus(invoice);
+    } catch (error) {
+      throw outcomeUnknown(invoice, error);
+    }
+    if (!reconciled) throw outcomeUnknown(invoice);
     if (reconciled.ntsStatus === "failed" || reconciled.ntsStatus === "cancelled") {
       throw new DomainError("POPBILL_ISSUE_NOT_ACTIVE", "Popbill 문서가 실패 또는 취소 상태입니다.", 502, { ntsStatus: reconciled.ntsStatus });
     }
@@ -193,6 +232,35 @@ export class ProductionPopbillProvider implements PopbillProvider {
       const code = error instanceof Error ? undefined : (error as { code?: number }).code;
       if (code === -110000 || code === -120000) return undefined;
       throw toProviderError(error as { code?: number; message?: string } | Error);
+    }
+  }
+
+  async getTaxInvoiceOriginal(invoice: TaxInvoice): Promise<TaxInvoiceOriginalDocument | undefined> {
+    if (!this.services.tax.getPDFURL) {
+      throw new DomainError("POPBILL_PDF_UNSUPPORTED", "설치된 Popbill SDK가 세금계산서 원본 PDF 조회를 지원하지 않습니다.", 503);
+    }
+    const status = await this.getTaxInvoiceStatus(invoice);
+    if (!status) return undefined;
+    const urlText = await new Promise<string>((resolve, reject) => {
+      this.services.tax.getPDFURL!(this.config.popbillCorpNum!, "SELL", invoice.providerManagementKey,
+        this.config.popbillUserId!, resolve, (error) => reject(toProviderError(error)));
+    });
+    const url = assertPopbillDownloadUrl(urlText);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(url, { signal: controller.signal, redirect: "error" });
+      if (!response.ok) throw new DomainError("POPBILL_PDF_DOWNLOAD_FAILED", `Popbill 원본 PDF 다운로드가 실패했습니다. (${response.status})`, 502);
+      const bytes = await readBoundedResponse(response, 20 * 1024 * 1024);
+      if (bytes.byteLength === 0) {
+        throw new DomainError("POPBILL_PDF_INVALID_SIZE", "Popbill 원본 PDF 크기가 허용 범위를 벗어났습니다.", 502);
+      }
+      if (new TextDecoder("ascii").decode(bytes.slice(0, 5)) !== "%PDF-") {
+        throw new DomainError("POPBILL_PDF_INVALID_SIGNATURE", "Popbill에서 받은 원본 문서가 PDF 형식이 아닙니다.", 502);
+      }
+      return { bytes, mimeType: "application/pdf", fileName: `${invoice.providerManagementKey}.pdf` };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -316,6 +384,66 @@ function parsePopbillKst(value: string | undefined, providerId: string): string 
 
 function delay(milliseconds: number): Promise<void> {
   return milliseconds > 0 ? new Promise((resolve) => setTimeout(resolve, milliseconds)) : Promise.resolve();
+}
+
+function outcomeUnknown(invoice: TaxInvoice, issueError?: unknown, reconcileError?: unknown): DomainError {
+  return new DomainError("POPBILL_OUTCOME_UNKNOWN",
+    "Popbill 발행 결과를 확정할 수 없습니다. 같은 관리키로 상태를 다시 조회합니다.", 503, {
+      providerManagementKey: invoice.providerManagementKey,
+      issueError: providerErrorCode(issueError),
+      reconcileError: providerErrorCode(reconcileError),
+    });
+}
+
+function providerErrorCode(error: unknown): string | number | undefined {
+  if (error instanceof DomainError) return error.code;
+  if (error instanceof Error) return error.name;
+  return (error as { code?: string | number } | undefined)?.code;
+}
+
+function assertPopbillDownloadUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new DomainError("POPBILL_PDF_URL_INVALID", "Popbill 원본 PDF 주소가 올바르지 않습니다.", 502);
+  }
+  const officialHosts = new Set(["popbill.com", "www.popbill.com", "test.popbill.com", "download.popbill.com", "taxinvoice.popbill.com"]);
+  if (url.protocol !== "https:" || (url.port !== "" && url.port !== "443") || !officialHosts.has(url.hostname.toLowerCase())) {
+    throw new DomainError("POPBILL_PDF_URL_INVALID", "Popbill 이외의 주소에서는 원본 PDF를 내려받지 않습니다.", 502);
+  }
+  return url;
+}
+
+async function readBoundedResponse(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const advertised = Number(contentLength);
+    if (!Number.isSafeInteger(advertised) || advertised < 0 || advertised > maxBytes) {
+      throw new DomainError("POPBILL_PDF_INVALID_SIZE", "Popbill 원본 PDF 크기가 허용 범위를 벗어났습니다.", 502);
+    }
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new DomainError("POPBILL_PDF_DOWNLOAD_FAILED", "Popbill 원본 PDF 응답 본문이 없습니다.", 502);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new DomainError("POPBILL_PDF_INVALID_SIZE", "Popbill 원본 PDF 크기가 허용 범위를 벗어났습니다.", 502);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 function toProviderError(error: { code?: number; message?: string } | Error): DomainError {

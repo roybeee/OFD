@@ -8,6 +8,8 @@ export type ActorRole =
   | "driver"
   | "system";
 
+export type ProvisionableActorRole = Exclude<ActorRole, "system">;
+
 export interface Actor {
   id: string;
   name: string;
@@ -17,6 +19,29 @@ export interface Actor {
   authVersion: number;
   mfaVerified?: boolean;
   mfaVerifiedAt?: string;
+}
+
+/** Safe identity DTOs. Credential hashes and MFA material must never be added here. */
+export type PublicActor = Pick<Actor, "id" | "name" | "role" | "storeIds">;
+
+export interface ActorDirectoryEntry {
+  id: string;
+  name: string;
+}
+
+export interface AdminActorSummary extends PublicActor {
+  active: boolean;
+  /** Optimistic concurrency token; changing it also revokes existing sessions. */
+  version: number;
+  email: string;
+  mfaEnabled: boolean;
+  lastLoginAt?: string;
+  lockedUntil?: string;
+}
+
+export interface AdminInvariant {
+  id: "hq-master-liveness" | `driver-liveness:${string}`;
+  version: number;
 }
 
 export interface UserCredential {
@@ -45,6 +70,7 @@ export type ShipmentStatus = "preparing" | "out_for_delivery" | "delivered";
 export type ReceiptStatus = "confirmed" | "returned";
 export type PaymentStatus = "pending" | "matching" | "manual_review" | "paid" | "reversed" | "cancelled";
 export type SettlementStatus = "open" | "draft" | "reviewed" | "approved" | "locked";
+export type SettlementKind = "monthly" | "per_delivery";
 export type InvoiceStatus =
   | "draft"
   | "reviewed"
@@ -142,6 +168,38 @@ export interface ShipmentLine {
   quantity: number;
 }
 
+export interface DeliveryWindow {
+  /** Inclusive local time in Asia/Seoul, formatted HH:mm. */
+  start: string;
+  /** Exclusive local time in Asia/Seoul, formatted HH:mm. */
+  end: string;
+}
+
+/** Price-free route projection returned only to the assigned driver. */
+export interface DriverRouteStop {
+  id: string;
+  status: ShipmentStatus;
+  plannedDate: string;
+  routeSequence?: number;
+  deliveryWindow?: DeliveryWindow;
+  version: number;
+  destination: { name: string; address: string; phone: string };
+  items: Array<{ name: string; unit: string; quantity: number }>;
+  deliveryNote: string;
+  proof?: { recipientName: string; capturedAt: string };
+}
+
+export interface DriverDeliveryCompletion {
+  shipment: {
+    id: string;
+    status: "delivered";
+    plannedDate: string;
+    version: number;
+    proof: { recipientName: string; capturedAt: string };
+  };
+  receipt: { id: string; shipmentId: string; status: "confirmed"; confirmedAt: string };
+}
+
 export interface DeliveryProof {
   id: string;
   shipmentId: string;
@@ -179,6 +237,10 @@ export interface Shipment {
   status: ShipmentStatus;
   lines: ShipmentLine[];
   plannedDate: string;
+  /** Optional only for records created before route scheduling was introduced. */
+  routeSequence?: number;
+  /** Optional only for records created before route scheduling was introduced. */
+  deliveryWindow?: DeliveryWindow;
   deliveredAt?: string;
   proof?: DeliveryProof;
   version: number;
@@ -226,6 +288,7 @@ export interface BankTransaction {
 export interface Settlement {
   id: string;
   storeId: string;
+  kind: SettlementKind;
   periodStart: string;
   periodEnd: string;
   status: SettlementStatus;
@@ -252,22 +315,61 @@ export interface TaxInvoice {
   status: InvoiceStatus;
   serialNumber?: string;
   issueDate: string;
+  /** Statutory issuance deadline. Optional only for records created before the Phase 3 migration. */
+  dueDate?: string;
   supplier: LegalEntitySnapshot;
   recipient: LegalEntitySnapshot;
   gross: number;
   supply: number;
   vat: number;
   preparedBy: string;
+  preparedAt?: string;
   reviewedBy?: string;
+  reviewedAt?: string;
   approvedBy?: string;
+  approvedAt?: string;
   providerReceiptId?: string;
   failureReason?: string;
   originalInvoiceId?: string;
   originalNtsConfirmNumber?: string;
   modificationReasonCode?: "01" | "02" | "03" | "04" | "05" | "06";
+  retryCount?: number;
+  lastRetriedAt?: string;
   lines: TaxInvoiceLine[];
   version: number;
 }
+
+export type OriginalDocumentKind =
+  | "payment_request"
+  | "delivery_statement"
+  | "delivery_proof"
+  | "monthly_statement"
+  | "tax_invoice";
+
+export type OriginalDocumentAggregateType = "payment_request" | "shipment" | "settlement" | "tax_invoice";
+
+/** Immutable metadata for a versioned original business document stored outside the database. */
+export interface OriginalDocument {
+  id: string;
+  storeId: string;
+  kind: OriginalDocumentKind;
+  aggregateType: OriginalDocumentAggregateType;
+  aggregateId: string;
+  /** Version of the source aggregate used to render this immutable document. */
+  sourceVersion: number;
+  objectKey: string;
+  objectVersionId: string;
+  contentHashSha256: string;
+  mimeType: "application/pdf" | "image/jpeg" | "image/png" | "image/webp";
+  fileName: string;
+  sizeBytes: number;
+  createdAt: string;
+  version: number;
+}
+
+/** Public metadata intentionally excludes storage coordinates and integrity material. */
+export type OriginalDocumentMetadata = Pick<OriginalDocument,
+  "id" | "storeId" | "kind" | "aggregateType" | "aggregateId" | "sourceVersion" | "mimeType" | "fileName" | "sizeBytes" | "createdAt">;
 
 export interface TaxInvoiceLine {
   id: string;
@@ -318,5 +420,9 @@ export interface OutboxEvent {
   lastError?: string;
   lockedAt?: string;
   lockedBy?: string;
+  /** Opaque fencing token minted for the current lease claim. */
+  leaseToken?: string;
+  /** The current owner may complete the event only before this instant. */
+  leaseExpiresAt?: string;
   deadLetterAt?: string;
 }

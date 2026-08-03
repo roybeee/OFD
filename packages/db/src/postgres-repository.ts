@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
 import pg from "pg";
-import type { AggregateChange, AggregateType, CommitRequest, IdempotencyRecord, StateRepository, WebhookRecord } from "./repository.ts";
+import { deterministicOutboxJitter, outboxRetryDelayMs,
+  type AggregateChange, type AggregateType, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
 const { Pool } = pg;
@@ -10,8 +12,13 @@ type PoolInstance = InstanceType<typeof Pool>;
 export class PostgresRepository implements StateRepository {
   constructor(private readonly pool: PoolInstance, private readonly scopedClient?: pg.PoolClient) {}
 
-  static connect(connectionString: string): PostgresRepository {
-    return new PostgresRepository(new Pool({ connectionString, max: Number(process.env.DB_POOL_MAX ?? 20) }));
+  static connect(connectionString: string, env: NodeJS.ProcessEnv = process.env): PostgresRepository {
+    return new PostgresRepository(new Pool({
+      connectionString,
+      max: Number(env.DB_POOL_MAX ?? 20),
+      connectionTimeoutMillis: Number(env.DB_CONNECT_TIMEOUT_MS ?? 5_000),
+      query_timeout: Number(env.DB_QUERY_TIMEOUT_MS ?? 15_000),
+    }));
   }
 
   async get<T>(type: AggregateType, id: string): Promise<T | undefined> {
@@ -151,6 +158,13 @@ export class PostgresRepository implements StateRepository {
     }
   }
 
+  async exclusiveTransaction<T>(key: string, run: (repository: StateRepository) => Promise<T>): Promise<T> {
+    return this.transaction(async (repository) => {
+      await (repository as PostgresRepository).query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [key]);
+      return run(repository);
+    });
+  }
+
   async reserveIdempotency(actorId: string, key: string, requestHash: string, expiresAt: string): Promise<IdempotencyRecord | undefined> {
     const inserted = await this.query(
       `INSERT INTO idempotency_keys (actor_id,key,request_hash,state,expires_at)
@@ -193,25 +207,29 @@ export class PostgresRepository implements StateRepository {
     }
   }
 
-  async claimOutbox(limit: number, workerId = "worker", maxAttempts = 12): Promise<OutboxEvent[]> {
+  async claimOutbox(limit: number, workerId = "worker", maxAttempts = 12, leaseMs = 5 * 60_000): Promise<OutboxEvent[]> {
     await this.query(
-      `UPDATE outbox_events SET status='dead_letter', dead_letter_at=now(), locked_at=NULL, locked_by=NULL
-       WHERE status IN ('pending','failed') AND attempts >= $1`, [maxAttempts],
+      `UPDATE outbox_events SET status='dead_letter', dead_letter_at=now(), locked_at=NULL, locked_by=NULL,
+         lease_token=NULL, lease_expires_at=NULL
+       WHERE attempts >= $1 AND (status IN ('pending','failed') OR (status='processing'
+         AND COALESCE(lease_expires_at, locked_at + interval '5 minutes', now()) <= now()))`, [maxAttempts],
     );
     const result = await this.query<{
       id: string; topic: string; aggregate_id: string; payload: unknown; status: OutboxEvent["status"]; attempts: number;
       available_at: Date; created_at: Date; processed_at: Date | null; last_error: string | null;
-      locked_at: Date | null; locked_by: string | null; dead_letter_at: Date | null;
+      locked_at: Date | null; locked_by: string | null; lease_token: string | null; lease_expires_at: Date | null;
+      dead_letter_at: Date | null;
     }>(
       `WITH claimed AS (
          SELECT id FROM outbox_events
          WHERE attempts < $2 AND ((status IN ('pending','failed') AND available_at <= now())
-            OR (status='processing' AND locked_at < now() - interval '5 minutes')
+            OR (status='processing' AND COALESCE(lease_expires_at, locked_at + interval '5 minutes', now()) <= now()))
          ) ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT $1
        )
-       UPDATE outbox_events o SET status='processing', attempts=o.attempts+1, locked_at=now(), locked_by=$3
+       UPDATE outbox_events o SET status='processing', attempts=o.attempts+1, locked_at=now(), locked_by=$3,
+         lease_token=gen_random_uuid()::text, lease_expires_at=now() + ($4 * interval '1 millisecond')
        FROM claimed WHERE o.id=claimed.id RETURNING o.*`,
-      [limit, maxAttempts, workerId],
+      [limit, maxAttempts, workerId, leaseMs],
     );
     return result.rows.map((row) => ({
       id: row.id, topic: row.topic, aggregateId: row.aggregate_id, payload: row.payload, status: row.status,
@@ -220,20 +238,37 @@ export class PostgresRepository implements StateRepository {
       ...(row.last_error !== null ? { lastError: row.last_error } : {}),
       ...(row.locked_at ? { lockedAt: row.locked_at.toISOString() } : {}),
       ...(row.locked_by !== null ? { lockedBy: row.locked_by } : {}),
+      ...(row.lease_token !== null ? { leaseToken: row.lease_token } : {}),
+      ...(row.lease_expires_at ? { leaseExpiresAt: row.lease_expires_at.toISOString() } : {}),
       ...(row.dead_letter_at ? { deadLetterAt: row.dead_letter_at.toISOString() } : {}),
     }));
   }
 
-  async completeOutbox(id: string, error?: string, maxAttempts = 12): Promise<void> {
+  async completeOutbox(id: string, workerId: string, leaseToken: string, error?: string, maxAttempts = 12): Promise<boolean> {
+    const current = await this.query<{ topic: string; attempts: number }>(
+      `SELECT topic, attempts FROM outbox_events WHERE id=$1 AND status='processing' AND locked_by=$2
+       AND lease_token=$3 AND lease_expires_at > now()`, [id, workerId, leaseToken],
+    );
+    const event = current.rows[0];
+    if (!event) return false;
     if (error) {
-      await this.query(
+      const retryDelayMs = outboxRetryDelayMs(event.topic, event.attempts, deterministicOutboxJitter(id, event.attempts));
+      const result = await this.query(
         `UPDATE outbox_events SET status=CASE WHEN attempts >= $3 THEN 'dead_letter' ELSE 'failed' END,
          dead_letter_at=CASE WHEN attempts >= $3 THEN now() ELSE NULL END, last_error=$2, locked_at=NULL, locked_by=NULL,
-         available_at=now() + make_interval(secs => LEAST(60, power(2, attempts)::int)) WHERE id=$1`,
-        [id, error.slice(0, 2_000), maxAttempts],
+         lease_token=NULL, lease_expires_at=NULL, processed_at=NULL,
+         available_at=now() + ($6 * interval '1 millisecond')
+         WHERE id=$1 AND status='processing' AND locked_by=$4 AND lease_token=$5 AND lease_expires_at > now()`,
+        [id, error.slice(0, 2_000), maxAttempts, workerId, leaseToken, retryDelayMs],
       );
+      return result.rowCount === 1;
     } else {
-      await this.query("UPDATE outbox_events SET status='completed', processed_at=now(), last_error=NULL, locked_at=NULL, locked_by=NULL WHERE id=$1", [id]);
+      const result = await this.query(
+        `UPDATE outbox_events SET status='completed', processed_at=now(), last_error=NULL, locked_at=NULL, locked_by=NULL,
+         lease_token=NULL, lease_expires_at=NULL WHERE id=$1 AND status='processing' AND locked_by=$2
+         AND lease_token=$3 AND lease_expires_at > now()`, [id, workerId, leaseToken],
+      );
+      return result.rowCount === 1;
     }
   }
 
@@ -242,12 +277,82 @@ export class PostgresRepository implements StateRepository {
       id: string; topic: string; aggregate_id: string; payload: unknown; status: OutboxEvent["status"]; attempts: number;
       available_at: Date; created_at: Date;
     }>(
-      `UPDATE outbox_events SET status='pending', attempts=0, available_at=now(), last_error=NULL, dead_letter_at=NULL
+      `UPDATE outbox_events SET status='pending', attempts=0, available_at=now(), last_error=NULL, dead_letter_at=NULL,
+       locked_at=NULL, locked_by=NULL, lease_token=NULL, lease_expires_at=NULL
        WHERE id=$1 AND status='dead_letter' RETURNING *`, [id],
     );
     const row = result.rows[0];
     return row ? { id: row.id, topic: row.topic, aggregateId: row.aggregate_id, payload: row.payload, status: row.status,
       attempts: row.attempts, availableAt: row.available_at.toISOString(), createdAt: row.created_at.toISOString() } : undefined;
+  }
+
+  async recordWorkerHeartbeat(heartbeat: WorkerHeartbeat): Promise<void> {
+    await this.query(
+      `INSERT INTO worker_heartbeats (worker_id,state,observed_at,lease_expires_at,updated_at)
+       VALUES ($1,$2,$3,$4,now()) ON CONFLICT (worker_id) DO UPDATE SET state=EXCLUDED.state,
+       observed_at=EXCLUDED.observed_at, lease_expires_at=EXCLUDED.lease_expires_at, updated_at=now()`,
+      [heartbeat.workerId, heartbeat.state, heartbeat.observedAt, heartbeat.leaseExpiresAt],
+    );
+  }
+
+  async getWorkerHeartbeat(workerId: string): Promise<WorkerHeartbeat | undefined> {
+    const result = await this.query<{
+      worker_id: string; state: WorkerHeartbeat["state"]; observed_at: Date; lease_expires_at: Date;
+    }>("SELECT worker_id,state,observed_at,lease_expires_at FROM worker_heartbeats WHERE worker_id=$1", [workerId]);
+    const row = result.rows[0];
+    return row ? { workerId: row.worker_id, state: row.state, observedAt: row.observed_at.toISOString(),
+      leaseExpiresAt: row.lease_expires_at.toISOString() } : undefined;
+  }
+
+  async checkReadiness(requiredMigrations: readonly RequiredMigration[], now = new Date()): Promise<RepositoryReadiness> {
+    const unavailable = (code: string): RepositoryReadiness => ({
+      ok: false,
+      database: { ok: false, mode: "postgres", code },
+      migrations: { ok: false, expected: requiredMigrations.length, applied: 0, missing: requiredMigrations.map((item) => item.version),
+        drifted: [], unexpected: [], code: "DATABASE_UNAVAILABLE" },
+      worker: { ok: false, code: "DATABASE_UNAVAILABLE" },
+    });
+    try {
+      await this.query("SELECT 1 AS ready");
+    } catch {
+      return unavailable("DATABASE_UNAVAILABLE");
+    }
+
+    let migrations: RepositoryReadiness["migrations"];
+    try {
+      const appliedResult = await this.query<{ version: string; checksum_sha256: string | null }>(
+        "SELECT version,checksum_sha256 FROM schema_migrations ORDER BY version",
+      );
+      const applied = new Map(appliedResult.rows.map((row) => [row.version, row.checksum_sha256]));
+      const expected = new Map(requiredMigrations.map((migration) => [migration.version, migration.checksumSha256]));
+      const missing = requiredMigrations.filter((migration) => !applied.has(migration.version)).map((migration) => migration.version);
+      const drifted = requiredMigrations.filter((migration) => applied.has(migration.version)
+        && applied.get(migration.version) !== migration.checksumSha256).map((migration) => migration.version);
+      const unexpected = [...applied.keys()].filter((version) => !expected.has(version));
+      const ok = missing.length === 0 && drifted.length === 0 && unexpected.length === 0;
+      migrations = { ok, expected: requiredMigrations.length, applied: applied.size, missing, drifted, unexpected,
+        ...(!ok ? { code: "MIGRATION_LEDGER_MISMATCH" } : {}) };
+    } catch {
+      migrations = { ok: false, expected: requiredMigrations.length, applied: 0,
+        missing: requiredMigrations.map((item) => item.version), drifted: [], unexpected: [], code: "MIGRATION_LEDGER_UNAVAILABLE" };
+    }
+
+    let worker: RepositoryReadiness["worker"];
+    try {
+      const heartbeatResult = await this.query<{
+        state: WorkerHeartbeat["state"]; observed_at: Date; lease_expires_at: Date;
+      }>("SELECT state,observed_at,lease_expires_at FROM worker_heartbeats ORDER BY observed_at DESC LIMIT 1");
+      const heartbeat = heartbeatResult.rows[0];
+      const ok = Boolean(heartbeat && heartbeat.state === "running" && heartbeat.lease_expires_at > now);
+      worker = heartbeat
+        ? { ok, state: heartbeat.state, observedAt: heartbeat.observed_at.toISOString(),
+          leaseExpiresAt: heartbeat.lease_expires_at.toISOString(), ...(!ok ? { code: "WORKER_HEARTBEAT_STALE" } : {}) }
+        : { ok: false, code: "WORKER_HEARTBEAT_MISSING" };
+    } catch {
+      worker = { ok: false, code: "WORKER_HEARTBEAT_UNAVAILABLE" };
+    }
+
+    return { ok: migrations.ok && worker.ok, database: { ok: true, mode: "postgres" }, migrations, worker };
   }
 
   async receiveWebhook(record: WebhookRecord): Promise<boolean> {

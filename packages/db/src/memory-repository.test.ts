@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryRepository } from "./memory-repository.ts";
+import { outboxRetryDelayMs } from "./repository.ts";
+
+const outbox = (id: string, topic = "internal.test") => ({
+  id, topic, aggregateId: id, payload: {}, status: "pending" as const, attempts: 0,
+  availableAt: "2026-08-04T00:00:00.000Z", createdAt: "2026-08-04T00:00:00.000Z",
+});
 
 test("optimistic lock이 오래된 쓰기를 거부하고 원본을 보존한다", async () => {
   const repository = new MemoryRepository([{ type: "order", id: "o1", storeId: "s1", expectedVersion: null, value: { id: "o1", version: 1, status: "draft" } }]);
@@ -61,7 +67,7 @@ test("order당 shipment, receipt당 settlement, invoice 생성 그룹·파트 bu
   const repository = new MemoryRepository();
   await repository.commit({ changes: [
     { type: "shipment", id: "sh-1", expectedVersion: null, value: { id: "sh-1", orderId: "order-1", version: 1 } },
-    { type: "settlement", id: "set-1", expectedVersion: null, value: { id: "set-1", storeId: "store-1", periodStart: "2026-07-01", periodEnd: "2026-07-31", receiptIds: ["receipt-1"], version: 1 } },
+    { type: "settlement", id: "set-1", expectedVersion: null, value: { id: "set-1", storeId: "store-1", kind: "monthly", periodStart: "2026-07-01", periodEnd: "2026-07-31", receiptIds: ["receipt-1"], version: 1 } },
     { type: "tax_invoice", id: "inv-1", expectedVersion: null, value: {
       id: "inv-1", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 1, issueType: "normal", version: 1,
     } },
@@ -70,7 +76,7 @@ test("order당 shipment, receipt당 settlement, invoice 생성 그룹·파트 bu
     { type: "shipment", id: "sh-2", expectedVersion: null, value: { id: "sh-2", orderId: "order-1", version: 1 } },
   ] }), /중복 생성/);
   await assert.rejects(repository.commit({ changes: [
-    { type: "settlement", id: "set-2", expectedVersion: null, value: { id: "set-2", storeId: "store-1", periodStart: "2026-08-01", periodEnd: "2026-08-31", receiptIds: ["receipt-1"], version: 1 } },
+    { type: "settlement", id: "set-2", expectedVersion: null, value: { id: "set-2", storeId: "store-1", kind: "monthly", periodStart: "2026-08-01", periodEnd: "2026-08-31", receiptIds: ["receipt-1"], version: 1 } },
   ] }), /중복 생성/);
   await assert.rejects(repository.commit({ changes: [
     { type: "tax_invoice", id: "inv-2", expectedVersion: null, value: {
@@ -87,4 +93,77 @@ test("order당 shipment, receipt당 settlement, invoice 생성 그룹·파트 bu
       id: "inv-4", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 2, issueType: "normal", version: 1,
     } },
   ] }), /중복 생성/);
+});
+
+test("exclusiveTransaction은 동시 호출을 직렬화하고 잠금 획득 후 최신 상태를 다시 읽는다", async () => {
+  const repository = new MemoryRepository([{ type: "admin_invariant", id: "counter", expectedVersion: null,
+    value: { id: "counter", count: 0, version: 1 } }]);
+  const increment = () => repository.exclusiveTransaction("counter", async (scoped) => {
+    const current = (await scoped.get<{ id: string; count: number; version: number }>("admin_invariant", "counter"))!;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await scoped.commit({ changes: [{ type: "admin_invariant", id: current.id, expectedVersion: current.version,
+      value: { ...current, count: current.count + 1, version: current.version + 1 } }] });
+  });
+  await Promise.all([increment(), increment()]);
+  assert.equal((await repository.get<{ count: number }>("admin_invariant", "counter"))?.count, 2);
+});
+
+test("outbox lease fencing rejects an expired owner after another worker reclaims the event", async () => {
+  let now = new Date("2026-08-04T00:00:00.000Z");
+  let token = 0;
+  const repository = new MemoryRepository([], {
+    now: () => now, random: () => 0.5, leaseToken: () => `lease-${++token}`,
+  });
+  await repository.commit({ changes: [], outbox: [outbox("lease-event")] });
+
+  const first = (await repository.claimOutbox(1, "worker-a", 3, 1_000))[0]!;
+  assert.equal(first.leaseToken, "lease-1");
+  assert.equal(first.leaseExpiresAt, "2026-08-04T00:00:01.000Z");
+  now = new Date("2026-08-04T00:00:01.001Z");
+  const reclaimed = (await repository.claimOutbox(1, "worker-b", 3, 1_000))[0]!;
+  assert.equal(reclaimed.attempts, 2);
+  assert.equal(reclaimed.leaseToken, "lease-2");
+  assert.equal(await repository.completeOutbox(first.id, "worker-a", first.leaseToken!), false);
+  assert.equal(await repository.completeOutbox(reclaimed.id, "worker-b", reclaimed.leaseToken!), true);
+});
+
+test("a crashed final-attempt processing lease becomes dead-lettered instead of stuck", async () => {
+  let now = new Date("2026-08-04T00:00:00.000Z");
+  let token = 0;
+  const repository = new MemoryRepository([], { now: () => now, leaseToken: () => `final-${++token}` });
+  await repository.commit({ changes: [], outbox: [outbox("final-crash")] });
+  await repository.claimOutbox(1, "worker-a", 2, 1_000);
+  now = new Date("2026-08-04T00:00:01.001Z");
+  const finalAttempt = (await repository.claimOutbox(1, "worker-b", 2, 1_000))[0]!;
+  assert.equal(finalAttempt.attempts, 2);
+  now = new Date("2026-08-04T00:00:02.002Z");
+  assert.deepEqual(await repository.claimOutbox(1, "worker-c", 2, 1_000), []);
+  assert.equal((await repository.requeueOutbox(finalAttempt.id))?.status, "pending");
+});
+
+test("outbox retry delay is topic-aware, exponential, jittered, and deterministic", async () => {
+  assert.equal(outboxRetryDelayMs("invoice.issue.requested", 1, 0.5), 5 * 60_000);
+  assert.equal(outboxRetryDelayMs("invoice.issue.requested", 8, 0.5), 6 * 60 * 60_000);
+  assert.equal(outboxRetryDelayMs("internal.test", 1, 0.5), 2_000);
+  assert.equal(outboxRetryDelayMs("internal.test", 12, 0.5), 5 * 60_000);
+  assert.equal(outboxRetryDelayMs("internal.test", 2, 0), 3_000);
+  assert.equal(outboxRetryDelayMs("internal.test", 2, 1), 5_000);
+
+  let now = new Date("2026-08-04T00:00:00.000Z");
+  const repository = new MemoryRepository([], { now: () => now, random: () => 0.5, leaseToken: () => "backoff-lease" });
+  await repository.commit({ changes: [], outbox: [outbox("provider-backoff", "invoice.issue.requested")] });
+  const claimed = (await repository.claimOutbox(1, "worker", 3, 10_000))[0]!;
+  assert.equal(await repository.completeOutbox(claimed.id, "worker", claimed.leaseToken!, "temporary", 3), true);
+  now = new Date("2026-08-04T00:04:59.999Z");
+  assert.deepEqual(await repository.claimOutbox(1, "worker", 3, 10_000), []);
+  now = new Date("2026-08-04T00:05:00.000Z");
+  assert.equal((await repository.claimOutbox(1, "worker", 3, 10_000))[0]?.attempts, 2);
+});
+
+test("worker heartbeat is persisted with state and expiry", async () => {
+  const repository = new MemoryRepository();
+  const heartbeat = { workerId: "worker-heartbeat", state: "running" as const,
+    observedAt: "2026-08-04T00:00:00.000Z", leaseExpiresAt: "2026-08-04T00:01:00.000Z" };
+  await repository.recordWorkerHeartbeat(heartbeat);
+  assert.deepEqual(await repository.getWorkerHeartbeat(heartbeat.workerId), heartbeat);
 });

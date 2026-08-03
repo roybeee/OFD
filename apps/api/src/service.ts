@@ -3,12 +3,14 @@ import type { StateRepository } from "@ofd/db";
 import {
   assertInvoiceApprovalSegregation,
   assertInvoiceEligible,
+  assertLegalModifiedInvoice,
   assertInvoiceTransition,
   assertOrderTransition,
   assertPaymentTransition,
   assertRecentStepUp,
   assertRole,
   assertSettlementTransition,
+  assertSettlementPaymentSatisfied,
   assertShipmentTransition,
   assertStoreScope,
   assertVersion,
@@ -16,15 +18,23 @@ import {
   calculateLineGross,
   DomainError,
   invoiceIssueType,
+  isPaymentMatchCandidate,
   invariant,
   nextInvoiceDeadline,
+  nextPaymentDeadline,
   popbillManagementKey,
   splitVatInclusive,
   type Actor,
+  type AdminInvariant,
   type BankTransaction,
+  type DeliveryWindow,
+  type DriverDeliveryCompletion,
   type DeliveryUploadSession,
   type GoodsReceipt,
+  type HolidayCalendar,
   type LegalEntitySnapshot,
+  type OriginalDocument,
+  type OriginalDocumentMetadata,
   type PaymentRequest,
   type Product,
   type PurchaseOrder,
@@ -53,7 +63,6 @@ interface DeliveryInput {
   photoKey: string;
   recipientName: string;
   note?: string | undefined;
-  capturedAt: string;
   latitude?: number | undefined;
   longitude?: number | undefined;
 }
@@ -67,31 +76,47 @@ export class ProcurementService {
     private readonly providerMode: "mock" | "production" = "mock",
     private readonly externalIssueEnabled = false,
     private readonly now: () => Date = () => new Date(),
+    private readonly holidayCalendar: HolidayCalendar = () => false,
   ) {}
 
   withRepository(repository: StateRepository): ProcurementService {
-    return new ProcurementService(repository, this.storage, this.appMode, this.approvedBankAccountId, this.providerMode, this.externalIssueEnabled, this.now);
+    return new ProcurementService(repository, this.storage, this.appMode, this.approvedBankAccountId, this.providerMode,
+      this.externalIssueEnabled, this.now, this.holidayCalendar);
   }
 
   async bootstrap(actor: Actor): Promise<Record<string, unknown>> {
-    const storeScope = actor.role.startsWith("store_") ? actor.storeIds : undefined;
+    const isStoreActor = actor.role === "store_owner" || actor.role === "store_staff";
+    const isDriver = actor.role === "driver";
+    const storeScope = isStoreActor ? actor.storeIds : undefined;
+    const today = operationalDateKst(this.now());
     let stores = await this.repository.list<Store>("store", storeScope);
     let orders = await this.repository.list<PurchaseOrder>("order", storeScope);
     let shipments = await this.repository.list<Shipment>("shipment", storeScope);
-    if (actor.role === "driver") shipments = shipments.filter((shipment) => shipment.driverId === actor.id);
-    let receipts = await this.repository.list<GoodsReceipt>("receipt", storeScope);
-    let paymentRequests = await this.repository.list<PaymentRequest>("payment_request", storeScope);
-    let settlements = await this.repository.list<Settlement>("settlement", storeScope);
-    let taxInvoices = await this.repository.list<TaxInvoice>("tax_invoice", storeScope);
-    let products = await this.repository.list<Product>("product");
+    // Scope and operational-day filtering happens before related DTOs or proof URLs are constructed.
+    if (isDriver) {
+      shipments = shipments.filter((shipment) => shipment.driverId === actor.id && shipment.plannedDate === today)
+        .sort((left, right) => (left.routeSequence ?? Number.MAX_SAFE_INTEGER) - (right.routeSequence ?? Number.MAX_SAFE_INTEGER));
+    }
+    let receipts = isDriver ? [] : await this.repository.list<GoodsReceipt>("receipt", storeScope);
+    const canSeeFinance = isStoreActor || actor.role === "hq_finance" || actor.role === "hq_master" || actor.role === "auditor";
+    let paymentRequests = canSeeFinance ? await this.repository.list<PaymentRequest>("payment_request", storeScope) : [];
+    let settlements = canSeeFinance ? await this.repository.list<Settlement>("settlement", storeScope) : [];
+    let taxInvoices = canSeeFinance ? await this.repository.list<TaxInvoice>("tax_invoice", storeScope) : [];
+    let documents = canSeeFinance ? await this.repository.list<OriginalDocument>("document", storeScope) : [];
+    let products = isDriver ? [] : await this.repository.list<Product>("product");
     const hqEntities = await this.repository.list<LegalEntitySnapshot & { id: string; isHeadquarters: boolean }>("legal_entity");
     const headquarters = hqEntities.find((entity) => entity.isHeadquarters);
     invariant(headquarters, "HQ_BUSINESS_MISSING", "본사 사업자 정보가 없습니다.", 503);
-    const canSeeFinance = actor.role === "hq_finance" || actor.role === "hq_master" || actor.role === "auditor";
-    const bankTransactions = canSeeFinance ? await this.repository.list<BankTransaction>("bank_transaction") : [];
-    const auditEvents = actor.role.startsWith("hq_") || actor.role === "auditor" ? await this.repository.listAudit(30) : [];
-    const availableActors = this.appMode !== "production" ? await this.repository.list<Actor>("actor") : [];
-    if (actor.role === "driver") {
+    const bankTransactions = actor.role === "hq_finance" || actor.role === "hq_master" || actor.role === "auditor"
+      ? await this.repository.list<BankTransaction>("bank_transaction") : [];
+    const auditEvents = actor.role === "hq_master" || actor.role === "auditor" ? await this.repository.listAudit(30) : [];
+    const allActors = await this.repository.list<Actor>("actor");
+    const availableActors = this.appMode !== "production" && !isDriver ? allActors.map(publicActorDto) : [];
+    const driverDirectory = actor.role === "hq_ops" || actor.role === "hq_master"
+      ? allActors.filter((candidate) => candidate.role === "driver" && candidate.active)
+        .map(({ id, name }) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name, "ko"))
+      : [];
+    if (isDriver) {
       const orderIds = new Set(shipments.map((shipment) => shipment.orderId));
       orders = orders.filter((order) => orderIds.has(order.id));
       const storeIds = new Set(shipments.map((shipment) => shipment.storeId));
@@ -100,9 +125,29 @@ export class ProcurementService {
       paymentRequests = [];
       settlements = [];
       taxInvoices = [];
+      documents = [];
       products = [];
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const canSeeMakerChecker = actor.role === "hq_finance" || actor.role === "hq_master";
+    const makerCheckerIds = new Set<string>();
+    if (canSeeMakerChecker) {
+      for (const settlement of settlements) {
+        if (settlement.reviewedBy) makerCheckerIds.add(settlement.reviewedBy);
+        if (settlement.approvedBy) makerCheckerIds.add(settlement.approvedBy);
+      }
+      for (const invoice of taxInvoices) {
+        makerCheckerIds.add(invoice.preparedBy);
+        if (invoice.reviewedBy) makerCheckerIds.add(invoice.reviewedBy);
+        if (invoice.approvedBy) makerCheckerIds.add(invoice.approvedBy);
+      }
+    }
+    const actorDirectory = canSeeMakerChecker
+      ? allActors.filter((candidate) => makerCheckerIds.has(candidate.id)).map(({ id, name }) => ({ id, name }))
+        .sort((left, right) => left.name.localeCompare(right.name, "ko"))
+      : [];
+    const routeDates = actor.role === "hq_ops" || actor.role === "hq_master"
+      ? [today, ...[...new Set(shipments.map((shipment) => shipment.plannedDate).filter((date) => date !== today))].sort()]
+      : [];
     const metrics = {
       ordersAwaitingApproval: orders.filter((order) => order.status === "submitted").length,
       deliveriesToday: shipments.filter((shipment) => shipment.plannedDate === today && shipment.status !== "delivered").length,
@@ -111,7 +156,7 @@ export class ProcurementService {
       openReceivables: paymentRequests.filter((request) => !["paid", "reversed", "cancelled"].includes(request.status)).reduce((sum, request) => sum + request.amount, 0),
     };
     const manualMatchCandidates = actor.role === "hq_finance"
-      ? paymentRequests.flatMap((paymentRequest) => bankTransactions
+      ? paymentRequests.filter((paymentRequest) => isPaymentMatchCandidate(paymentRequest.status)).flatMap((paymentRequest) => bankTransactions
         .filter((transaction) => !transaction.matched && transaction.direction === "credit" && transaction.accountId === this.approvedBankAccountId
           && transaction.amount === paymentRequest.amount)
         .map((transaction) => ({ paymentRequestId: paymentRequest.id, bankTransactionId: transaction.id,
@@ -119,20 +164,42 @@ export class ProcurementService {
           occurredAt: transaction.occurredAt, depositorMemo: transaction.memo,
           depositorReferenceMatched: normalizeName(transaction.memo).includes(normalizeName(paymentRequest.depositorHint)),
           inAutomaticWindow: inAutomaticMatchWindow(paymentRequest, transaction) }))) : [];
-    const shipmentViews = await Promise.all(shipments.map(async (shipment) => shipment.proof
-      ? { ...shipment, proofUrl: await this.storage.createReadUrl(shipment.proof.photoObjectKey, shipment.proof.objectVersionId) }
-      : shipment));
+    const shipmentViews = isDriver ? shipments.map((shipment) => {
+      const order = orders.find((candidate) => candidate.id === shipment.orderId);
+      const store = stores.find((candidate) => candidate.id === shipment.storeId);
+      invariant(order && store, "DRIVER_ROUTE_DATA_MISSING", "배송 경로 정보를 불러올 수 없습니다.", 503);
+      const items = shipment.lines.map((shipmentLine) => {
+        const orderLine = order.lines.find((candidate) => candidate.id === shipmentLine.orderLineId);
+        invariant(orderLine, "DRIVER_ROUTE_ITEM_MISSING", "배송 상품 정보를 불러올 수 없습니다.", 503);
+        return { name: orderLine.snapshot.name, unit: orderLine.snapshot.unit, quantity: shipmentLine.quantity };
+      });
+      return {
+        id: shipment.id, status: shipment.status, plannedDate: shipment.plannedDate,
+        routeSequence: shipment.routeSequence, deliveryWindow: shipment.deliveryWindow, version: shipment.version,
+        destination: { name: store.name, address: store.business.address, phone: store.notificationPhone },
+        items, deliveryNote: order.note,
+        ...(shipment.proof ? { proof: { recipientName: shipment.proof.recipientName, capturedAt: shipment.proof.capturedAt } } : {}),
+      };
+    }) : await Promise.all(shipments.map(async (shipment) => {
+      if (!shipment.proof) return shipment;
+      const { photoObjectKey, objectVersionId, ...proofMetadata } = shipment.proof;
+      return { ...shipment, proof: proofMetadata, proofUrl: await this.storage.createReadUrl(photoObjectKey, objectVersionId) };
+    }));
     return {
       meta: { apiVersion: "v2", appMode: this.appMode, providerMode: this.providerMode,
-        externalIssueEnabled: this.externalIssueEnabled, generatedAt: new Date().toISOString() },
+        externalIssueEnabled: this.externalIssueEnabled, generatedAt: this.now().toISOString(),
+        operationalDate: today, timeZone: "Asia/Seoul" },
       capabilities: capabilitiesFor(actor),
-      allowedDeliveryDates: allowedDeliveryDates(),
-      currentActor: actor,
+      allowedDeliveryDates: allowedDeliveryDates(this.now()),
+      currentActor: publicActorDto(actor),
       availableActors,
-      headquarters,
-      stores,
+      driverDirectory,
+      actorDirectory,
+      routeDates,
+      headquarters: isDriver ? null : headquarters,
+      stores: isDriver ? [] : stores,
       products,
-      orders: orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      orders: isDriver ? [] : orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       shipments: shipmentViews,
       receipts,
       paymentRequests,
@@ -140,6 +207,7 @@ export class ProcurementService {
       manualMatchCandidates,
       settlements,
       taxInvoices,
+      documents: documents.map(documentMetadataDto),
       auditEvents,
       metrics,
     };
@@ -234,6 +302,12 @@ export class ProcurementService {
   }
 
   async cancelOrder(actor: Actor, orderId: string, expectedVersion: number, reason: string): Promise<{ order: PurchaseOrder; paymentRequest?: PaymentRequest }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).cancelOrderLocked(actor, orderId, expectedVersion, reason));
+  }
+
+  private async cancelOrderLocked(actor: Actor, orderId: string, expectedVersion: number,
+    reason: string): Promise<{ order: PurchaseOrder; paymentRequest?: PaymentRequest }> {
     assertRole(actor, ["store_owner", "hq_ops"]);
     invariant(reason.trim().length >= 3, "REASON_REQUIRED", "취소 사유를 3자 이상 입력해 주세요.");
     const order = await this.orderForActor(actor, orderId);
@@ -284,6 +358,12 @@ export class ProcurementService {
   }
 
   async approveOrder(actor: Actor, orderId: string, expectedVersion: number): Promise<{ order: PurchaseOrder; paymentRequest?: PaymentRequest }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).approveOrderLocked(actor, orderId, expectedVersion));
+  }
+
+  private async approveOrderLocked(actor: Actor, orderId: string,
+    expectedVersion: number): Promise<{ order: PurchaseOrder; paymentRequest?: PaymentRequest }> {
     assertRole(actor, ["hq_ops"]);
     const order = await this.required<PurchaseOrder>("order", orderId, "ORDER_NOT_FOUND", "발주서를 찾을 수 없습니다.");
     assertVersion(order.version, expectedVersion);
@@ -304,38 +384,78 @@ export class ProcurementService {
     await this.repository.commit({
       changes,
       audits: [audit(actor, "order", order.id, "order.approved", order.storeId, order, updated)],
-      outbox: [outbox("order.approved", order.id, { orderId: order.id, storeId: order.storeId, paymentRequestId: paymentRequest?.id })],
+      outbox: [
+        outbox("order.approved", order.id, { orderId: order.id, storeId: order.storeId, paymentRequestId: paymentRequest?.id }),
+        ...(paymentRequest ? [outbox("payment.requested", paymentRequest.id,
+          { paymentRequestId: paymentRequest.id, orderId: order.id, storeId: order.storeId })] : []),
+      ],
     });
     return { order: updated, ...(paymentRequest ? { paymentRequest } : {}) };
   }
 
-  async createShipment(actor: Actor, orderId: string, driverId: string, plannedDate: string): Promise<{ shipment: Shipment }> {
+  async createShipment(actor: Actor, orderId: string, driverId: string, plannedDate: string,
+    routeSequence: number, deliveryWindow: DeliveryWindow): Promise<{ shipment: Shipment }> {
     assertRole(actor, ["hq_ops"]);
     const order = await this.required<PurchaseOrder>("order", orderId, "ORDER_NOT_FOUND", "발주서를 찾을 수 없습니다.");
     invariant(order.status === "approved", "ORDER_NOT_APPROVED", "승인된 발주서만 배송 배차할 수 있습니다.", 409);
     this.assertNative(order);
     const driver = await this.required<Actor>("actor", driverId, "DRIVER_NOT_FOUND", "배송 기사를 찾을 수 없습니다.");
     invariant(driver.role === "driver", "INVALID_DRIVER", "배송 기사 계정을 선택해야 합니다.");
-    const existing = (await this.repository.list<Shipment>("shipment", [order.storeId])).find((item) => item.orderId === order.id);
+    invariant(driver.active, "DRIVER_INACTIVE", "비활성화된 배송 기사에게 배정할 수 없습니다.", 409);
+    const allShipments = await this.repository.list<Shipment>("shipment");
+    const existing = allShipments.find((item) => item.orderId === order.id);
     invariant(!existing, "SHIPMENT_EXISTS", "이미 이 발주서의 배송이 생성되었습니다.", 409);
     invariant(/^\d{4}-\d{2}-\d{2}$/.test(plannedDate), "INVALID_DATE", "배송 예정일이 올바르지 않습니다.");
+    invariant(isCalendarDate(plannedDate), "INVALID_DATE", "배송 예정일이 올바르지 않습니다.");
+    invariant(plannedDate >= operationalDateKst(this.now()), "PAST_OPERATIONAL_DATE", "서울 운영일 기준 과거 날짜에는 배송을 배정할 수 없습니다.", 409);
+    invariant(plannedDate === order.requestedDeliveryDate, "SHIPMENT_DATE_MISMATCH",
+      "배송 예정일은 승인된 주문의 요청 배송일과 같아야 합니다.", 409);
+    invariant(Number.isInteger(routeSequence) && routeSequence >= 1 && routeSequence <= 9_999,
+      "INVALID_ROUTE_SEQUENCE", "경로 순번은 1~9,999의 정수여야 합니다.");
+    invariant(isDeliveryWindow(deliveryWindow), "INVALID_DELIVERY_WINDOW", "배송 시간은 같은 날의 HH:mm 시작·종료 순서로 입력해 주세요.");
     const shipment: Shipment = {
       id: randomUUID(), number: makeNumber("SHP"), orderId: order.id, storeId: order.storeId, driverId,
-      status: "preparing", lines: order.lines.map((line) => ({ orderLineId: line.id, quantity: line.quantity })), plannedDate, version: 1,
+      status: "preparing", lines: order.lines.map((line) => ({ orderLineId: line.id, quantity: line.quantity })),
+      plannedDate, routeSequence, deliveryWindow, version: 1,
     };
+    const invariantId: AdminInvariant["id"] = `driver-liveness:${driver.id}`;
+    const currentInvariant = await this.repository.get<AdminInvariant>("admin_invariant", invariantId);
+    const nextInvariant: AdminInvariant = { id: invariantId, version: (currentInvariant?.version ?? 0) + 1 };
+    const changes: Parameters<StateRepository["commit"]>[0]["changes"] = [
+      { type: "shipment", id: shipment.id, storeId: shipment.storeId, expectedVersion: null, value: shipment },
+      { type: "admin_invariant", id: invariantId, storeId: "__system__",
+        expectedVersion: currentInvariant?.version ?? null, value: nextInvariant },
+    ];
+    changes.sort((left, right) => `${left.type}:${left.id}`.localeCompare(`${right.type}:${right.id}`));
     await this.repository.commit({
-      changes: [{ type: "shipment", id: shipment.id, storeId: shipment.storeId, expectedVersion: null, value: shipment }],
-      audits: [audit(actor, "shipment", shipment.id, "shipment.created", shipment.storeId, undefined, shipment)],
-      outbox: [outbox("shipment.created", shipment.id, { shipmentId: shipment.id, driverId, storeId: shipment.storeId })],
+      changes,
+      audits: [
+        audit(actor, "shipment", shipment.id, "shipment.created", shipment.storeId, undefined, shipment),
+        audit(actor, "admin_invariant", invariantId, "shipment.driver_assignment_serialized", undefined,
+          currentInvariant, nextInvariant, { shipmentId: shipment.id, driverId: driver.id }),
+      ],
+      outbox: [outbox("shipment.created", shipment.id, { shipmentId: shipment.id, driverId, storeId: shipment.storeId,
+        plannedDate, routeSequence, deliveryWindow })],
     });
     return { shipment };
   }
 
   async dispatchShipment(actor: Actor, shipmentId: string, expectedVersion: number): Promise<{ shipment: Shipment }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).dispatchShipmentLocked(actor, shipmentId, expectedVersion));
+  }
+
+  private async dispatchShipmentLocked(actor: Actor, shipmentId: string,
+    expectedVersion: number): Promise<{ shipment: Shipment }> {
     assertRole(actor, ["hq_ops"]);
     const shipment = await this.required<Shipment>("shipment", shipmentId, "SHIPMENT_NOT_FOUND", "배송 건을 찾을 수 없습니다.");
     assertVersion(shipment.version, expectedVersion);
     assertShipmentTransition(shipment.status, "out_for_delivery");
+    const assignedDriver = shipment.driverId ? await this.repository.get<Actor>("actor", shipment.driverId) : undefined;
+    invariant(assignedDriver?.role === "driver" && assignedDriver.active, "DRIVER_INACTIVE",
+      "활성 배송 기사에게 배정된 배송만 출발할 수 있습니다.", 409);
+    invariant(shipment.plannedDate === operationalDateKst(this.now()), "NOT_OPERATIONAL_DATE",
+      "서울 운영일 당일 배송만 출발 처리할 수 있습니다.", 409);
     const order = await this.required<PurchaseOrder>("order", shipment.orderId, "ORDER_NOT_FOUND", "발주서를 찾을 수 없습니다.");
     const store = await this.required<Store>("store", shipment.storeId, "STORE_NOT_FOUND", "매장을 찾을 수 없습니다.");
     if (store.paymentMethod === "prepaid") {
@@ -356,6 +476,8 @@ export class ProcurementService {
     const shipment = await this.required<Shipment>("shipment", shipmentId, "SHIPMENT_NOT_FOUND", "배송 건을 찾을 수 없습니다.");
     invariant(shipment.driverId === actor.id, "DRIVER_SCOPE_DENIED", "본인에게 배정된 배송만 처리할 수 있습니다.", 403);
     invariant(shipment.status === "out_for_delivery", "SHIPMENT_NOT_OUT", "배송 출발 상태에서만 사진을 등록할 수 있습니다.", 409);
+    invariant(shipment.plannedDate === operationalDateKst(this.now()), "NOT_OPERATIONAL_DATE",
+      "서울 운영일 당일 배송만 증빙 사진을 등록할 수 있습니다.", 409);
     const ticket = await this.storage.createDeliveryProofUpload(shipmentId, contentType);
     const session: DeliveryUploadSession = {
       id: ticket.objectKey, shipmentId, storeId: shipment.storeId, objectKey: ticket.objectKey,
@@ -369,27 +491,28 @@ export class ProcurementService {
     return { ...ticket, uploadSessionId: session.id };
   }
 
-  async completeDelivery(actor: Actor, shipmentId: string, input: DeliveryInput): Promise<{ shipment: Shipment; receipt: GoodsReceipt; proofUrl: string }> {
+  async completeDelivery(actor: Actor, shipmentId: string, input: DeliveryInput): Promise<DriverDeliveryCompletion> {
     assertRole(actor, ["driver"]);
     const shipment = await this.required<Shipment>("shipment", shipmentId, "SHIPMENT_NOT_FOUND", "배송 건을 찾을 수 없습니다.");
     invariant(shipment.driverId === actor.id, "DRIVER_SCOPE_DENIED", "본인에게 배정된 배송만 처리할 수 있습니다.", 403);
+    invariant(shipment.plannedDate === operationalDateKst(this.now()), "NOT_OPERATIONAL_DATE",
+      "서울 운영일 당일 배송만 완료 처리할 수 있습니다.", 409);
     assertVersion(shipment.version, input.expectedVersion);
     assertShipmentTransition(shipment.status, "delivered");
     invariant(input.recipientName.trim().length > 0, "DELIVERY_PROOF_REQUIRED", "수령인 이름이 필요합니다.");
-    invariant(!Number.isNaN(new Date(input.capturedAt).valueOf()), "INVALID_CAPTURE_TIME", "촬영 시간이 올바르지 않습니다.");
     const uploadSession = await this.required<DeliveryUploadSession>("upload_session", input.photoKey, "UPLOAD_SESSION_NOT_FOUND", "서버가 발급한 업로드 세션이 아닙니다.");
     invariant(uploadSession.shipmentId === shipment.id && uploadSession.issuedTo === actor.id, "PHOTO_SHIPMENT_MISMATCH", "다른 배송 건의 사진은 사용할 수 없습니다.", 409);
     invariant(uploadSession.status === "issued" && new Date(uploadSession.expiresAt) >= new Date(), "UPLOAD_TICKET_INVALID", "업로드 세션이 만료되었거나 이미 사용되었습니다.", 410);
     const verifiedPhoto = await this.storage.verifyDeliveryProof(shipment.id, input.photoKey);
     const order = await this.required<PurchaseOrder>("order", shipment.orderId, "ORDER_NOT_FOUND", "발주서를 찾을 수 없습니다.");
-    const now = new Date().toISOString();
+    const now = this.now().toISOString();
     const proof = {
       id: randomUUID(), shipmentId: shipment.id, photoObjectKey: verifiedPhoto.objectKey, objectVersionId: verifiedPhoto.versionId,
       etag: verifiedPhoto.etag, checksumSha256: verifiedPhoto.checksumSha256,
       recipientName: input.recipientName.trim(), note: input.note?.trim().slice(0, 300) ?? "",
       ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
       ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
-      capturedAt: input.capturedAt, uploadedBy: actor.id,
+      capturedAt: now, uploadedBy: actor.id,
     };
     const updated: Shipment = { ...shipment, status: "delivered", deliveredAt: now, proof, version: shipment.version + 1 };
     const receipt: GoodsReceipt = {
@@ -407,14 +530,23 @@ export class ProcurementService {
         { receiptId: receipt.id, proofId: proof.id })],
       outbox: [outbox("shipment.delivered", shipment.id, { shipmentId: shipment.id, receiptId: receipt.id, orderId: order.id, storeId: shipment.storeId })],
     });
-    return { shipment: updated, receipt, proofUrl: await this.storage.createReadUrl(proof.photoObjectKey, proof.objectVersionId) };
+    return {
+      shipment: { id: updated.id, status: "delivered", plannedDate: updated.plannedDate, version: updated.version,
+        proof: { recipientName: proof.recipientName, capturedAt: proof.capturedAt } },
+      receipt: { id: receipt.id, shipmentId: receipt.shipmentId, status: "confirmed", confirmedAt: receipt.confirmedAt },
+    };
   }
 
   async autoMatchPayments(actor: Actor): Promise<{ paid: PaymentRequest[]; manualReview: PaymentRequest[]; unmatched: number }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).autoMatchPaymentsLocked(actor));
+  }
+
+  private async autoMatchPaymentsLocked(actor: Actor): Promise<{ paid: PaymentRequest[]; manualReview: PaymentRequest[]; unmatched: number }> {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     const requests = (await this.repository.list<PaymentRequest>("payment_request"))
-      .filter((request) => request.status === "pending" || request.status === "matching");
+      .filter((request) => isPaymentMatchCandidate(request.status));
     const transactions = (await this.repository.list<BankTransaction>("bank_transaction"))
       .filter((transaction) => transaction.direction === "credit" && !transaction.matched && transaction.accountId === this.approvedBankAccountId);
     const stores = await this.repository.list<Store>("store");
@@ -432,7 +564,10 @@ export class ProcurementService {
         if (current.amount !== transaction.amount || !inAutomaticMatchWindow(current, transaction)) continue;
         amountTimeCandidates.add(current.id);
         const memo = normalizeName(transaction.memo);
-        const referenceMatched = memo.includes(normalizeName(current.depositorHint)) || Boolean(store && memo.includes(normalizeName(store.name)));
+        const depositorReference = normalizeName(current.depositorHint);
+        const storeReference = store ? normalizeName(store.name) : "";
+        const referenceMatched = (depositorReference.length > 0 && memo.includes(depositorReference))
+          || (storeReference.length > 0 && memo.includes(storeReference));
         if (!referenceMatched) continue;
         requestEdges.set(current.id, [...(requestEdges.get(current.id) ?? []), transaction]);
         transactionEdges.set(transaction.id, [...(transactionEdges.get(transaction.id) ?? []), current]);
@@ -460,6 +595,10 @@ export class ProcurementService {
     }
     for (const current of [...requests].sort((a, b) => a.id.localeCompare(b.id))) {
       if (autoRequestIds.has(current.id) || !amountTimeCandidates.has(current.id)) continue;
+      if (current.status === "manual_review") {
+        manualReview.push(current);
+        continue;
+      }
       assertPaymentTransition(current.status, "manual_review");
       const updated: PaymentRequest = { ...current, status: "manual_review", version: current.version + 1 };
       changes.push({ type: "payment_request", id: updated.id, storeId: updated.storeId, expectedVersion: current.version, value: updated });
@@ -472,6 +611,12 @@ export class ProcurementService {
   }
 
   async manualMatchPayment(actor: Actor, paymentRequestId: string, bankTransactionId: string, expectedVersion: number): Promise<{ paymentRequest: PaymentRequest }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).manualMatchPaymentLocked(actor, paymentRequestId, bankTransactionId, expectedVersion));
+  }
+
+  private async manualMatchPaymentLocked(actor: Actor, paymentRequestId: string, bankTransactionId: string,
+    expectedVersion: number): Promise<{ paymentRequest: PaymentRequest }> {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     const request = await this.required<PaymentRequest>("payment_request", paymentRequestId, "PAYMENT_NOT_FOUND", "입금 요청을 찾을 수 없습니다.");
@@ -480,6 +625,7 @@ export class ProcurementService {
     invariant(!transaction.matched && transaction.direction === "credit", "BANK_TRANSACTION_USED", "이미 대사되었거나 출금 거래입니다.", 409);
     invariant(transaction.accountId === this.approvedBankAccountId, "UNAPPROVED_BANK_ACCOUNT", "승인된 수취 계좌의 거래만 대사할 수 있습니다.", 409);
     invariant(request.amount === transaction.amount, "AMOUNT_MISMATCH", "입금 요청 금액과 거래 금액이 다릅니다.", 409);
+    invariant(isPaymentMatchCandidate(request.status), "PAYMENT_NOT_MATCHABLE", "대기 또는 수동검토 상태의 결제요청만 매칭할 수 있습니다.", 409);
     assertPaymentTransition(request.status, "paid");
     const updated: PaymentRequest = { ...request, status: "paid", matchedBankTransactionId: transaction.id, version: request.version + 1 };
     const matched: BankTransaction = { ...transaction, matched: true, version: transaction.version + 1 };
@@ -495,6 +641,12 @@ export class ProcurementService {
   }
 
   async reversePaymentMatch(actor: Actor, paymentRequestId: string, expectedVersion: number, reason: string): Promise<{ paymentRequest: PaymentRequest; bankTransaction: BankTransaction }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).reversePaymentMatchLocked(actor, paymentRequestId, expectedVersion, reason));
+  }
+
+  private async reversePaymentMatchLocked(actor: Actor, paymentRequestId: string, expectedVersion: number,
+    reason: string): Promise<{ paymentRequest: PaymentRequest; bankTransaction: BankTransaction }> {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     invariant(reason.trim().length >= 3, "REASON_REQUIRED", "대사 취소 사유를 3자 이상 입력해 주세요.");
@@ -504,8 +656,23 @@ export class ProcurementService {
     invariant(Boolean(request.matchedBankTransactionId), "MATCHED_TRANSACTION_REQUIRED", "연결된 입금 거래가 없습니다.", 409);
     const transaction = await this.required<BankTransaction>("bank_transaction", request.matchedBankTransactionId!, "BANK_TRANSACTION_NOT_FOUND", "입금 내역을 찾을 수 없습니다.");
     invariant(transaction.matched, "BANK_TRANSACTION_NOT_MATCHED", "이미 대사가 해제된 입금 거래입니다.", 409);
+    if (request.orderId) {
+      const shipments = (await this.repository.list<Shipment>("shipment", [request.storeId]))
+        .filter((shipment) => shipment.orderId === request.orderId);
+      invariant(!shipments.some((shipment) => shipment.status === "out_for_delivery" || shipment.status === "delivered"),
+        "PAYMENT_REVERSAL_BLOCKED", "이미 출발하거나 배송 완료된 선결제 주문의 입금은 취소할 수 없습니다.", 409);
+    }
+    if (request.settlementId) {
+      const settlement = await this.required<Settlement>("settlement", request.settlementId, "SETTLEMENT_NOT_FOUND", "정산서를 찾을 수 없습니다.");
+      const invoiceExists = (await this.repository.list<TaxInvoice>("tax_invoice", [request.storeId]))
+        .some((invoice) => invoice.settlementId === settlement.id);
+      invariant(!["reviewed", "approved", "locked"].includes(settlement.status) && !invoiceExists,
+        "PAYMENT_REVERSAL_BLOCKED", "검토·승인·계산서 처리가 시작된 정산의 입금은 취소할 수 없습니다.", 409);
+    }
     const { matchedBankTransactionId, ...requestWithoutMatch } = request;
-    const updatedRequest: PaymentRequest = { ...requestWithoutMatch, status: "reversed", version: request.version + 1 };
+    // The reversal is immutable in audit/outbox history while the operational request becomes matchable again.
+    assertPaymentTransition("reversed", "pending");
+    const updatedRequest: PaymentRequest = { ...requestWithoutMatch, status: "pending", version: request.version + 1 };
     const updatedTransaction: BankTransaction = { ...transaction, matched: false, version: transaction.version + 1 };
     await this.repository.commit({
       changes: [
@@ -545,7 +712,17 @@ export class ProcurementService {
     return { queued: true, from, to };
   }
 
-  async draftSettlement(actor: Actor, input: { storeId: string; periodStart: string; periodEnd: string; receiptIds?: string[] | undefined }): Promise<{ settlement: Settlement }> {
+  async draftSettlement(actor: Actor, input: { storeId: string; periodStart: string; periodEnd: string; receiptIds?: string[] | undefined }): Promise<{
+    settlement: Settlement; paymentRequest?: PaymentRequest;
+  }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).draftSettlementLocked(actor, input));
+  }
+
+  private async draftSettlementLocked(actor: Actor,
+    input: { storeId: string; periodStart: string; periodEnd: string; receiptIds?: string[] | undefined }): Promise<{
+      settlement: Settlement; paymentRequest?: PaymentRequest;
+    }> {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     invariant(/^\d{4}-\d{2}-\d{2}$/.test(input.periodStart) && /^\d{4}-\d{2}-\d{2}$/.test(input.periodEnd) && input.periodStart <= input.periodEnd,
@@ -570,24 +747,41 @@ export class ProcurementService {
     const supply = documentVat.supply;
     const vat = documentVat.vat;
     const settlement: Settlement = {
-      id: randomUUID(), storeId: store.id, periodStart: input.periodStart, periodEnd: input.periodEnd,
+      id: randomUUID(), storeId: store.id, kind: store.billingCycle, periodStart: input.periodStart, periodEnd: input.periodEnd,
       status: "draft", receiptIds: selected.map((receipt) => receipt.id), gross, supply, vat, version: 1,
     };
+    const paymentRequest: PaymentRequest | undefined = store.paymentMethod === "monthly_credit" ? {
+      id: randomUUID(), storeId: store.id, settlementId: settlement.id, amount: settlement.gross,
+      dueDate: nextPaymentDeadline(settlement.periodEnd, this.holidayCalendar), status: "pending",
+      depositorHint: store.business.representativeName, version: 1, createdAt: this.now().toISOString(),
+    } : undefined;
     await this.repository.commit({
-      changes: [{ type: "settlement", id: settlement.id, storeId: settlement.storeId, expectedVersion: null, value: settlement }],
+      changes: [
+        { type: "settlement", id: settlement.id, storeId: settlement.storeId, expectedVersion: null, value: settlement },
+        ...(paymentRequest ? [{ type: "payment_request" as const, id: paymentRequest.id, storeId: paymentRequest.storeId,
+          expectedVersion: null, value: paymentRequest }] : []),
+      ],
       audits: [audit(actor, "settlement", settlement.id, "settlement.drafted", settlement.storeId, undefined, settlement)],
-      outbox: [outbox("settlement.drafted", settlement.id, { settlementId: settlement.id, storeId: settlement.storeId })],
+      outbox: [outbox("settlement.drafted", settlement.id, { settlementId: settlement.id, storeId: settlement.storeId,
+        paymentRequestId: paymentRequest?.id })],
     });
-    return { settlement };
+    return { settlement, ...(paymentRequest ? { paymentRequest } : {}) };
   }
 
   async reviewSettlement(actor: Actor, settlementId: string, expectedVersion: number): Promise<{ settlement: Settlement }> {
+    return this.repository.exclusiveTransaction(this.paymentMatchLockKey(), (scoped) =>
+      this.withRepository(scoped).reviewSettlementLocked(actor, settlementId, expectedVersion));
+  }
+
+  private async reviewSettlementLocked(actor: Actor, settlementId: string,
+    expectedVersion: number): Promise<{ settlement: Settlement }> {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     const settlement = await this.required<Settlement>("settlement", settlementId, "SETTLEMENT_NOT_FOUND", "정산서를 찾을 수 없습니다.");
     assertVersion(settlement.version, expectedVersion);
     assertSettlementTransition(settlement.status, "reviewed");
-    const updated: Settlement = { ...settlement, status: "reviewed", reviewedBy: actor.id, reviewedAt: new Date().toISOString(), version: settlement.version + 1 };
+    await this.assertSettlementPaymentGate(settlement);
+    const updated: Settlement = { ...settlement, status: "reviewed", reviewedBy: actor.id, reviewedAt: this.now().toISOString(), version: settlement.version + 1 };
     await this.repository.commit({
       changes: [{ type: "settlement", id: updated.id, storeId: updated.storeId, expectedVersion, value: updated }],
       audits: [audit(actor, "settlement", updated.id, "settlement.reviewed", updated.storeId, settlement, updated)],
@@ -601,8 +795,9 @@ export class ProcurementService {
     const settlement = await this.required<Settlement>("settlement", settlementId, "SETTLEMENT_NOT_FOUND", "정산서를 찾을 수 없습니다.");
     assertVersion(settlement.version, expectedVersion);
     assertSettlementTransition(settlement.status, "approved");
+    await this.assertSettlementPaymentGate(settlement);
     invariant(settlement.reviewedBy && settlement.reviewedBy !== actor.id, "SEGREGATION_OF_DUTIES", "검토자와 승인자는 서로 달라야 합니다.", 409);
-    const updated: Settlement = { ...settlement, status: "approved", approvedBy: actor.id, approvedAt: new Date().toISOString(), version: settlement.version + 1 };
+    const updated: Settlement = { ...settlement, status: "approved", approvedBy: actor.id, approvedAt: this.now().toISOString(), version: settlement.version + 1 };
     await this.repository.commit({
       changes: [{ type: "settlement", id: updated.id, storeId: updated.storeId, expectedVersion, value: updated }],
       audits: [audit(actor, "settlement", updated.id, "settlement.approved", updated.storeId, settlement, updated)],
@@ -616,6 +811,7 @@ export class ProcurementService {
     assertRecentStepUp(actor);
     const settlement = await this.required<Settlement>("settlement", settlementId, "SETTLEMENT_NOT_FOUND", "정산서를 찾을 수 없습니다.");
     invariant(settlement.status === "approved", "SETTLEMENT_NOT_APPROVED", "승인된 정산서만 증빙을 작성할 수 있습니다.", 409);
+    await this.assertSettlementPaymentGate(settlement);
     const existing = (await this.repository.list<TaxInvoice>("tax_invoice", [settlement.storeId])).find((invoice) => invoice.settlementId === settlement.id);
     invariant(!existing, "INVOICE_EXISTS", "이미 이 정산서의 증빙이 생성되었습니다.", 409);
     const store = await this.required<Store>("store", settlement.storeId, "STORE_NOT_FOUND", "매장을 찾을 수 없습니다.");
@@ -627,21 +823,23 @@ export class ProcurementService {
       id: receipt.id, description: `식자재 공급 ${receipt.confirmedAt.slice(0, 10)}`, quantity: 1, gross: receipt.gross,
     })));
     const invoiceGroupId = randomUUID();
+    const dueDate = nextInvoiceDeadline(settlement.periodEnd, this.holidayCalendar);
+    const preparedAt = this.now().toISOString();
     const invoices: TaxInvoice[] = parts.map((lines, index) => {
       const id = randomUUID();
       return {
         id, storeId: store.id, settlementId: settlement.id, invoiceGroupId, partNumber: index + 1, partCount: parts.length,
         providerManagementKey: popbillManagementKey(id), issueType: invoiceIssueType(headquarters, store), status: "draft" as const,
-        issueDate: settlement.periodEnd, supplier: headquarters, recipient: store.business,
+        issueDate: settlement.periodEnd, dueDate, supplier: headquarters, recipient: store.business,
         gross: lines.reduce((sum, line) => sum + line.gross, 0), supply: lines.reduce((sum, line) => sum + line.supply, 0),
-        vat: lines.reduce((sum, line) => sum + line.vat, 0), preparedBy: actor.id, lines, version: 1,
+        vat: lines.reduce((sum, line) => sum + line.vat, 0), preparedBy: actor.id, preparedAt, lines, version: 1,
       };
     });
     await this.repository.commit({
       changes: invoices.map((invoice) => ({ type: "tax_invoice" as const, id: invoice.id, storeId: invoice.storeId, expectedVersion: null, value: invoice })),
       audits: invoices.map((invoice) => audit(actor, "tax_invoice", invoice.id, "invoice.drafted", invoice.storeId, undefined, invoice)),
     });
-    return { invoice: invoices[0]!, invoices, deadline: nextInvoiceDeadline(settlement.periodEnd) };
+    return { invoice: invoices[0]!, invoices, deadline: dueDate };
   }
 
   async reviewInvoice(actor: Actor, invoiceId: string, expectedVersion: number): Promise<{ invoice: TaxInvoice }> {
@@ -650,7 +848,8 @@ export class ProcurementService {
     const invoice = await this.required<TaxInvoice>("tax_invoice", invoiceId, "INVOICE_NOT_FOUND", "세금계산서를 찾을 수 없습니다.");
     assertVersion(invoice.version, expectedVersion);
     assertInvoiceTransition(invoice.status, "reviewed");
-    const updated: TaxInvoice = { ...invoice, status: "reviewed", reviewedBy: actor.id, version: invoice.version + 1 };
+    const updated: TaxInvoice = { ...invoice, status: "reviewed", reviewedBy: actor.id,
+      reviewedAt: this.now().toISOString(), version: invoice.version + 1 };
     await this.repository.commit({
       changes: [{ type: "tax_invoice", id: updated.id, storeId: updated.storeId, expectedVersion, value: updated }],
       audits: [audit(actor, "tax_invoice", updated.id, "invoice.reviewed", updated.storeId, invoice, updated)],
@@ -667,20 +866,25 @@ export class ProcurementService {
     invariant(original.status === "nts_success", "ORIGINAL_NOT_NTS_SUCCESS", "국세청 전송 성공 세금계산서만 수정할 수 있습니다.", 409);
     invariant(Boolean(original.serialNumber && /^\d{24}$/.test(original.serialNumber)), "ORIGINAL_NTS_NUMBER_REQUIRED", "원본의 24자리 국세청 승인번호가 필요합니다.", 409);
     invariant(original.issueType !== "internal_statement", "INTERNAL_STATEMENT_ONLY", "내부 거래명세서는 수정세금계산서 대상이 아닙니다.", 409);
+    assertLegalModifiedInvoice(original, reasonCode);
     const groupId = randomUUID();
     const id = randomUUID();
     const invoiceBase: TaxInvoice = { ...original };
     delete invoiceBase.reviewedBy;
+    delete invoiceBase.reviewedAt;
     delete invoiceBase.approvedBy;
+    delete invoiceBase.approvedAt;
     delete invoiceBase.providerReceiptId;
     delete invoiceBase.serialNumber;
     delete invoiceBase.failureReason;
+    delete invoiceBase.lastRetriedAt;
     const invoice: TaxInvoice = {
       ...invoiceBase, id, invoiceGroupId: groupId, partNumber: 1, partCount: 1, providerManagementKey: popbillManagementKey(id), issueType: "modified", status: "draft",
       originalInvoiceId: original.id, originalNtsConfirmNumber: original.serialNumber!, modificationReasonCode: reasonCode,
+      dueDate: original.dueDate ?? nextInvoiceDeadline(original.issueDate, this.holidayCalendar),
       gross: -original.gross, supply: -original.supply, vat: -original.vat,
       lines: original.lines.map((line) => ({ ...line, id: randomUUID(), gross: -line.gross, supply: -line.supply, vat: -line.vat })),
-      preparedBy: actor.id, version: 1,
+      preparedBy: actor.id, preparedAt: this.now().toISOString(), retryCount: 0, version: 1,
     };
     await this.repository.commit({
       changes: [{ type: "tax_invoice", id: invoice.id, storeId: invoice.storeId, expectedVersion: null, value: invoice }],
@@ -692,10 +896,14 @@ export class ProcurementService {
 
   async approveInvoice(actor: Actor, invoiceId: string, expectedVersion: number): Promise<{ invoice: TaxInvoice }> {
     const invoice = await this.required<TaxInvoice>("tax_invoice", invoiceId, "INVOICE_NOT_FOUND", "세금계산서를 찾을 수 없습니다.");
+    this.assertExternalInvoiceIssuanceAllowed(invoice);
     assertVersion(invoice.version, expectedVersion);
     assertInvoiceTransition(invoice.status, "approved");
+    const settlement = await this.required<Settlement>("settlement", invoice.settlementId, "SETTLEMENT_NOT_FOUND", "정산서를 찾을 수 없습니다.");
+    await this.assertSettlementPaymentGate(settlement);
     assertInvoiceApprovalSegregation(invoice.reviewedBy, actor);
-    const updated: TaxInvoice = { ...invoice, status: "approved", approvedBy: actor.id, version: invoice.version + 1 };
+    const updated: TaxInvoice = { ...invoice, status: "approved", approvedBy: actor.id,
+      approvedAt: this.now().toISOString(), version: invoice.version + 1 };
     const topic = invoice.issueType === "internal_statement" ? "statement.generate" : "invoice.issue.requested";
     await this.repository.commit({
       changes: [{ type: "tax_invoice", id: updated.id, storeId: updated.storeId, expectedVersion, value: updated }],
@@ -703,6 +911,48 @@ export class ProcurementService {
       outbox: [outbox(topic, updated.id, { invoiceId: updated.id, settlementId: updated.settlementId, storeId: updated.storeId })],
     });
     return { invoice: updated };
+  }
+
+  async retryInvoice(actor: Actor, invoiceId: string, expectedVersion: number): Promise<{ invoice: TaxInvoice }> {
+    assertRole(actor, ["hq_finance", "hq_master"]);
+    assertRecentStepUp(actor);
+    const invoice = await this.required<TaxInvoice>("tax_invoice", invoiceId, "INVOICE_NOT_FOUND", "세금계산서를 찾을 수 없습니다.");
+    this.assertExternalInvoiceIssuanceAllowed(invoice);
+    assertVersion(invoice.version, expectedVersion);
+    invariant(invoice.status === "failed", "INVOICE_NOT_RETRYABLE", "실패 상태의 세금계산서만 재시도할 수 있습니다.", 409);
+    assertInvoiceTransition(invoice.status, "queued");
+    const previousFailure = invoice.failureReason;
+    const withoutProviderFailure: TaxInvoice = { ...invoice };
+    delete withoutProviderFailure.failureReason;
+    delete withoutProviderFailure.providerReceiptId;
+    delete withoutProviderFailure.serialNumber;
+    const retriedAt = this.now().toISOString();
+    const retryCount = (invoice.retryCount ?? 0) + 1;
+    const updated: TaxInvoice = { ...withoutProviderFailure, providerManagementKey: popbillManagementKey(invoice.id, retryCount),
+      status: "queued", retryCount, lastRetriedAt: retriedAt, version: invoice.version + 1 };
+    await this.repository.commit({
+      changes: [{ type: "tax_invoice", id: updated.id, storeId: updated.storeId, expectedVersion, value: updated }],
+      audits: [audit(actor, "tax_invoice", updated.id, "invoice.retry_requested", updated.storeId, invoice, updated,
+        { previousFailure })],
+      outbox: [outbox("invoice.retry.requested", updated.id, { invoiceId: updated.id, settlementId: updated.settlementId,
+        storeId: updated.storeId, issueType: updated.issueType, retryCount: updated.retryCount })],
+    });
+    return { invoice: updated };
+  }
+
+  async downloadDocument(actor: Actor, documentId: string): Promise<{
+    document: OriginalDocumentMetadata; downloadUrl: string; expiresInSeconds: 900;
+  }> {
+    assertRole(actor, ["store_owner", "store_staff", "hq_finance", "hq_master", "auditor"]);
+    const document = await this.required<OriginalDocument>("document", documentId, "DOCUMENT_NOT_FOUND", "문서를 찾을 수 없습니다.");
+    assertStoreScope(actor, document.storeId);
+    invariant(document.objectKey.length > 0 && document.objectVersionId.length > 0, "DOCUMENT_STORAGE_METADATA_MISSING",
+      "문서 원본 저장소 정보가 완전하지 않습니다.", 503);
+    return {
+      document: documentMetadataDto(document),
+      downloadUrl: await this.storage.createReadUrl(document.objectKey, document.objectVersionId),
+      expiresInSeconds: 900,
+    };
   }
 
   async receivePopbillWebhook(eventId: string, payload: unknown): Promise<{ accepted: boolean }> {
@@ -766,6 +1016,24 @@ export class ProcurementService {
     return { lines, vat };
   }
 
+  private async assertSettlementPaymentGate(settlement: Settlement): Promise<void> {
+    const store = await this.required<Store>("store", settlement.storeId, "STORE_NOT_FOUND", "매장을 찾을 수 없습니다.");
+    const request = (await this.repository.list<PaymentRequest>("payment_request", [settlement.storeId]))
+      .find((candidate) => candidate.settlementId === settlement.id);
+    assertSettlementPaymentSatisfied(store, settlement.id, request);
+  }
+
+  private paymentMatchLockKey(): string {
+    return `payment-auto-match:${this.approvedBankAccountId}`;
+  }
+
+  private assertExternalInvoiceIssuanceAllowed(invoice: TaxInvoice): void {
+    if (this.appMode !== "production" || invoice.issueType === "internal_statement") return;
+    invariant(this.providerMode === "production" && this.externalIssueEnabled,
+      "EXTERNAL_INVOICE_ISSUANCE_DISABLED",
+      "운영 환경에서 외부 세금계산서 발행 기능이 활성화되지 않았습니다.", 503);
+  }
+
   private async required<T>(type: Parameters<StateRepository["get"]>[0], id: string, code: string, message: string): Promise<T> {
     const value = await this.repository.get<T>(type, id);
     if (!value) throw new DomainError(code, message, 404);
@@ -793,20 +1061,54 @@ function capabilitiesFor(actor: Actor): string[] {
   const map: Record<Actor["role"], string[]> = {
     store_owner: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
     store_staff: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.documents.read"],
-    hq_ops: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request", "hq.shipments.manage", "hq.shipments.dispatch"],
-    hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.invoices.read", "hq.invoices.prepare"],
-    hq_master: ["hq.settlements.approve", "hq.invoices.read", "hq.invoices.approve", "hq.outbox.requeue"],
-    auditor: ["hq.orders.read", "hq.invoices.read", "hq.audit.read", "hq.finance.read"],
+    hq_ops: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request", "hq.shipments.manage", "hq.shipments.dispatch", "hq.drivers.read"],
+    hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read"],
+    hq_master: ["hq.settlements.approve", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
+      "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.drivers.read"],
+    auditor: ["hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
     driver: ["driver.deliveries.read", "driver.deliveries.complete"],
     system: [],
   };
   return map[actor.role];
 }
 
+function publicActorDto(actor: Actor): Pick<Actor, "id" | "name" | "role" | "storeIds"> {
+  return { id: actor.id, name: actor.name, role: actor.role, storeIds: actor.storeIds };
+}
+
+function documentMetadataDto(document: OriginalDocument): OriginalDocumentMetadata {
+  return {
+    id: document.id, storeId: document.storeId, kind: document.kind, aggregateType: document.aggregateType,
+    aggregateId: document.aggregateId, sourceVersion: document.sourceVersion, mimeType: document.mimeType,
+    fileName: document.fileName, sizeBytes: document.sizeBytes, createdAt: document.createdAt,
+  };
+}
+
+function operationalDateKst(now: Date): string {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  if (year === undefined || month === undefined || day === undefined) return false;
+  return new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10) === value;
+}
+
+function isDeliveryWindow(window: DeliveryWindow): boolean {
+  const time = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+  return time.test(window.start) && time.test(window.end) && window.start < window.end;
+}
+
 function allowedDeliveryDates(now = new Date()): string[] {
   const dates: string[] = [];
+  const operationalDate = operationalDateKst(now);
   for (let offset = 1; offset <= 21 && dates.length < 14; offset += 1) {
-    const date = new Date(now);
+    const date = new Date(`${operationalDate}T00:00:00.000Z`);
     date.setUTCDate(date.getUTCDate() + offset);
     if (date.getUTCDay() !== 0) dates.push(date.toISOString().slice(0, 10));
   }
