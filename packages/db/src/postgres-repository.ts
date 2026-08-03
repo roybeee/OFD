@@ -224,7 +224,7 @@ export class PostgresRepository implements StateRepository {
          SELECT id FROM outbox_events
          WHERE attempts < $2 AND ((status IN ('pending','failed') AND available_at <= now())
             OR (status='processing' AND COALESCE(lease_expires_at, locked_at + interval '5 minutes', now()) <= now()))
-         ) ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT $1
+         ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT $1
        )
        UPDATE outbox_events o SET status='processing', attempts=o.attempts+1, locked_at=now(), locked_by=$3,
          lease_token=gen_random_uuid()::text, lease_expires_at=now() + ($4 * interval '1 millisecond')
