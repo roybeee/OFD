@@ -497,7 +497,7 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .invoice-row em { margin-top: 2px; color: #946022; font-size: 7px; font-style: normal; font-weight: 700; }
 .safety-strip { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 11px; margin-top: 12px; padding: 13px 17px; border: 1px solid #cfe8dd; border-radius: 12px; background: #f3fbf7; color: var(--green); }
 .safety-strip strong { font-size: 10px; }
-.safety-strip p { margin-top: 2px; color: #688176; font-size: 8px; }
+.safety-strip p { margin-top: 2px; color: #536d62; font-size: 8px; }
 .safe-mode { padding: 5px 8px; border-radius: 6px; color: var(--green); background: white; font: 800 8px/1 var(--font-sans); letter-spacing: .08em; }
 .invoice-paper { overflow: hidden; border: 1px solid #d9d3ca; border-radius: 10px; }
 .paper-title { display: flex; justify-content: space-between; align-items: center; padding: 12px; color: white; background: #315f82; }
