@@ -640,7 +640,8 @@ describe("OFD worker safety", () => {
     const seoulAugustFirst = new Date("2026-07-31T15:30:00.000Z");
     await worker.runScheduled(seoulAugustFirst);
     await worker.runScheduled(new Date("2026-07-31T23:59:00.000Z"));
-    expect(await worker.processOnce(10)).toMatchObject({ claimed: 3, completed: 3, failed: 0 });
+    /* 15:30 UTC는 30분 슬롯이라 POS 수집(pos.sync.requested)도 함께 예약된다 — 링크가 없으면 무동작으로 완료 */
+    expect(await worker.processOnce(10)).toMatchObject({ claimed: 4, completed: 4, failed: 0 });
 
     expect(calls).toEqual([["2026-08-01", "2026-08-01"]]);
     const ledgers = await repository.list<{ scheduleKey: string }>("admin_invariant");
@@ -648,6 +649,7 @@ describe("OFD worker safety", () => {
       "monthly-close:2026-07",
       "bank-sync:2026-08-01",
       "invoice-reconcile:2026-07-31T15:30",
+      "pos-sync:2026-08-01:1530",
     ]));
   });
 
