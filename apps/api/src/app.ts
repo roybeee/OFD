@@ -16,7 +16,7 @@ import { SESSION_COOKIE } from "./auth.ts";
 import { AuthService } from "./auth-service.ts";
 import { idempotentMutation } from "./idempotency.ts";
 import { ProcurementService } from "./service.ts";
-import { createPosStore } from "@ofd/db";
+import { createOpeningStore, createPosStore, OPENING_PHASES, type OpeningPhase, type OpeningStage } from "@ofd/db";
 import { DomainError as PosDomainError } from "@ofd/domain";
 import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
 
@@ -527,6 +527,100 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!query.storeId) throw new PosDomainError("STORE_REQUIRED", "storeId가 필요합니다.", 422);
     const date = dateOnly.test(query.date ?? "") ? query.date! : seoulToday();
     return posStore.wasteReport(query.storeId, date);
+  });
+
+  /* ── 오픈 프로세스 (V1 이식 5단계) ── */
+  const openingStore = createOpeningStore(env);
+  app.addHook("onClose", async () => { await openingStore.close(); });
+  const STAGES: OpeningStage[] = ["상담중", "진행", "보류", "완료"];
+
+  app.get("/api/v2/openings", async (request) => {
+    assertPosRole(request.actor);
+    const openings = await openingStore.list();
+    const board: Record<string, unknown[]> = { 상담중: [], 진행: [], 보류: [], 완료: [] };
+    for (const opening of openings) (board[opening.stage] ??= []).push(opening);
+    return {
+      openings, board,
+      kpi: {
+        active: openings.filter((o) => o.stage === "진행").length,
+        overdue: openings.reduce((acc, o) => acc + o.overdue, 0),
+        within30Days: openings.filter((o) => o.stage === "진행" && o.dDay >= 0 && o.dDay <= 30).length,
+      },
+    };
+  });
+
+  app.post("/api/v2/openings", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as {
+      name?: string; region?: string | null; openDate?: string;
+      mode?: string; storeType?: string; stage?: string; memo?: string;
+    };
+    if (!body?.name?.trim()) throw new PosDomainError("OPENING_NAME_REQUIRED", "매장명이 필요합니다.", 422);
+    if (!dateOnly.test(body.openDate ?? "")) throw new PosDomainError("OPENING_DATE_REQUIRED", "오픈일(YYYY-MM-DD)이 필요합니다.", 422);
+    const opening = await openingStore.create({
+      name: body.name.trim(), region: body.region?.trim() || null, openDate: body.openDate!,
+      mode: body.mode === "운영대행" ? "운영대행" : "가맹",
+      storeType: body.storeType === "포장형" ? "포장형" : "테이블형",
+      stage: body.stage === "진행" ? "진행" : "상담중",
+      memo: body.memo ?? "",
+    });
+    reply.code(201);
+    return opening;
+  });
+
+  app.get("/api/v2/openings/:id", async (request) => {
+    assertPosRole(request.actor);
+    const detail = await openingStore.get((request.params as { id: string }).id);
+    if (!detail) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+    return detail;
+  });
+
+  app.patch("/api/v2/openings/:id", async (request) => {
+    assertPosRole(request.actor);
+    const id = (request.params as { id: string }).id;
+    const body = request.body as { stage?: string; openDate?: string; storeId?: string };
+    if (body.storeId) {
+      const confirmed = await openingStore.confirmOpen(id, body.storeId);
+      if (!confirmed) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+      return confirmed;
+    }
+    if (body.stage) {
+      if (!STAGES.includes(body.stage as OpeningStage)) throw new PosDomainError("BAD_STAGE", "허용되지 않는 단계입니다.", 422);
+      const moved = await openingStore.setStage(id, body.stage as OpeningStage);
+      if (!moved) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+      return moved;
+    }
+    if (dateOnly.test(body.openDate ?? "")) {
+      const moved = await openingStore.reschedule(id, body.openDate!);
+      if (!moved) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+      return moved;
+    }
+    throw new PosDomainError("NOTHING_TO_UPDATE", "stage, openDate, storeId 중 하나가 필요합니다.", 422);
+  });
+
+  app.post("/api/v2/openings/:id/tasks", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { phase?: string; group?: string; title?: string; detail?: string; owner?: string; dayOffset?: number };
+    if (!body?.title?.trim()) throw new PosDomainError("TASK_TITLE_REQUIRED", "항목명이 필요합니다.", 422);
+    const phase = OPENING_PHASES.includes(body.phase as OpeningPhase) ? (body.phase as OpeningPhase) : "D-1주차";
+    const task = await openingStore.addTask((request.params as { id: string }).id, {
+      phase, group: body.group?.trim() || "추가 항목", title: body.title.trim(),
+      detail: body.detail ?? "", owner: body.owner === "hq" ? "hq" : body.owner === "both" ? "both" : "pt",
+      dayOffset: typeof body.dayOffset === "number" ? body.dayOffset : -7,
+    });
+    if (!task) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+    reply.code(201);
+    return task;
+  });
+
+  app.patch("/api/v2/openings/tasks/:taskId", async (request) => {
+    assertPosRole(request.actor);
+    const body = request.body as { done?: boolean; memo?: string };
+    const actorId = (request.actor as { id?: string } | undefined)?.id ?? null;
+    const updated = await openingStore.toggleTask(
+      (request.params as { taskId: string }).taskId, body.done === true, actorId, body.memo);
+    if (!updated) throw new PosDomainError("TASK_NOT_FOUND", "항목을 찾을 수 없습니다.", 404);
+    return { ok: true };
   });
 
   app.post("/api/v2/webhooks/tossplace", async (request) => {
