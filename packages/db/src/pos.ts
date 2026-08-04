@@ -35,7 +35,88 @@ export interface PosStore {
   resolveUnmatched(storeId?: string): Promise<number>;
   listUnmatched(from: string, to: string): Promise<PosUnmatched[]>;
   priceDeviations(from: string, to: string, thresholdPct: number): Promise<PosDeviation[]>;
+  report(from: string, to: string, unit: PosReportUnit, filter?: PosReportFilter): Promise<PosReport>;
   close(): Promise<void>;
+}
+
+export type PosReportUnit = "day" | "week" | "month";
+export interface PosReportFilter { storeIds?: string[]; productIds?: string[] }
+export interface PosReportRawRow {
+  storeId: string; date: string; rawName: string; productId: string | null; productName: string | null;
+  qty: number; amount: number;
+}
+export interface PosReportMixStore { storeId: string; qty: number; amount: number }
+export interface PosReportMix {
+  key: string; name: string; productId: string | null;
+  qty: number; amount: number; stores: PosReportMixStore[];
+}
+export interface PosReportRow {
+  bucket: string; label: string;
+  perStore: Record<string, { qty: number; amount: number }>;
+  total: { qty: number; amount: number };
+  mix: PosReportMix[];
+}
+export interface PosReport { unit: PosReportUnit; rows: PosReportRow[]; storeIds: string[] }
+
+/** V1 weekStartMon 이식: KST 일자 문자열의 주 시작(월요일) */
+export const weekStartMonday = (date: string): string => {
+  const d = new Date(`${date}T00:00:00Z`);
+  const day = d.getUTCDay(); /* 0=일 */
+  d.setUTCDate(d.getUTCDate() - ((day + 6) % 7));
+  return d.toISOString().slice(0, 10);
+};
+const addDaysStr = (date: string, days: number): string => {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+/** memory/postgres 공용 순수 집계 — 동일 입력이면 동일 리포트 (V1 computeSalesReport 이식) */
+export function buildPosReport(rows: PosReportRawRow[], unit: PosReportUnit, filter?: PosReportFilter): PosReport {
+  const storeAllow = filter?.storeIds?.length ? new Set(filter.storeIds) : null;
+  const productAllow = filter?.productIds?.length ? new Set(filter.productIds) : null;
+  const bucketOf = (date: string) => unit === "week" ? weekStartMonday(date) : unit === "month" ? date.slice(0, 7) : date;
+  const labelOf = (bucket: string) => unit === "week"
+    ? `${bucket.slice(5).replace("-", "/")}~${addDaysStr(bucket, 6).slice(5).replace("-", "/")}`
+    : bucket;
+  type MixAcc = PosReportMix & { storeMap: Map<string, PosReportMixStore> };
+  type RowAcc = Omit<PosReportRow, "mix"> & { mixMap: Map<string, MixAcc> };
+  const buckets = new Map<string, RowAcc>();
+  const storeIds = new Set<string>();
+  for (const row of rows) {
+    if (storeAllow && !storeAllow.has(row.storeId)) continue;
+    if (productAllow && (!row.productId || !productAllow.has(row.productId))) continue;
+    storeIds.add(row.storeId);
+    const bucket = bucketOf(row.date);
+    let entry = buckets.get(bucket);
+    if (!entry) {
+      entry = { bucket, label: labelOf(bucket), perStore: {}, total: { qty: 0, amount: 0 }, mixMap: new Map() };
+      buckets.set(bucket, entry);
+    }
+    const per = entry.perStore[row.storeId] ?? (entry.perStore[row.storeId] = { qty: 0, amount: 0 });
+    per.qty += row.qty; per.amount += row.amount;
+    entry.total.qty += row.qty; entry.total.amount += row.amount;
+    const key = row.productId ?? "__unmatched";
+    let mix = entry.mixMap.get(key);
+    if (!mix) {
+      mix = { key, name: row.productId ? (row.productName ?? key) : "미매칭(기타)", productId: row.productId,
+        qty: 0, amount: 0, stores: [], storeMap: new Map() };
+      entry.mixMap.set(key, mix);
+    }
+    mix.qty += row.qty; mix.amount += row.amount;
+    let ms = mix.storeMap.get(row.storeId);
+    if (!ms) { ms = { storeId: row.storeId, qty: 0, amount: 0 }; mix.storeMap.set(row.storeId, ms); }
+    ms.qty += row.qty; ms.amount += row.amount;
+  }
+  const out: PosReportRow[] = [...buckets.values()]
+    .sort((a, b) => (a.bucket < b.bucket ? 1 : -1))
+    .map(({ mixMap, ...row }) => ({
+      ...row,
+      mix: [...mixMap.values()]
+        .map(({ storeMap: _sm, ...mix }) => ({ ...mix, stores: [...mix.stores, ..._sm.values()] }))
+        .sort((a, b) => b.amount - a.amount),
+    }));
+  return { unit, rows: out, storeIds: [...storeIds].sort() };
 }
 
 export interface PosProductInput {
@@ -257,6 +338,17 @@ export class PostgresPosStore implements PosStore {
     }).filter((d) => Math.abs(d.deviationPct) >= thresholdPct)
       .sort((a, b) => Math.abs(b.deviationPct) - Math.abs(a.deviationPct));
   }
+  async report(from: string, to: string, unit: PosReportUnit, filter?: PosReportFilter): Promise<PosReport> {
+    const res = await this.pool.query(
+      `SELECT s.store_id, s.sale_date::text AS date, s.raw_name, s.product_id, p.name AS product_name, s.qty, s.amount
+       FROM pos_sales s LEFT JOIN products p ON p.id = s.product_id
+       WHERE s.sale_date BETWEEN $1 AND $2`, [from, to]);
+    return buildPosReport(res.rows.map((r) => ({
+      storeId: r.store_id, date: r.date, rawName: r.raw_name,
+      productId: r.product_id ?? null, productName: r.product_name ?? null,
+      qty: Number(r.qty), amount: Number(r.amount),
+    })), unit, filter);
+  }
   async close(): Promise<void> { await this.pool.end(); }
 }
 
@@ -403,6 +495,17 @@ export class MemoryPosStore implements PosStore {
         consumerPrice: product.consumerPrice, avgSoldPrice: Math.round(avg), deviationPct: pct });
     }
     return out.sort((a, b) => Math.abs(b.deviationPct) - Math.abs(a.deviationPct));
+  }
+  async report(from: string, to: string, unit: PosReportUnit, filter?: PosReportFilter): Promise<PosReport> {
+    const rows: PosReportRawRow[] = [];
+    for (const [k, row] of this.sales) {
+      if (row.date < from || row.date > to) continue;
+      const productId = this.salesProduct.get(k) ?? null;
+      rows.push({ storeId: row.storeId, date: row.date, rawName: row.rawName, productId,
+        productName: productId ? (this.products.get(productId)?.name ?? null) : null,
+        qty: row.qty, amount: row.amount });
+    }
+    return buildPosReport(rows, unit, filter);
   }
   async close(): Promise<void> {}
 }

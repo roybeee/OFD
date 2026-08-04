@@ -162,3 +162,61 @@ test("상품 수정: 카테고리·스코프·소비자가", async () => {
   assert.equal(updated?.consumerPrice, 22_000);
   assert.equal(await store.updateProduct("없는-id", { category: "도넛" }), null);
 });
+
+/* ── 3단계: 매출현황 리포트 ── */
+
+test("주 단위 버킷은 KST 월요일에서 시작한다 (일요일은 전주)", async () => {
+  const { weekStartMonday } = await import("./pos.ts");
+  assert.equal(weekStartMonday("2026-08-03"), "2026-08-03", "월요일은 자기 자신");
+  assert.equal(weekStartMonday("2026-08-02"), "2026-07-27", "일요일은 전주 월요일");
+  assert.equal(weekStartMonday("2026-08-09"), "2026-08-03", "다음 일요일도 같은 주");
+});
+
+test("리포트: 매장 피벗·품목 드릴다운 합계가 행 합계와 일치한다", async () => {
+  const store = new MemoryPosStore();
+  const donut = await store.createProduct({ name: "우유크림도넛", category: "도넛", storeId: null, consumerPrice: 4_200 });
+  await store.recordSales("store-mapdal", [
+    { date: "2026-08-03", rawName: "우유크림도넛", qty: 5, amount: 21_000 },
+    { date: "2026-08-03", rawName: "미확인신메뉴", qty: 1, amount: 3_000 },
+  ], "sync");
+  await store.recordSales("store-doksan", [
+    { date: "2026-08-03", rawName: "우유크림도넛", qty: 2, amount: 8_400 },
+    { date: "2026-08-04", rawName: "우유크림도넛", qty: 1, amount: 4_200 },
+  ], "sync");
+  await store.resolveUnmatched();
+  const report = await store.report("2026-08-03", "2026-08-04", "day");
+  assert.equal(report.rows.length, 2);
+  assert.equal(report.rows[0]?.bucket, "2026-08-04", "최신 우선 정렬");
+  const day3 = report.rows[1]!;
+  assert.deepEqual(day3.total, { qty: 8, amount: 32_400 });
+  assert.deepEqual(day3.perStore["store-mapdal"], { qty: 6, amount: 24_000 });
+  const mixSum = day3.mix.reduce((a, m) => a + m.amount, 0);
+  assert.equal(mixSum, day3.total.amount, "드릴다운 합 = 행 합");
+  const donutMix = day3.mix.find((m) => m.productId === donut.id)!;
+  assert.equal(donutMix.name, "우유크림도넛");
+  assert.deepEqual(donutMix.stores.find((s2) => s2.storeId === "store-doksan"), { storeId: "store-doksan", qty: 2, amount: 8_400 });
+  assert.equal(day3.mix.find((m) => m.productId === null)?.name, "미매칭(기타)");
+});
+
+test("리포트: 주 단위 집계와 매장·품목 필터", async () => {
+  const store = new MemoryPosStore();
+  const donut = await store.createProduct({ name: "우유크림도넛", category: "도넛", storeId: null, consumerPrice: 4_200 });
+  await store.recordSales("store-mapdal", [
+    { date: "2026-08-02", rawName: "우유크림도넛", qty: 1, amount: 4_200 }, /* 일요일 → 07-27 주 */
+    { date: "2026-08-03", rawName: "우유크림도넛", qty: 2, amount: 8_400 }, /* 월요일 → 08-03 주 */
+    { date: "2026-08-03", rawName: "미확인", qty: 1, amount: 1_000 },
+  ], "sync");
+  await store.recordSales("store-doksan", [
+    { date: "2026-08-03", rawName: "우유크림도넛", qty: 3, amount: 12_600 },
+  ], "sync");
+  await store.resolveUnmatched();
+  const weekly = await store.report("2026-08-01", "2026-08-09", "week");
+  assert.deepEqual(weekly.rows.map((r) => r.bucket), ["2026-08-03", "2026-07-27"]);
+  assert.equal(weekly.rows[0]?.label, "08/03~08/09");
+  const filtered = await store.report("2026-08-01", "2026-08-09", "day",
+    { storeIds: ["store-mapdal"], productIds: [donut.id] });
+  assert.deepEqual(filtered.storeIds, ["store-mapdal"]);
+  assert.equal(filtered.rows.reduce((a, r) => a + r.total.qty, 0), 3, "타 매장·미매칭 제외");
+  const monthly = await store.report("2026-08-01", "2026-08-09", "month");
+  assert.equal(monthly.rows[0]?.bucket, "2026-08");
+});

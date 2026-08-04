@@ -506,6 +506,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return result; /* reverted = 미매칭으로 소급 원복된 행 수 */
   });
 
+  app.get("/api/v2/pos/report", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string; unit?: string; stores?: string; products?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    const unit = query.unit === "week" || query.unit === "month" ? query.unit : "day";
+    const csv = (value?: string) => value?.split(",").map((v) => v.trim()).filter(Boolean);
+    const filter: import("@ofd/db").PosReportFilter = {};
+    const storeIds = csv(query.stores);
+    const productIds = csv(query.products);
+    if (storeIds?.length) filter.storeIds = storeIds;
+    if (productIds?.length) filter.productIds = productIds;
+    return posStore.report(from, to, unit, filter);
+  });
+
   app.post("/api/v2/webhooks/tossplace", async (request) => {
     const payload = request.body as { merchantId?: unknown } | null;
     await posStore.recordWebhookInbox("tossplace", payload);
