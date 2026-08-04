@@ -16,6 +16,9 @@ import { SESSION_COOKIE } from "./auth.ts";
 import { AuthService } from "./auth-service.ts";
 import { idempotentMutation } from "./idempotency.ts";
 import { ProcurementService } from "./service.ts";
+import { createPosStore } from "@ofd/db";
+import { DomainError as PosDomainError } from "@ofd/domain";
+import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
 
 export interface BuildAppOptions {
   env?: NodeJS.ProcessEnv;
@@ -69,7 +72,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook("preHandler", async (request) => {
     const path = request.url.split("?")[0];
     if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login" || path === "/api/v2/auth/mfa"
-      || path === "/api/v2/webhooks/popbill" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
+      || path === "/api/v2/webhooks/popbill" || path === "/api/v2/webhooks/tossplace" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
     request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
   });
 
@@ -345,6 +348,86 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const { id } = idParams.parse(request.params);
     return idempotentMutation(request, reply, repository, request.actor, 200,
       (scoped) => service.withRepository(scoped).requeueDeadLetter(request.actor, id));
+  });
+
+  /* ── POS 수집 (V1 이식 1단계) ───────────────────────── */
+  const posStore = createPosStore(env);
+  app.addHook("onClose", async () => { await posStore.close(); });
+  const assertPosRole = (actor: { role?: string } | undefined) => {
+    const role = actor?.role ?? "";
+    if (!["master", "finance", "admin"].includes(role)) {
+      throw new PosDomainError("FORBIDDEN", "POS 연동 권한이 없습니다.", 403);
+    }
+  };
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const seoulToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+
+  app.get("/api/v2/pos/links", async (request) => {
+    assertPosRole(request.actor);
+    const links = await posStore.listLinks();
+    return { links: links.map(({ accessKeyEnc: _a, secretKeyEnc: _s, ...safe }) => safe) };
+  });
+
+  app.post("/api/v2/pos/links", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { storeId?: string; merchantId?: string; accessKey?: string; secretKey?: string };
+    if (!body?.storeId || !body.merchantId || !body.accessKey || !body.secretKey) {
+      throw new PosDomainError("POS_LINK_FIELDS", "storeId, merchantId, accessKey, secretKey가 필요합니다.", 422);
+    }
+    const encryptionKey = env.ENCRYPTION_KEY ?? "";
+    const link = await posStore.upsertLink({
+      storeId: body.storeId, merchantId: body.merchantId, status: "active",
+      accessKeyEnc: encryptPosSecret(body.accessKey, encryptionKey),
+      secretKeyEnc: encryptPosSecret(body.secretKey, encryptionKey),
+    });
+    reply.code(201);
+    return { id: link.id, storeId: link.storeId, merchantId: link.merchantId, status: link.status };
+  });
+
+  app.post("/api/v2/pos/sync", async (request) => {
+    assertPosRole(request.actor);
+    const body = (request.body ?? {}) as { from?: string; to?: string; merchantId?: string };
+    const to = dateOnly.test(body.to ?? "") ? body.to! : seoulToday();
+    const from = dateOnly.test(body.from ?? "") ? body.from! : to;
+    if (from > to) throw new PosDomainError("POS_RANGE", "from은 to보다 늦을 수 없습니다.", 422);
+    const encryptionKey = env.ENCRYPTION_KEY ?? "";
+    const links = (await posStore.listLinks()).filter((l) => l.status === "active" && (!body.merchantId || l.merchantId === body.merchantId));
+    const results: Array<{ merchantId: string; rows: number; status: string; error?: string }> = [];
+    for (const link of links) {
+      try {
+        const items = await fetchTossDailyItems({
+          merchantId: link.merchantId,
+          accessKey: decryptPosSecret(link.accessKeyEnc, encryptionKey),
+          secretKey: decryptPosSecret(link.secretKeyEnc, encryptionKey),
+          from, to,
+        });
+        const rows = await posStore.recordSales(link.storeId, items, from === to ? "sync" : "backfill");
+        await posStore.touchLinkSynced(link.id, new Date());
+        await posStore.recordRun({ storeId: link.storeId, from, to, rows, status: "ok" });
+        results.push({ merchantId: link.merchantId, rows, status: "ok" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await posStore.recordRun({ storeId: link.storeId, from, to, rows: 0, status: "error", error: message });
+        results.push({ merchantId: link.merchantId, rows: 0, status: "error", error: message });
+      }
+    }
+    return { from, to, results };
+  });
+
+  app.get("/api/v2/pos/daily", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    return { from, to, totals: await posStore.dailyTotals(from, to) };
+  });
+
+  app.post("/api/v2/webhooks/tossplace", async (request) => {
+    const payload = request.body as { merchantId?: unknown } | null;
+    await posStore.recordWebhookInbox("tossplace", payload);
+    const merchantId = payload && typeof payload.merchantId !== "undefined" ? String(payload.merchantId) : null;
+    const known = merchantId ? await posStore.findLinkByMerchant(merchantId) : null;
+    return { ok: true, merchantId, known: Boolean(known) };
   });
 
   app.post("/api/v2/webhooks/popbill", async (request, reply) => {

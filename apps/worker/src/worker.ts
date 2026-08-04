@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DEMO_IDS, type AggregateType, type StateRepository } from "@ofd/db";
+import { createPosStore, type PosStore } from "@ofd/db";
+import { decryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
 import {
   DomainError,
   assertInvoiceTransition,
@@ -118,6 +120,10 @@ export class OfdWorker {
     if (now.getUTCMinutes() % 5 === 0) {
       await this.enqueueScheduledEvent(`invoice-reconcile:${minute}`, "invoice.reconcile.requested", { schedule: true }, now);
     }
+    if (now.getUTCMinutes() % 30 === 0) { /* V1 30분 주기 POS 수집 이식 */
+      const slot = `${seoul.date}:${String(now.getUTCHours()).padStart(2, "0")}${now.getUTCMinutes() === 0 ? "00" : "30"}`;
+      await this.enqueueScheduledEvent(`pos-sync:${slot}`, "pos.sync.requested", { date: seoul.date, schedule: true }, now);
+    }
   }
 
   private async handle(event: OutboxEvent): Promise<void> {
@@ -161,6 +167,10 @@ export class OfdWorker {
         await this.persistPaymentRequestOriginal(await this.required<PaymentRequest>("payment_request",
           String((event.payload as { paymentRequestId?: string }).paymentRequestId ?? event.aggregateId)));
         return;
+      case "pos.sync.requested": {
+        await this.runPosSync((event.payload as { date?: string }).date);
+        return;
+      }
       case "order.submitted":
       case "order.approved": {
         const paymentRequestId = (event.payload as { paymentRequestId?: string }).paymentRequestId;
@@ -480,6 +490,34 @@ export class OfdWorker {
     await this.persistSettlementOriginal(settlement);
     if (paymentRequest) await this.persistPaymentRequestOriginal(paymentRequest);
     await this.sendStoreNotifications(event);
+  }
+
+  private posStore: PosStore | null = null;
+  private posStoreOf(): PosStore {
+    if (!this.posStore) this.posStore = createPosStore(process.env);
+    return this.posStore;
+  }
+  private async runPosSync(date?: string): Promise<void> {
+    const day = date ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const store = this.posStoreOf();
+    const encryptionKey = process.env.ENCRYPTION_KEY ?? "";
+    const links = (await store.listLinks()).filter((l) => l.status === "active");
+    for (const link of links) {
+      try {
+        const items = await fetchTossDailyItems({
+          merchantId: link.merchantId,
+          accessKey: decryptPosSecret(link.accessKeyEnc, encryptionKey),
+          secretKey: decryptPosSecret(link.secretKeyEnc, encryptionKey),
+          from: day, to: day,
+        });
+        const rows = await store.recordSales(link.storeId, items, "sync");
+        await store.touchLinkSynced(link.id, new Date());
+        await store.recordRun({ storeId: link.storeId, from: day, to: day, rows, status: "ok" });
+      } catch (error) {
+        await store.recordRun({ storeId: link.storeId, from: day, to: day, rows: 0, status: "error",
+          error: error instanceof Error ? error.message : String(error) });
+      }
+    }
   }
 
   private async enqueueScheduledEvent(scheduleKey: string, topic: string, payload: unknown, now: Date): Promise<void> {
