@@ -15,10 +15,13 @@ RUN npm run build -w @ofd/web
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 ENV API_UPSTREAM_HOSTPORT=api:4100
+ENV PORT=10000
 COPY --chown=nginx:nginx infra/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --chown=nginx:nginx infra/docker/web-entrypoint.sh /usr/local/bin/ofd-web-entrypoint
 COPY --chown=nginx:nginx --from=build /app/apps/web/dist /usr/share/nginx/html
 USER nginx
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -q -O - http://127.0.0.1:8080/healthz >/dev/null || exit 1
+EXPOSE 10000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -q -O - http://127.0.0.1:${PORT}/healthz >/dev/null || exit 1
 STOPSIGNAL SIGQUIT
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/ofd-web-entrypoint"]
 CMD ["nginx", "-g", "daemon off;"]
