@@ -99,7 +99,7 @@ test.describe.serial('real V2 order-to-tax-invoice lifecycle', () => {
       orderId: submitted.order.id,
       driverId: DRIVER_ID,
       plannedDate: today,
-      routeSequence: 1,
+      routeSequence: 100 + testInfo.retry,
       deliveryWindow: { start: '09:00', end: '10:00' },
     }, 'HQ shipment assignment');
     const dispatched = await mutate<ShipmentResponse>(page, `/shipments/${assigned.shipment.id}/dispatch`,

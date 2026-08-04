@@ -40,7 +40,9 @@ export function DriverTodayPage({ data, notify, refresh }: { data: BootstrapData
     try {
       const contentType = file.type;
       const upload = await mutateV2<{ objectKey: string; uploadUrl: string; requiredHeaders?: Record<string, string> }>(`/shipments/${delivery.id}/proof-upload`, { contentType }, { idempotencyKey: newIdempotencyKey() });
-      const uploadResponse = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType, ...upload.requiredHeaders }, body: file });
+      const uploadHeaders = new Headers(upload.requiredHeaders);
+      if (!uploadHeaders.has('content-type')) uploadHeaders.set('content-type', contentType);
+      const uploadResponse = await fetch(upload.uploadUrl, { method: 'PUT', headers: uploadHeaders, body: file });
       if (!uploadResponse.ok) throw new Error('배송 사진 저장에 실패했습니다.');
       await mutateV2(`/shipments/${delivery.id}/deliver`, { expectedVersion: delivery.version ?? 1, photoKey: upload.objectKey, recipientName }, { idempotencyKey: newIdempotencyKey() });
       setSelected(null);
