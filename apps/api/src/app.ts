@@ -521,6 +521,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return posStore.report(from, to, unit, filter);
   });
 
+  app.get("/api/v2/pos/waste", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { storeId?: string; date?: string };
+    if (!query.storeId) throw new PosDomainError("STORE_REQUIRED", "storeId가 필요합니다.", 422);
+    const date = dateOnly.test(query.date ?? "") ? query.date! : seoulToday();
+    return posStore.wasteReport(query.storeId, date);
+  });
+
   app.post("/api/v2/webhooks/tossplace", async (request) => {
     const payload = request.body as { merchantId?: unknown } | null;
     await posStore.recordWebhookInbox("tossplace", payload);

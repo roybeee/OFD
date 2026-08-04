@@ -36,7 +36,70 @@ export interface PosStore {
   listUnmatched(from: string, to: string): Promise<PosUnmatched[]>;
   priceDeviations(from: string, to: string, thresholdPct: number): Promise<PosDeviation[]>;
   report(from: string, to: string, unit: PosReportUnit, filter?: PosReportFilter): Promise<PosReport>;
+  wasteReport(storeId: string, date: string): Promise<PosWasteReport>;
   close(): Promise<void>;
+}
+
+/* ── 4단계: 폐기 = 입고 − 판매 (당일생산·당일판매) ──
+ * 입고는 goods_receipts(검수 확정) 기준. 입고 기록이 없는 날은 폐기를 0으로 단정하지 않고 null(N/A)로 둔다. */
+export interface PosWasteItem {
+  productId: string; productName: string;
+  received: number | null; sold: number;
+  waste: number | null; over: number;
+  wasteRatePct: number | null; lossAmount: number | null;
+}
+export interface PosWasteReport {
+  storeId: string; date: string; hasReceipt: boolean; hasPos: boolean;
+  items: PosWasteItem[];
+  totals: { received: number | null; sold: number; waste: number | null; wasteRatePct: number | null; lossAmount: number | null };
+}
+export interface PosReceiptLine { productId: string; productName: string; quantity: number; unitSupply: number }
+
+/** 공용 순수 계산 — memory/postgres가 같은 산식을 쓴다 */
+export function buildWasteReport(
+  storeId: string, date: string,
+  receipts: PosReceiptLine[],
+  sold: Array<{ productId: string; productName: string; qty: number }>,
+): PosWasteReport {
+  const hasReceipt = receipts.length > 0;
+  const recvMap = new Map<string, PosReceiptLine>();
+  for (const line of receipts) {
+    const cur = recvMap.get(line.productId);
+    if (cur) { cur.quantity += line.quantity; cur.unitSupply = line.unitSupply || cur.unitSupply; }
+    else recvMap.set(line.productId, { ...line });
+  }
+  const soldMap = new Map<string, { productName: string; qty: number }>();
+  for (const row of sold) {
+    const cur = soldMap.get(row.productId);
+    if (cur) cur.qty += row.qty;
+    else soldMap.set(row.productId, { productName: row.productName, qty: row.qty });
+  }
+  const items: PosWasteItem[] = [...new Set([...recvMap.keys(), ...soldMap.keys()])].map((productId) => {
+    const recv = recvMap.get(productId);
+    const soldQty = soldMap.get(productId)?.qty ?? 0;
+    const received = recv ? recv.quantity : null;
+    const waste = received === null ? null : Math.max(0, received - soldQty);
+    return {
+      productId,
+      productName: recv?.productName ?? soldMap.get(productId)?.productName ?? productId,
+      received, sold: soldQty, waste,
+      over: received !== null && soldQty > received ? soldQty - received : 0,
+      wasteRatePct: received && received > 0 ? Math.round((Math.max(0, received - soldQty) / received) * 1000) / 10 : null,
+      lossAmount: waste === null ? null : waste * (recv?.unitSupply ?? 0),
+    };
+  }).sort((a, b) => (b.lossAmount ?? 0) - (a.lossAmount ?? 0));
+  const totalReceived = hasReceipt ? items.reduce((acc, i) => acc + (i.received ?? 0), 0) : null;
+  const totalSold = items.reduce((acc, i) => acc + i.sold, 0);
+  const totalWaste = hasReceipt ? items.reduce((acc, i) => acc + (i.waste ?? 0), 0) : null;
+  return {
+    storeId, date, hasReceipt, hasPos: sold.length > 0, items,
+    totals: {
+      received: totalReceived, sold: totalSold, waste: totalWaste,
+      wasteRatePct: totalReceived && totalReceived > 0 && totalWaste !== null
+        ? Math.round((totalWaste / totalReceived) * 1000) / 10 : null,
+      lossAmount: hasReceipt ? items.reduce((acc, i) => acc + (i.lossAmount ?? 0), 0) : null,
+    },
+  };
 }
 
 export type PosReportUnit = "day" | "week" | "month";
@@ -349,6 +412,29 @@ export class PostgresPosStore implements PosStore {
       qty: Number(r.qty), amount: Number(r.amount),
     })), unit, filter);
   }
+  async wasteReport(storeId: string, date: string): Promise<PosWasteReport> {
+    /* 입고: 검수 확정(confirmed) 건의 배송 라인 수량 · 일자는 KST 확정일 */
+    const receipts = await this.pool.query(
+      `SELECT pol.product_id, pol.product_name_snapshot AS product_name,
+              SUM(sl.quantity)::int AS quantity,
+              MAX(pol.unit_gross_snapshot)::bigint AS unit_supply
+       FROM goods_receipts gr
+       JOIN shipments sh ON sh.id = gr.shipment_id
+       JOIN shipment_lines sl ON sl.shipment_id = sh.id
+       JOIN purchase_order_lines pol ON pol.id = sl.order_line_id
+       WHERE gr.store_id = $1 AND gr.status = 'confirmed'
+         AND (gr.confirmed_at AT TIME ZONE 'Asia/Seoul')::date = $2::date
+       GROUP BY pol.product_id, pol.product_name_snapshot`, [storeId, date]);
+    const sold = await this.pool.query(
+      `SELECT s.product_id, p.name AS product_name, SUM(s.qty)::int AS qty
+       FROM pos_sales s JOIN products p ON p.id = s.product_id
+       WHERE s.store_id = $1 AND s.sale_date = $2::date AND s.product_id IS NOT NULL
+       GROUP BY s.product_id, p.name`, [storeId, date]);
+    return buildWasteReport(storeId, date,
+      receipts.rows.map((r) => ({ productId: r.product_id, productName: r.product_name,
+        quantity: Number(r.quantity), unitSupply: Number(r.unit_supply ?? 0) })),
+      sold.rows.map((r) => ({ productId: r.product_id, productName: r.product_name, qty: Number(r.qty) })));
+  }
   async close(): Promise<void> { await this.pool.end(); }
 }
 
@@ -506,6 +592,22 @@ export class MemoryPosStore implements PosStore {
         qty: row.qty, amount: row.amount });
     }
     return buildPosReport(rows, unit, filter);
+  }
+  private receipts = new Map<string, PosReceiptLine[]>();
+  /** 테스트/시드 전용: 실제 입고는 V2 검수 흐름이 만든다 */
+  seedReceipt(storeId: string, date: string, lines: PosReceiptLine[]): void {
+    const key = `${storeId}|${date}`;
+    this.receipts.set(key, [...(this.receipts.get(key) ?? []), ...lines]);
+  }
+  async wasteReport(storeId: string, date: string): Promise<PosWasteReport> {
+    const sold: Array<{ productId: string; productName: string; qty: number }> = [];
+    for (const [k, row] of this.sales) {
+      if (row.storeId !== storeId || row.date !== date) continue;
+      const productId = this.salesProduct.get(k);
+      if (!productId) continue;
+      sold.push({ productId, productName: this.products.get(productId)?.name ?? productId, qty: row.qty });
+    }
+    return buildWasteReport(storeId, date, this.receipts.get(`${storeId}|${date}`) ?? [], sold);
   }
   async close(): Promise<void> {}
 }

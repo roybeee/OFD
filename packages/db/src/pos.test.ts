@@ -220,3 +220,84 @@ test("리포트: 주 단위 집계와 매장·품목 필터", async () => {
   const monthly = await store.report("2026-08-01", "2026-08-09", "month");
   assert.equal(monthly.rows[0]?.bucket, "2026-08");
 });
+
+/* ── 4단계: 폐기 산출 (입고 − 판매) ── */
+
+const wasteFixture = async () => {
+  const store = new MemoryPosStore();
+  const donut = await store.createProduct({ name: "우유크림도넛", category: "도넛", storeId: null, consumerPrice: 4_200 });
+  const pistachio = await store.createProduct({ name: "버터피스타치오", category: "도넛", storeId: null, consumerPrice: 5_800 });
+  await store.recordSales("store-doksan", [
+    { date: "2026-08-03", rawName: "우유크림도넛", qty: 60, amount: 252_000 },
+    { date: "2026-08-03", rawName: "버터피스타치오", qty: 30, amount: 174_000 },
+  ], "sync");
+  await store.resolveUnmatched();
+  return { store, donut, pistachio };
+};
+
+test("입고 기록이 없으면 폐기·폐기율·로스를 N/A(null)로 둔다", async () => {
+  const { store } = await wasteFixture();
+  const report = await store.wasteReport("store-doksan", "2026-08-03");
+  assert.equal(report.hasReceipt, false);
+  assert.equal(report.hasPos, true);
+  assert.equal(report.totals.received, null);
+  assert.equal(report.totals.waste, null);
+  assert.equal(report.totals.wasteRatePct, null);
+  assert.equal(report.totals.lossAmount, null);
+  assert.equal(report.totals.sold, 90, "판매는 아는 값이므로 그대로 보고한다");
+  assert.ok(report.items.every((i) => i.received === null && i.waste === null && i.wasteRatePct === null));
+});
+
+test("폐기 = 입고 − 판매, 로스는 공급단가 스냅샷으로 평가한다", async () => {
+  const { store, donut, pistachio } = await wasteFixture();
+  store.seedReceipt("store-doksan", "2026-08-03", [
+    { productId: donut.id, productName: "우유크림도넛", quantity: 70, unitSupply: 2_016 },
+    { productId: pistachio.id, productName: "버터피스타치오", quantity: 30, unitSupply: 2_784 },
+  ]);
+  const report = await store.wasteReport("store-doksan", "2026-08-03");
+  const donutRow = report.items.find((i) => i.productId === donut.id)!;
+  assert.deepEqual(
+    { received: donutRow.received, sold: donutRow.sold, waste: donutRow.waste, rate: donutRow.wasteRatePct, loss: donutRow.lossAmount },
+    { received: 70, sold: 60, waste: 10, rate: 14.3, loss: 20_160 });
+  assert.equal(report.items.find((i) => i.productId === pistachio.id)?.waste, 0, "정확히 소진되면 폐기 0");
+  assert.deepEqual(report.totals, { received: 100, sold: 90, waste: 10, wasteRatePct: 10, lossAmount: 20_160 });
+  assert.equal(report.items[0]?.productId, donut.id, "로스 금액 내림차순");
+});
+
+test("판매가 입고를 초과하면 폐기 0·초과분을 이상신호로 표기한다", async () => {
+  const { store, donut } = await wasteFixture();
+  store.seedReceipt("store-doksan", "2026-08-03", [
+    { productId: donut.id, productName: "우유크림도넛", quantity: 50, unitSupply: 2_016 },
+  ]);
+  const report = await store.wasteReport("store-doksan", "2026-08-03");
+  const donutRow = report.items.find((i) => i.productId === donut.id)!;
+  assert.equal(donutRow.waste, 0);
+  assert.equal(donutRow.over, 10, "전일 재고 이월 또는 기록 오류 신호");
+  assert.equal(donutRow.lossAmount, 0);
+  const pistachioRow = report.items.find((i) => i.productId !== donut.id)!;
+  assert.equal(pistachioRow.received, null, "입고 라인이 없는 품목은 개별 N/A");
+  assert.equal(pistachioRow.waste, null);
+});
+
+test("입고만 있고 판매가 없으면 전량 폐기로 계산한다", async () => {
+  const store = new MemoryPosStore();
+  const product = await store.createProduct({ name: "신메뉴", category: "도넛", storeId: null, consumerPrice: 4_000 });
+  store.seedReceipt("store-mapdal", "2026-08-04", [
+    { productId: product.id, productName: "신메뉴", quantity: 12, unitSupply: 1_900 },
+  ]);
+  const report = await store.wasteReport("store-mapdal", "2026-08-04");
+  assert.equal(report.hasPos, false);
+  assert.deepEqual(report.totals, { received: 12, sold: 0, waste: 12, wasteRatePct: 100, lossAmount: 22_800 });
+});
+
+test("다른 매장·다른 일자의 입고가 섞이지 않는다", async () => {
+  const { store, donut } = await wasteFixture();
+  store.seedReceipt("store-mapdal", "2026-08-03", [
+    { productId: donut.id, productName: "우유크림도넛", quantity: 999, unitSupply: 2_016 },
+  ]);
+  store.seedReceipt("store-doksan", "2026-08-04", [
+    { productId: donut.id, productName: "우유크림도넛", quantity: 888, unitSupply: 2_016 },
+  ]);
+  const report = await store.wasteReport("store-doksan", "2026-08-03");
+  assert.equal(report.hasReceipt, false, "해당 매장·일자 입고만 본다");
+});
