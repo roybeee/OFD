@@ -551,7 +551,7 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .completed .stop-line { background: var(--green); }
 .stop-card { min-width: 0; min-height: 76px; display: grid; grid-template-columns: 75px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: white; }
 .next-stop .stop-card { border-color: #efb792; background: var(--orange-pale); box-shadow: 0 4px 12px rgba(213,87,22,.08); }
-.completed .stop-card { opacity: .72; }
+.completed .stop-card { border-color: #d8e7e0; background: #f8fbfa; }
 .stop-time { display: flex; flex-direction: column; padding-right: 10px; border-right: 1px solid var(--line); }
 .stop-time strong { font: 800 15px/1 var(--font-sans); }
 .stop-time small { margin-top: 4px; color: var(--muted); font-size: 7px; }
