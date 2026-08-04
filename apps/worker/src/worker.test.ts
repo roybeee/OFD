@@ -664,7 +664,9 @@ describe("OFD worker safety", () => {
       expect.objectContaining({ topic: "settlement.monthly_close.requested" }),
     ]);
     const scheduled = await repository.claimOutbox(20, "schedule-test-worker", 12);
-    expect(scheduled.filter((item) => item.topic === "settlement.monthly_close.requested")).toHaveLength(1);
+    const monthlyClose = scheduled.filter((item) => item.topic === "settlement.monthly_close.requested");
+    expect(monthlyClose).toHaveLength(1);
+    expect(monthlyClose[0]?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
   it("closes the exact prior-month period carried by the durable schedule event", async () => {

@@ -11,6 +11,7 @@ if (!process.env.DATABASE_URL) {
 const secureDefaults = {
   NODE_ENV: 'test',
   APP_MODE: 'test',
+  TEST_AUTH_REQUIRED: 'true',
   REPOSITORY_MODE: 'postgres',
   PROVIDER_MODE: 'mock',
   STORAGE_MODE: 'mock',

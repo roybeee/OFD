@@ -488,7 +488,7 @@ export class OfdWorker {
       if (await repository.get<WorkerScheduleLedger>("admin_invariant", id)) return;
       const ledger: WorkerScheduleLedger = { id, scheduleKey, topic, createdAt: now.toISOString(), version: 1 };
       const scheduledEvent: OutboxEvent = {
-        id: stableId("scheduled-outbox", scheduleKey),
+        id: stableUuid("scheduled-outbox", scheduleKey),
         topic,
         aggregateId: scheduleKey,
         payload,
@@ -912,6 +912,14 @@ function inAutomaticMatchWindow(request: PaymentRequest, transaction: BankTransa
 
 function stableId(namespace: string, value: string): string {
   return `${namespace}-${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
+}
+
+function stableUuid(namespace: string, value: string): string {
+  const hex = createHash("sha256").update(`${namespace}:${value}`).digest("hex").slice(0, 32).split("");
+  hex[12] = "5";
+  hex[16] = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  const valueHex = hex.join("");
+  return `${valueHex.slice(0, 8)}-${valueHex.slice(8, 12)}-${valueHex.slice(12, 16)}-${valueHex.slice(16, 20)}-${valueHex.slice(20)}`;
 }
 
 function safeObjectSegment(value: string): string {

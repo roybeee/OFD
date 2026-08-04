@@ -50,6 +50,25 @@ describe("OFD v2 API", () => {
     expect(mfa.headers["set-cookie"]).toContain("HttpOnly");
   });
 
+  it("requires a signed session in the isolated test stack when TEST_AUTH_REQUIRED is enabled", async () => {
+    const app = await buildApp({ env: {
+      APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent", TEST_AUTH_REQUIRED: "true",
+      SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
+    }, logger: false });
+    openApps.push(app);
+
+    const anonymous = await app.inject({ method: "GET", url: "/api/v2/bootstrap",
+      headers: { "x-demo-actor-id": DEMO_IDS.driver } });
+    expect(anonymous.statusCode).toBe(401);
+
+    const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "store.owner@ofd.local", password: "OFD-demo-2026!" } });
+    const cookie = String(login.headers["set-cookie"] ?? "").split(";")[0];
+    const authenticated = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { cookie } });
+    expect(authenticated.statusCode).toBe(200);
+    expect(authenticated.json().currentActor.id).toBe(DEMO_IDS.owner);
+  });
+
   it("MFA 5회 실패로 잠긴 본사 계정은 기존 challenge의 정답으로도 우회할 수 없다", async () => {
     const app = await demoApp();
     const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",

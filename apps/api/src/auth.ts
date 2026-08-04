@@ -22,10 +22,12 @@ export interface SessionPayload {
 
 export const SESSION_COOKIE = "ofd_session";
 
-export async function resolveActor(request: FastifyRequest, repository: StateRepository, appMode: string, secret?: string): Promise<Actor> {
+export async function resolveActor(request: FastifyRequest, repository: StateRepository, appMode: string, secret?: string,
+  requireTestAuth = false): Promise<Actor> {
   let actorId: string;
   let mfaAtFromSession: string | undefined;
-  if (appMode === "demo" || appMode === "test") {
+  const sessionRequired = appMode === "production" || (appMode === "test" && requireTestAuth);
+  if (!sessionRequired) {
     const requested = request.headers["x-demo-actor-id"];
     actorId = typeof requested === "string" && requested ? requested : DEMO_IDS.owner;
   } else {
@@ -40,13 +42,13 @@ export async function resolveActor(request: FastifyRequest, repository: StateRep
   const actor = await repository.get<Actor>("actor", actorId);
   if (!actor) throw new DomainError("UNAUTHENTICATED", "사용자 계정을 찾을 수 없습니다.", 401);
   if (!actor.active) throw new DomainError("ACCOUNT_DISABLED", "비활성화된 계정입니다.", 403);
-  if (appMode === "production") {
+  if (sessionRequired) {
     const authorization = request.headers.authorization;
     const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : request.cookies?.[SESSION_COOKIE];
     const payload = verifySessionToken(token!, secret!, "session");
     if (payload.ver !== actor.authVersion) throw new DomainError("SESSION_REVOKED", "폐기된 세션입니다. 다시 로그인해 주세요.", 401);
   }
-  if (appMode !== "production") return actor;
+  if (!sessionRequired) return actor;
   const sessionActor: Actor = { ...actor, mfaVerified: Boolean(mfaAtFromSession) };
   if (mfaAtFromSession) sessionActor.mfaVerifiedAt = mfaAtFromSession;
   else delete sessionActor.mfaVerifiedAt;

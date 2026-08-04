@@ -70,7 +70,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const path = request.url.split("?")[0];
     if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login" || path === "/api/v2/auth/mfa"
       || path === "/api/v2/webhooks/popbill" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
-    request.actor = await resolveActor(request, repository, config.appMode, sessionSecret);
+    request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
   });
 
   app.get("/api/v2/health", async () => ({ ok: true, mode: config.appMode, providerMode: config.providerMode, now: new Date().toISOString() }));

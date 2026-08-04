@@ -114,6 +114,7 @@ jobs:
     env:
       NODE_ENV: test
       APP_MODE: test
+      TEST_AUTH_REQUIRED: "true"
       REPOSITORY_MODE: postgres
       DATABASE_URL: postgresql://ofd:ofd-e2e-isolated@127.0.0.1:5432/ofd_v2_e2e
       PROVIDER_MODE: mock
