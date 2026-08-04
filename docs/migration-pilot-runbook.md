@@ -104,3 +104,8 @@ node infra/scripts/evaluate-pilot-gates.mjs pilot-metrics.json
 
 전체 전환 후에도 기존 시스템은 합의한 보존기간 동안 read-only로 유지하고, 신규 쓰기는
 feature flag와 접근제어로 막는다.
+
+실제 운영 전환의 승인 시점, GitHub/Render 배포 순서, 전환 후 검증과 복귀 판단은
+`docs/production-cutover-runbook.md`를 따른다. 현재 V2 코어는 매장 ID 목록 환경변수로
+쓰기를 동결하지 않는다. `CUTOVER_STORE_IDS` 또는 `WRITE_FREEZE_STORE_IDS`를 설정하는
+것은 안전장치가 아니며 배포 preflight가 이를 거부한다.

@@ -1,0 +1,329 @@
+services:
+  - type: web
+    name: ofd-web
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./infra/docker/web.Dockerfile
+    dockerContext: .
+    dockerCommand: nginx -g 'daemon off;'
+    healthCheckPath: /readyz
+    autoDeployTrigger: off
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: API_UPSTREAM_HOSTPORT
+        fromService:
+          type: pserv
+          name: ofd-api
+          property: hostport
+
+  - type: pserv
+    name: ofd-api
+    runtime: docker
+    plan: standard
+    region: singapore
+    dockerfilePath: ./infra/docker/api.Dockerfile
+    dockerContext: .
+    dockerCommand: node apps/api/dist/server.js
+    preDeployCommand: node infra/scripts/deploy/preflight.mjs migrate && node packages/db/dist/migrate.js
+    autoDeployTrigger: off
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_MODE
+        value: production
+      - key: REPOSITORY_MODE
+        value: postgres
+      - key: SERVICE_ROLE
+        value: api
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: "4100"
+      - key: LOG_LEVEL
+        value: info
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ofd-postgres
+          property: connectionString
+      - key: RELEASE_SHA
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: RENDER_GIT_COMMIT
+      - key: SESSION_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: PUBLIC_APP_URL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: STORAGE_MODE
+        value: s3
+      - key: S3_REGION
+        value: ap-northeast-2
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_KMS_KEY_ID
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: smtp
+      - key: EMAIL_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: PROVIDER_MODE
+        value: mock
+      - key: POPBILL_PRODUCTION_ENABLED
+        value: "false"
+      - key: POPBILL_TAX_INVOICE_ENABLED
+        value: "false"
+      - key: POPBILL_BANK_SYNC_ENABLED
+        value: "false"
+      - key: POPBILL_SMS_ENABLED
+        value: "false"
+      - key: POPBILL_LINK_ID
+        sync: false
+      - key: POPBILL_SECRET_KEY
+        sync: false
+      - key: POPBILL_CORP_NUM
+        sync: false
+      - key: POPBILL_USER_ID
+        sync: false
+      - key: POPBILL_WEBHOOK_API_KEY
+        sync: false
+      - key: POPBILL_CERTIFICATE_CONFIGURED
+        value: "false"
+      - key: POPBILL_BANK_ACCOUNT_AUTHORIZED
+        value: "false"
+      - key: POPBILL_BANK_CODE
+        sync: false
+      - key: POPBILL_BANK_ACCOUNT
+        sync: false
+      - key: POPBILL_SMS_SENDER
+        sync: false
+      - key: KOREA_HOLIDAYS
+        sync: false
+      - key: CUTOVER_STORE_IDS
+        value: ""
+      - key: WRITE_FREEZE_STORE_IDS
+        value: ""
+
+  - type: worker
+    name: ofd-worker
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./infra/docker/worker.Dockerfile
+    dockerContext: .
+    dockerCommand: node apps/worker/dist/main.js
+    preDeployCommand: node infra/scripts/deploy/preflight.mjs worker
+    autoDeployTrigger: off
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_MODE
+        value: production
+      - key: REPOSITORY_MODE
+        value: postgres
+      - key: SERVICE_ROLE
+        value: worker
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ofd-postgres
+          property: connectionString
+      - key: RELEASE_SHA
+        fromService:
+          type: worker
+          name: ofd-worker
+          envVarKey: RENDER_GIT_COMMIT
+      - key: SESSION_SECRET
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: SESSION_SECRET
+      - key: ENCRYPTION_KEY
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: ENCRYPTION_KEY
+      - key: PUBLIC_APP_URL
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: PUBLIC_APP_URL
+      - key: WEB_ORIGIN
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: WEB_ORIGIN
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: STORAGE_MODE
+        value: s3
+      - key: S3_REGION
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: S3_REGION
+      - key: S3_BUCKET
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: S3_BUCKET
+      - key: S3_ACCESS_KEY_ID
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: S3_ACCESS_KEY_ID
+      - key: S3_SECRET_ACCESS_KEY
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: S3_SECRET_ACCESS_KEY
+      - key: S3_KMS_KEY_ID
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: S3_KMS_KEY_ID
+      - key: EMAIL_PROVIDER
+        value: smtp
+      - key: EMAIL_FROM
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: EMAIL_FROM
+      - key: SMTP_HOST
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: SMTP_HOST
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: SMTP_USER
+      - key: SMTP_PASSWORD
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: SMTP_PASSWORD
+      - key: PROVIDER_MODE
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: PROVIDER_MODE
+      - key: POPBILL_PRODUCTION_ENABLED
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_PRODUCTION_ENABLED
+      - key: POPBILL_TAX_INVOICE_ENABLED
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_TAX_INVOICE_ENABLED
+      - key: POPBILL_BANK_SYNC_ENABLED
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_BANK_SYNC_ENABLED
+      - key: POPBILL_SMS_ENABLED
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_SMS_ENABLED
+      - key: POPBILL_LINK_ID
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_LINK_ID
+      - key: POPBILL_SECRET_KEY
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_SECRET_KEY
+      - key: POPBILL_CORP_NUM
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_CORP_NUM
+      - key: POPBILL_USER_ID
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_USER_ID
+      - key: POPBILL_WEBHOOK_API_KEY
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_WEBHOOK_API_KEY
+      - key: POPBILL_CERTIFICATE_CONFIGURED
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_CERTIFICATE_CONFIGURED
+      - key: POPBILL_BANK_ACCOUNT_AUTHORIZED
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_BANK_ACCOUNT_AUTHORIZED
+      - key: POPBILL_BANK_CODE
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_BANK_CODE
+      - key: POPBILL_BANK_ACCOUNT
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_BANK_ACCOUNT
+      - key: POPBILL_SMS_SENDER
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: POPBILL_SMS_SENDER
+      - key: KOREA_HOLIDAYS
+        fromService:
+          type: pserv
+          name: ofd-api
+          envVarKey: KOREA_HOLIDAYS
+      - key: WORKER_POLL_MS
+        value: "1000"
+      - key: WORKER_BATCH_SIZE
+        value: "50"
+      - key: OUTBOX_MAX_ATTEMPTS
+        value: "12"
+      - key: CUTOVER_STORE_IDS
+        value: ""
+      - key: WRITE_FREEZE_STORE_IDS
+        value: ""
+
+databases:
+  - name: ofd-postgres
+    plan: basic-1gb
+    region: singapore
+    postgresMajorVersion: "16"
+    databaseName: ofd_v2
+    user: ofd
+    diskSizeGB: 15
+    storageAutoscalingEnabled: true
+    connectionPool: none
+    ipAllowList: []

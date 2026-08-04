@@ -1,12 +1,13 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
-import { createRepository, type StateRepository } from "@ofd/db";
-import { assertEncryptionKey, DomainError } from "@ofd/domain";
+import { createRepository, discoverMigrations, type RepositoryReadiness, type StateRepository } from "@ofd/db";
+import { assertEncryptionKey, DomainError, parseHolidayCalendar } from "@ofd/domain";
 import {
   createObjectStorage,
   readProviderConfig,
   type ObjectStorage,
+  type StorageReadiness,
 } from "@ofd/integrations";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
@@ -21,15 +22,21 @@ export interface BuildAppOptions {
   repository?: StateRepository;
   storage?: ObjectStorage;
   logger?: boolean;
+  readinessNow?: () => Date;
 }
 
 const idParams = z.object({ id: z.string().min(1) });
 const expectedVersion = z.object({ expectedVersion: z.number().int().positive() });
+const processSessionSecret = randomBytes(32).toString("base64url");
+const provisionableRole = z.enum(["store_owner", "store_staff", "driver", "hq_ops", "hq_finance", "hq_master", "auditor"]);
+const mfaSecret = z.string().trim().min(16).max(128).regex(/^[A-Za-z2-7]+=*$/);
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = options.env ?? process.env;
   const config = readProviderConfig(env);
+  const holidayCalendar = parseHolidayCalendar(env.KOREA_HOLIDAYS, config.appMode === "production");
   const repository = options.repository ?? createRepository(env);
+  const requiredMigrations = await discoverMigrations();
   let storage = options.storage;
   if (!storage) {
     storage = createObjectStorage(config);
@@ -40,8 +47,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   if (config.appMode === "production") assertEncryptionKey(env.ENCRYPTION_KEY ?? "");
   if (config.appMode === "production" && !env.WEB_ORIGIN) throw new DomainError("WEB_ORIGIN_REQUIRED", "production WEB_ORIGIN이 필요합니다.", 503);
   const service = new ProcurementService(repository, storage, config.appMode, env.RECONCILIATION_ACCOUNT_ID ?? "ofd-main",
-    config.providerMode, config.providerMode === "production" && config.taxInvoiceEnabled);
-  const sessionSecret = env.SESSION_SECRET ?? "ofd-demo-session-secret-32-characters-minimum";
+    config.providerMode, config.providerMode === "production" && config.taxInvoiceEnabled, () => new Date(), holidayCalendar);
+  const sessionSecret = env.SESSION_SECRET ?? processSessionSecret;
   const authService = new AuthService(repository, sessionSecret, config.appMode, env.ENCRYPTION_KEY);
   const app = Fastify({ logger: options.logger ?? env.LOG_LEVEL !== "silent", bodyLimit: config.uploadMaxBytes, trustProxy: true });
 
@@ -49,7 +56,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(cors, {
     origin: config.appMode === "production" ? (env.WEB_ORIGIN ?? "").split(",").map((value) => value.trim()).filter(Boolean) : true,
     credentials: true,
-    allowedHeaders: ["authorization", "content-type", "idempotency-key", "x-demo-actor-id", "x-api-key", "pb-webhook-mid", "pb-webhook-corpnum"],
+    allowedHeaders: ["authorization", "content-type", "idempotency-key", "x-api-key", "pb-webhook-mid", "pb-webhook-corpnum",
+      ...(config.appMode === "production" ? [] : ["x-demo-actor-id"])],
   });
   app.addContentTypeParser(/^image\//, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
   app.addHook("onSend", async (_request, reply, payload) => {
@@ -60,12 +68,46 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.addHook("preHandler", async (request) => {
     const path = request.url.split("?")[0];
-    if (path === "/api/v2/health" || path === "/api/v2/auth/login" || path === "/api/v2/auth/mfa"
+    if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login" || path === "/api/v2/auth/mfa"
       || path === "/api/v2/webhooks/popbill" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
-    request.actor = await resolveActor(request, repository, config.appMode, sessionSecret);
+    request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
   });
 
   app.get("/api/v2/health", async () => ({ ok: true, mode: config.appMode, providerMode: config.providerMode, now: new Date().toISOString() }));
+  app.get("/api/v2/ready", async (_request, reply) => {
+    const checkedAt = (options.readinessNow?.() ?? new Date());
+    const expectedMigrations = requiredMigrations.map(({ version, checksumSha256 }) => ({ version, checksumSha256 }));
+    let repositoryStatus: RepositoryReadiness;
+    try {
+      repositoryStatus = await repository.checkReadiness(expectedMigrations, checkedAt);
+    } catch {
+      repositoryStatus = {
+        ok: false,
+        database: { ok: false, mode: config.appMode === "production" ? "postgres" : "memory", code: "READINESS_CHECK_FAILED" },
+        migrations: { ok: false, expected: expectedMigrations.length, applied: 0,
+          missing: expectedMigrations.map((migration) => migration.version), drifted: [], unexpected: [], code: "READINESS_CHECK_FAILED" },
+        worker: { ok: false, code: "READINESS_CHECK_FAILED" },
+      };
+    }
+    let storageStatus: StorageReadiness;
+    try {
+      storageStatus = await storage.checkReadiness();
+    } catch {
+      storageStatus = { ok: false, mode: config.storageMode, reachable: false, versioning: "Unknown", code: "STORAGE_READINESS_FAILED" };
+    }
+    if (config.appMode === "production" && (storageStatus.mode !== "s3" || storageStatus.versioning !== "Enabled")) {
+      storageStatus = { ...storageStatus, ok: false, code: storageStatus.code ?? "S3_VERSIONING_NOT_ENABLED" };
+    }
+    const projections = { ok: true, mode: "synchronous" as const, lag: 0 };
+    const ok = repositoryStatus.ok && storageStatus.ok && projections.ok;
+    const { ok: _repositoryOk, ...repositoryComponents } = repositoryStatus;
+    return reply.code(ok ? 200 : 503).send({
+      ok,
+      mode: config.appMode,
+      checkedAt: checkedAt.toISOString(),
+      components: { ...repositoryComponents, storage: storageStatus, projections },
+    });
+  });
   app.post("/api/v2/auth/login", async (request, reply) => {
     const body = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(200) }).parse(request.body);
     const result = await authService.login(body.email, body.password, request.ip);
@@ -89,6 +131,40 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return reply.code(204).send();
   });
   app.get("/api/v2/bootstrap", async (request) => service.bootstrap(request.actor));
+
+  /**
+   * Identity administration contract (hq_master + recent step-up only):
+   * GET returns { actors: AdminActorSummary[] }.
+   * POST creates one actor/credential pair and returns only { actor: AdminActorSummary }.
+   * PATCH accepts a deactivate/reset action and returns only { actor: AdminActorSummary }.
+   * Password hashes and TOTP material are never serialized by these handlers.
+   */
+  app.get("/api/v2/admin/actors", async (request) => authService.listActorAccounts(request.actor));
+  app.post("/api/v2/admin/actors", async (request, reply) => {
+    const body = z.object({
+      name: z.string().trim().min(2).max(100), role: provisionableRole,
+      storeIds: z.array(z.string().min(1)).max(100).default([]),
+      email: z.string().email().max(254), password: z.string().min(12).max(200), mfaSecret: mfaSecret.optional(),
+    }).parse(request.body);
+    return idempotentMutation(request, reply, repository, request.actor, 201,
+      (scoped) => new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY).provisionActor(request.actor, body));
+  });
+  app.patch("/api/v2/admin/actors", async (request, reply) => {
+    const body = z.discriminatedUnion("action", [
+      z.object({ action: z.literal("deactivate"), actorId: z.string().min(1), expectedVersion: z.number().int().positive() }),
+      z.object({ action: z.literal("reset"), actorId: z.string().min(1), expectedVersion: z.number().int().positive(),
+        newPassword: z.string().min(12).max(200), mfaSecret: mfaSecret.optional() }),
+    ]).parse(request.body);
+    return idempotentMutation(request, reply, repository, request.actor, 200, (scoped) => {
+      const scopedAuth = new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY);
+      return body.action === "deactivate"
+        ? scopedAuth.deactivateActor(request.actor, body.actorId, body.expectedVersion)
+        : scopedAuth.resetActor(request.actor, body.actorId, body.expectedVersion, body.newPassword, body.mfaSecret);
+    });
+  });
+
+  /** Active driver directory contract: { drivers: Array<{ id, name }> }; hq_ops/hq_master only. */
+  app.get("/api/v2/directory/drivers", async (request) => authService.listActiveDrivers(request.actor));
 
   app.post("/api/v2/orders", async (request, reply) => {
     const body = z.object({
@@ -149,9 +225,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   app.post("/api/v2/shipments", async (request, reply) => {
-    const body = z.object({ orderId: z.string().min(1), driverId: z.string().min(1), plannedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(request.body);
+    const body = z.object({
+      orderId: z.string().min(1), driverId: z.string().min(1), plannedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      routeSequence: z.number().int().min(1).max(9_999),
+      deliveryWindow: z.object({
+        start: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+        end: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+      }),
+    }).parse(request.body);
     return idempotentMutation(request, reply, repository, request.actor, 201,
-      (scoped) => service.withRepository(scoped).createShipment(request.actor, body.orderId, body.driverId, body.plannedDate));
+      (scoped) => service.withRepository(scoped).createShipment(request.actor, body.orderId, body.driverId, body.plannedDate,
+        body.routeSequence, body.deliveryWindow));
   });
   app.post("/api/v2/shipments/:id/dispatch", async (request, reply) => {
     const { id } = idParams.parse(request.params);
@@ -169,7 +253,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const { id } = idParams.parse(request.params);
     const body = expectedVersion.extend({
       photoKey: z.string().min(1), recipientName: z.string().min(1).max(100), note: z.string().max(300).optional(),
-      capturedAt: z.string().datetime(), latitude: z.number().min(-90).max(90).optional(), longitude: z.number().min(-180).max(180).optional(),
+      latitude: z.number().min(-90).max(90).optional(), longitude: z.number().min(-180).max(180).optional(),
     }).parse(request.body);
     return idempotentMutation(request, reply, repository, request.actor, 200,
       (scoped) => service.withRepository(scoped).completeDelivery(request.actor, id, body));
@@ -247,6 +331,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const { id } = idParams.parse(request.params); const body = expectedVersion.parse(request.body);
     return idempotentMutation(request, reply, repository, request.actor, 200,
       (scoped) => service.withRepository(scoped).approveInvoice(request.actor, id, body.expectedVersion));
+  });
+  app.post("/api/v2/invoices/:id/retry", async (request, reply) => {
+    const { id } = idParams.parse(request.params); const body = expectedVersion.parse(request.body);
+    return idempotentMutation(request, reply, repository, request.actor, 200,
+      (scoped) => service.withRepository(scoped).retryInvoice(request.actor, id, body.expectedVersion));
+  });
+  app.get("/api/v2/documents/:id/download", async (request) => {
+    const { id } = idParams.parse(request.params);
+    return service.downloadDocument(request.actor, id);
   });
   app.post("/api/v2/admin/outbox/:id/requeue", async (request, reply) => {
     const { id } = idParams.parse(request.params);

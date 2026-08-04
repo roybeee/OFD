@@ -1,6 +1,6 @@
 import { createDemoRepository, DEMO_IDS } from "@ofd/db";
 import { MockObjectStorage } from "@ofd/integrations";
-import { generateTotp } from "@ofd/domain";
+import { generateTotp, type OriginalDocument, type Shipment, type TaxInvoice } from "@ofd/domain";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.ts";
@@ -48,6 +48,25 @@ describe("OFD v2 API", () => {
       payload: { challengeToken: hqLogin.json().challengeToken, code: generateTotp("JBSWY3DPEHPK3PXP") } });
     expect(mfa.statusCode).toBe(200);
     expect(mfa.headers["set-cookie"]).toContain("HttpOnly");
+  });
+
+  it("requires a signed session in the isolated test stack when TEST_AUTH_REQUIRED is enabled", async () => {
+    const app = await buildApp({ env: {
+      APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent", TEST_AUTH_REQUIRED: "true",
+      SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
+    }, logger: false });
+    openApps.push(app);
+
+    const anonymous = await app.inject({ method: "GET", url: "/api/v2/bootstrap",
+      headers: { "x-demo-actor-id": DEMO_IDS.driver } });
+    expect(anonymous.statusCode).toBe(401);
+
+    const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "store.owner@ofd.local", password: "OFD-demo-2026!" } });
+    const cookie = String(login.headers["set-cookie"] ?? "").split(";")[0];
+    const authenticated = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { cookie } });
+    expect(authenticated.statusCode).toBe(200);
+    expect(authenticated.json().currentActor.id).toBe(DEMO_IDS.owner);
   });
 
   it("MFA 5회 실패로 잠긴 본사 계정은 기존 challenge의 정답으로도 우회할 수 없다", async () => {
@@ -169,8 +188,13 @@ describe("OFD v2 API", () => {
   });
 
   it("미업로드 사진으로 배송 완료를 위조할 수 없고 실제 mock 업로드 후에만 입고 확정한다", async () => {
-    const app = await demoApp();
     const shipmentId = "00000000-0000-4000-8000-000000004001";
+    const repository = createDemoRepository();
+    const seededShipment = (await repository.get<Shipment>("shipment", shipmentId))!;
+    await repository.commit({ changes: [{ type: "shipment", id: shipmentId, storeId: seededShipment.storeId,
+      expectedVersion: seededShipment.version, value: { ...seededShipment, plannedDate: todayInSeoul(), version: seededShipment.version + 1 } }] });
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent" }, repository, logger: false });
+    openApps.push(app);
     const actorHeaders = { "x-demo-actor-id": DEMO_IDS.driver };
     const ticketResponse = await app.inject({
       method: "POST", url: `/api/v2/shipments/${shipmentId}/proof-upload`,
@@ -178,7 +202,7 @@ describe("OFD v2 API", () => {
     });
     expect(ticketResponse.statusCode).toBe(201);
     const ticket = ticketResponse.json();
-    const deliveryPayload = { expectedVersion: 2, photoKey: ticket.objectKey, recipientName: "박독산", capturedAt: "2026-08-02T06:00:00.000Z" };
+    const deliveryPayload = { expectedVersion: 3, photoKey: ticket.objectKey, recipientName: "박독산", capturedAt: "2000-01-01T00:00:00.000Z" };
     const forged = await app.inject({
       method: "POST", url: `/api/v2/shipments/${shipmentId}/deliver`,
       headers: { ...actorHeaders, "idempotency-key": "deliver-before-upload" }, payload: deliveryPayload,
@@ -195,8 +219,11 @@ describe("OFD v2 API", () => {
     expect(completed.statusCode).toBe(200);
     expect(completed.json().shipment.status).toBe("delivered");
     expect(completed.json().receipt.status).toBe("confirmed");
-    expect(completed.json().shipment.proof.photoUrl).toBeUndefined();
-    expect(completed.json().proofUrl).toMatch(/^\/api\/v2\/mock-files/);
+    expect(completed.json().shipment.proof.capturedAt).not.toBe(deliveryPayload.capturedAt);
+    const serializedCompletion = JSON.stringify(completed.json());
+    for (const forbidden of ["gross", "supply", "vat", "photoObjectKey", "objectVersionId", "etag", "checksumSha256", "uploadedBy"]) {
+      expect(serializedCompletion).not.toContain(`\"${forbidden}\"`);
+    }
   });
 
   it("점주는 본사 승인할 수 없고 운영 담당자는 수동 승인한다", async () => {
@@ -284,7 +311,7 @@ describe("OFD v2 API", () => {
       payload: { expectedVersion: 2, reason: "다른 매장 입금으로 확인" },
     });
     expect(reversed.statusCode).toBe(200);
-    expect(reversed.json().paymentRequest).toMatchObject({ status: "reversed", version: 3 });
+    expect(reversed.json().paymentRequest).toMatchObject({ status: "pending", version: 3 });
     expect(reversed.json().paymentRequest.matchedBankTransactionId).toBeUndefined();
     expect(reversed.json().bankTransaction).toMatchObject({ matched: false, version: 3 });
   });
@@ -354,6 +381,7 @@ describe("OFD v2 API", () => {
   it("production mock-provider 배포에서는 Popbill webhook endpoint를 닫는다", async () => {
     const app = await buildApp({
       env: { NODE_ENV: "production", APP_MODE: "production", PROVIDER_MODE: "mock", LOG_LEVEL: "silent",
+        KOREA_HOLIDAYS: "2026-01-01,2026-03-01,2026-05-05,2026-08-15,2026-10-03,2026-10-09,2026-12-25",
         SESSION_SECRET: "a-secure-session-secret-that-is-long-enough", WEB_ORIGIN: "https://ofd.example",
         ENCRYPTION_KEY: Buffer.alloc(32, 0xa5).toString("base64"),
         STORAGE_MODE: "s3", S3_REGION: "ap-northeast-2", S3_BUCKET: "ofd", S3_KMS_KEY_ID: "kms-key",
@@ -361,7 +389,58 @@ describe("OFD v2 API", () => {
       repository: createDemoRepository(), storage: new MockObjectStorage(), logger: false,
     });
     openApps.push(app);
+    const preflight = await app.inject({ method: "OPTIONS", url: "/api/v2/bootstrap", headers: {
+      origin: "https://ofd.example", "access-control-request-method": "GET",
+      "access-control-request-headers": "x-demo-actor-id",
+    } });
+    expect(String(preflight.headers["access-control-allow-headers"] ?? "")).not.toContain("x-demo-actor-id");
     const response = await app.inject({ method: "POST", url: "/api/v2/webhooks/popbill", payload: { MID: "fake", CorpNum: "1234567890" } });
     expect(response.statusCode).toBe(404);
+  });
+
+  it("production은 검증된 KOREA_HOLIDAYS가 없으면 시작을 거부한다", async () => {
+    const base = { NODE_ENV: "production", APP_MODE: "production", PROVIDER_MODE: "mock", LOG_LEVEL: "silent",
+      SESSION_SECRET: "a-secure-session-secret-that-is-long-enough", WEB_ORIGIN: "https://ofd.example",
+      ENCRYPTION_KEY: Buffer.alloc(32, 0xa5).toString("base64"), STORAGE_MODE: "s3", S3_REGION: "ap-northeast-2",
+      S3_BUCKET: "ofd", S3_KMS_KEY_ID: "kms-key", EMAIL_PROVIDER: "smtp", SMTP_HOST: "smtp.example", EMAIL_FROM: "ofd@example.com" };
+    await expect(buildApp({ env: base, repository: createDemoRepository(), storage: new MockObjectStorage(), logger: false }))
+      .rejects.toMatchObject({ code: "HOLIDAY_CALENDAR_REQUIRED", statusCode: 503 });
+    await expect(buildApp({ env: { ...base, KOREA_HOLIDAYS: "2026-02-30" }, repository: createDemoRepository(),
+      storage: new MockObjectStorage(), logger: false })).rejects.toMatchObject({ code: "HOLIDAY_CALENDAR_INVALID", statusCode: 503 });
+  });
+});
+
+describe("OFD v2 Phase 3 finance API", () => {
+  it("retries a failed invoice through the business API", async () => {
+    const repository = createDemoRepository();
+    const invoice = (await repository.get<TaxInvoice>("tax_invoice", "00000000-0000-4000-8000-000000008001"))!;
+    const failed = { ...invoice, status: "failed" as const, failureReason: "timeout", version: invoice.version + 1 };
+    await repository.commit({ changes: [{ type: "tax_invoice", id: failed.id, storeId: failed.storeId,
+      expectedVersion: invoice.version, value: failed }] });
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent" }, repository, logger: false });
+    openApps.push(app);
+    const response = await app.inject({ method: "POST", url: `/api/v2/invoices/${failed.id}/retry`,
+      headers: { "x-demo-actor-id": DEMO_IDS.finance, "idempotency-key": "retry-invoice" }, payload: { expectedVersion: failed.version } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().invoice).toMatchObject({ status: "queued", retryCount: 1 });
+  });
+
+  it("denies another store owner access to a document download", async () => {
+    const repository = createDemoRepository();
+    const document: OriginalDocument = { id: "api-document", storeId: DEMO_IDS.storeHapjeong, kind: "monthly_statement",
+      aggregateType: "settlement", aggregateId: "api-settlement", sourceVersion: 1, objectKey: "private/monthly.pdf",
+      objectVersionId: "version-1", contentHashSha256: "b".repeat(64), mimeType: "application/pdf", fileName: "monthly.pdf",
+      sizeBytes: 100, createdAt: "2026-08-01T00:00:00.000Z", version: 1 };
+    await repository.commit({ changes: [{ type: "document", id: document.id, storeId: document.storeId, expectedVersion: null, value: document }] });
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent" }, repository, logger: false });
+    openApps.push(app);
+    const denied = await app.inject({ method: "GET", url: `/api/v2/documents/${document.id}/download`,
+      headers: { "x-demo-actor-id": DEMO_IDS.owner } });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe("STORE_SCOPE_DENIED");
+    const allowed = await app.inject({ method: "GET", url: `/api/v2/documents/${document.id}/download`,
+      headers: { "x-demo-actor-id": DEMO_IDS.master } });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toMatchObject({ document: { id: document.id }, expiresInSeconds: 900 });
   });
 });

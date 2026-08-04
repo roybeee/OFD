@@ -10,6 +10,7 @@ declare module 'react-dom/client' {
 interface ImportMetaEnv {
   readonly BASE_URL: string;
   readonly VITE_API_BASE?: string;
+  readonly VITE_ALLOW_TEST_API?: string;
   readonly PROD: boolean;
 }
 

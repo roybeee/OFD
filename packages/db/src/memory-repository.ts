@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
-import type { AggregateChange, AggregateType, CommitRequest, IdempotencyRecord, StateRepository, WebhookRecord } from "./repository.ts";
+import { outboxRetryDelayMs,
+  type AggregateChange, type AggregateType, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
 interface Entry {
@@ -22,9 +25,17 @@ export class MemoryRepository implements StateRepository {
   private outbox = new Map<string, OutboxEvent>();
   private idempotency = new Map<string, IdempotencyRecord>();
   private webhooks = new Map<string, WebhookRecord>();
+  private workerHeartbeats = new Map<string, WorkerHeartbeat>();
   private claims = new Map<string, string>();
+  private transactionTail: Promise<void> = Promise.resolve();
+  private exclusiveTails = new Map<string, Promise<void>>();
+  private transactionScoped = false;
 
-  constructor(seed: AggregateChange[] = []) {
+  constructor(seed: AggregateChange[] = [], private readonly runtime: {
+    now?: () => Date;
+    random?: () => number;
+    leaseToken?: () => string;
+  } = {}) {
     for (const item of seed) {
       const valueVersion = typeof item.value === "object" && item.value && "version" in item.value
         ? Number((item.value as { version: unknown }).version)
@@ -106,21 +117,52 @@ export class MemoryRepository implements StateRepository {
   }
 
   async transaction<T>(run: (repository: StateRepository) => Promise<T>): Promise<T> {
-    const scoped = new MemoryRepository();
+    if (this.transactionScoped) return run(this);
+    const previous = this.transactionTail;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.transactionTail = previous.then(() => current);
+    await previous;
+    try {
+    const scoped = new MemoryRepository([], this.runtime);
     scoped.records = structuredClone(this.records);
     scoped.audits = structuredClone(this.audits);
     scoped.outbox = structuredClone(this.outbox);
     scoped.idempotency = structuredClone(this.idempotency);
     scoped.webhooks = structuredClone(this.webhooks);
+    scoped.workerHeartbeats = structuredClone(this.workerHeartbeats);
     scoped.claims = structuredClone(this.claims);
+    scoped.transactionTail = this.transactionTail;
+    scoped.exclusiveTails = this.exclusiveTails;
+    scoped.transactionScoped = true;
     const result = await run(scoped);
     this.records = scoped.records;
     this.audits = scoped.audits;
     this.outbox = scoped.outbox;
     this.idempotency = scoped.idempotency;
     this.webhooks = scoped.webhooks;
+    this.workerHeartbeats = scoped.workerHeartbeats;
     this.claims = scoped.claims;
     return result;
+    } finally {
+      release();
+    }
+  }
+
+  async exclusiveTransaction<T>(key: string, run: (repository: StateRepository) => Promise<T>): Promise<T> {
+    if (this.transactionScoped) return run(this);
+    const previous = this.exclusiveTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => gate);
+    this.exclusiveTails.set(key, tail);
+    await previous;
+    try {
+      return await this.transaction(run);
+    } finally {
+      release();
+      if (this.exclusiveTails.get(key) === tail) this.exclusiveTails.delete(key);
+    }
   }
 
   async reserveIdempotency(actorId: string, key: string, requestHash: string, expiresAt: string): Promise<IdempotencyRecord | undefined> {
@@ -149,40 +191,55 @@ export class MemoryRepository implements StateRepository {
     this.idempotency.set(key, clone(record));
   }
 
-  async claimOutbox(limit: number, workerId = "memory-worker", maxAttempts = 12): Promise<OutboxEvent[]> {
-    const now = new Date();
+  async claimOutbox(limit: number, workerId = "memory-worker", maxAttempts = 12, leaseMs = 5 * 60_000): Promise<OutboxEvent[]> {
+    const now = this.now();
+    for (const event of this.outbox.values()) {
+      const expired = event.status === "processing" && (!event.leaseExpiresAt || new Date(event.leaseExpiresAt) <= now);
+      if (event.attempts >= maxAttempts && (event.status === "pending" || event.status === "failed" || expired)) {
+        event.status = "dead_letter";
+        event.deadLetterAt = now.toISOString();
+        this.clearOutboxLease(event);
+        this.outbox.set(event.id, event);
+      }
+    }
     const selected = [...this.outbox.values()]
-      .filter((event) => event.attempts < maxAttempts && (event.status === "pending" || event.status === "failed" || event.status === "processing") && new Date(event.availableAt) <= now)
+      .filter((event) => event.attempts < maxAttempts && (((event.status === "pending" || event.status === "failed")
+        && new Date(event.availableAt) <= now) || (event.status === "processing"
+          && (!event.leaseExpiresAt || new Date(event.leaseExpiresAt) <= now))))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit);
     for (const event of selected) {
       event.status = "processing";
       event.attempts += 1;
-      event.availableAt = new Date(Date.now() + 5 * 60_000).toISOString();
-      event.lockedAt = new Date().toISOString();
+      event.lockedAt = now.toISOString();
       event.lockedBy = workerId;
+      event.leaseToken = this.runtime.leaseToken?.() ?? randomUUID();
+      event.leaseExpiresAt = new Date(now.valueOf() + leaseMs).toISOString();
       this.outbox.set(event.id, event);
     }
     return selected.map(clone);
   }
 
-  async completeOutbox(id: string, error?: string, maxAttempts = 12): Promise<void> {
+  async completeOutbox(id: string, workerId: string, leaseToken: string, error?: string, maxAttempts = 12): Promise<boolean> {
     const event = this.outbox.get(id);
-    if (!event) return;
+    const now = this.now();
+    if (!event || event.status !== "processing" || event.lockedBy !== workerId || event.leaseToken !== leaseToken
+      || !event.leaseExpiresAt || new Date(event.leaseExpiresAt) <= now) return false;
     event.status = error ? (event.attempts >= maxAttempts ? "dead_letter" : "failed") : "completed";
     if (error) {
       event.lastError = error;
       delete event.processedAt;
-      event.availableAt = new Date(Date.now() + Math.min(60_000, 2 ** event.attempts * 1_000)).toISOString();
+      event.availableAt = new Date(now.valueOf() + outboxRetryDelayMs(event.topic, event.attempts,
+        this.runtime.random?.() ?? Math.random())).toISOString();
     } else {
       delete event.lastError;
-      event.processedAt = new Date().toISOString();
+      event.processedAt = now.toISOString();
     }
-    if (event.status === "dead_letter") event.deadLetterAt = new Date().toISOString();
+    if (event.status === "dead_letter") event.deadLetterAt = now.toISOString();
     else delete event.deadLetterAt;
-    delete event.lockedAt;
-    delete event.lockedBy;
+    this.clearOutboxLease(event);
     this.outbox.set(id, event);
+    return true;
   }
 
   async requeueOutbox(id: string): Promise<OutboxEvent | undefined> {
@@ -190,11 +247,41 @@ export class MemoryRepository implements StateRepository {
     if (!event || event.status !== "dead_letter") return undefined;
     event.status = "pending";
     event.attempts = 0;
-    event.availableAt = new Date().toISOString();
+    event.availableAt = this.now().toISOString();
     delete event.lastError;
     delete event.deadLetterAt;
+    this.clearOutboxLease(event);
     this.outbox.set(id, event);
     return clone(event);
+  }
+
+  async recordWorkerHeartbeat(heartbeat: WorkerHeartbeat): Promise<void> {
+    this.workerHeartbeats.set(heartbeat.workerId, clone(heartbeat));
+  }
+
+  async getWorkerHeartbeat(workerId: string): Promise<WorkerHeartbeat | undefined> {
+    const heartbeat = this.workerHeartbeats.get(workerId);
+    return heartbeat ? clone(heartbeat) : undefined;
+  }
+
+  async checkReadiness(_requiredMigrations: readonly RequiredMigration[], _now = this.now()): Promise<RepositoryReadiness> {
+    return {
+      ok: true,
+      database: { ok: true, mode: "memory" },
+      migrations: { ok: true, notRequired: true, expected: 0, applied: 0, missing: [], drifted: [], unexpected: [] },
+      worker: { ok: true, notRequired: true },
+    };
+  }
+
+  private now(): Date {
+    return this.runtime.now?.() ?? new Date();
+  }
+
+  private clearOutboxLease(event: OutboxEvent): void {
+    delete event.lockedAt;
+    delete event.lockedBy;
+    delete event.leaseToken;
+    delete event.leaseExpiresAt;
   }
 
   async receiveWebhook(record: WebhookRecord): Promise<boolean> {

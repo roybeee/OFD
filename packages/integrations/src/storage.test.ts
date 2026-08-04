@@ -2,6 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MockObjectStorage } from "./storage.ts";
 
+test("immutable originals are idempotent, version-addressable, and cannot be overwritten", async () => {
+  const storage = new MockObjectStorage();
+  const input = {
+    objectKey: "original-documents/settlement/settlement-1/v1.json",
+    bytes: new TextEncoder().encode('{"settlementId":"settlement-1"}'),
+    mimeType: "application/json",
+    fileName: "settlement-1.json",
+  };
+  const first = await storage.putImmutableObject(input);
+  const repeated = await storage.putImmutableObject(input);
+  assert.deepEqual(repeated, first);
+
+  const read = await storage.getImmutableObject(first.objectKey, first.objectVersionId);
+  assert.equal(new TextDecoder().decode(read.bytes), '{"settlementId":"settlement-1"}');
+  assert.equal(read.contentHashSha256, first.contentHashSha256);
+  await assert.rejects(storage.getImmutableObject(first.objectKey, "wrong-version"), /원본 문서 버전/);
+  await assert.rejects(storage.putImmutableObject({ ...input, bytes: new TextEncoder().encode("different") }), /덮어쓸 수 없습니다/);
+});
+
 test("업로드하지 않은 배송 사진 키는 완료 증빙으로 사용할 수 없다", async () => {
   const storage = new MockObjectStorage();
   const ticket = await storage.createDeliveryProofUpload("shipment-1", "image/jpeg");

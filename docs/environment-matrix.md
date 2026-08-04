@@ -8,13 +8,18 @@
 | 변수 | 로컬 | CI | 운영 | 비고 |
 | --- | --- | --- | --- | --- |
 | `NODE_ENV` | `development` | `test` | `production` | 운영 사전검사 기준 |
-| `APP_MODE` | `demo` | `test` | `production` | 운영에서 demo fallback 금지 |
+| `APP_MODE` | `demo` | `production` | `production` | CI 배포 게이트도 PostgreSQL repository 사용; unit test는 명시적 test fixture 가능 |
+| `REPOSITORY_MODE` | `memory` | `postgres` | `postgres` | CI/운영에서 memory fallback 금지 |
 | `API_PORT` | `4100` | `4100` | 플랫폼 주입 | API listen port |
 | `PUBLIC_APP_URL` | `http://localhost:5173` | 테스트 URL | HTTPS URL | 문서/알림 링크 기준 |
 | `WEB_ORIGIN` | `http://localhost:5173` | 테스트 URL | HTTPS URL | CORS 단일 허용 origin |
 | `SESSION_SECRET` | 임의 개발값 | CI 임시값 | 32자 이상 secret | `ENCRYPTION_KEY`와 달라야 함 |
 | `ENCRYPTION_KEY` | 32바이트 예제 키의 base64 | CI 임시값 | 무작위 32바이트를 base64 인코딩한 secret | MFA 비밀키 AES-256-GCM 암호화 키 |
 | `SESSION_COOKIE_SECURE` | `false` | `false` | `true` | 운영 필수 |
+| `SERVICE_ROLE` | 미설정 | `api` | `api`/`worker` | 배포 preflight 역할 |
+| `RELEASE_SHA` | 미설정 | `${GITHUB_SHA}` | Render commit SHA | 반드시 40자리 전체 SHA |
+| `CUTOVER_STORE_IDS` | 빈 값 | 빈 값 | 빈 값 | 현재 코어 미지원; 비어 있지 않으면 preflight 실패 |
+| `WRITE_FREEZE_STORE_IDS` | 빈 값 | 빈 값 | 빈 값 | 현재 코어 미지원; 비어 있지 않으면 preflight 실패 |
 
 ## 데이터베이스와 파일
 
@@ -58,7 +63,7 @@
 
 다음 중 하나라도 어긋나면 API, worker, 배포 파이프라인이 시작을 거부해야 한다.
 
-- `NODE_ENV=production`인데 `APP_MODE=production`이 아니거나 누락됨
+- `NODE_ENV=production`인데 `APP_MODE=production` 또는 `REPOSITORY_MODE=postgres`가 아니거나 누락됨
 - 운영인데 `STORAGE_MODE=s3`, `EMAIL_PROVIDER=smtp`, `SMTP_HOST`, `EMAIL_FROM` 중 하나라도 누락됨
 - 운영 기능 스위치가 켜졌는데 `PROVIDER_MODE`가 `production`이 아님
 - 운영 허용 스위치 또는 Popbill 공통 자격증명 누락
@@ -67,6 +72,12 @@
 
 배포 전 `npm run preflight`를 실행한다. 이 명령은 값의 존재 여부만 검사하며 비밀값을
 출력하지 않는다. 자격증명의 실제 유효성은 별도 샌드박스 연결시험으로 확인한다.
+컨테이너/Render 배포에는 이어서 `node infra/scripts/deploy/preflight.mjs <api|worker|migrate>`를
+실행해 Postgres URL, release SHA, 서비스 역할과 미지원 cutover flag까지 확인한다.
+
+Web은 비밀값을 받지 않는다. `API_UPSTREAM_HOSTPORT`만 Render private-service 참조로
+주입하며 nginx가 `http://` scheme을 붙인다. `VITE_API_BASE=/api/v2`,
+`VITE_DEMO_MODE=false`로 빌드하고 `server/public/v2` 경로는 사용하지 않는다.
 
 ## 책임과 변경 승인
 

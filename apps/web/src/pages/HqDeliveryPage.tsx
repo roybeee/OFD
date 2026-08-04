@@ -2,17 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import { Bike, CalendarDays, Check, ChevronDown, CircleAlert, Image, MapPin, Truck, UserRound } from '../components/icons';
 import type { BootstrapData, Delivery, Order } from '../types';
 import { Button, EmptyState, MetricCard, StatusBadge } from '../components/ui';
-import { ApiError, mutateV2, newIdempotencyKey } from '../api/client';
+import { ApiError, defaultShipmentSchedule, mutateV2, newIdempotencyKey, shipmentMutationPayload, type ShipmentScheduleDraft } from '../api/client';
 
 type Notify = (message: string, tone?: 'success' | 'info' | 'warning') => void;
 
 export function HqDeliveryPage({ data, notify, refresh }: { data: BootstrapData; notify: Notify; refresh: () => void }) {
-  const [plannedDate, setPlannedDate] = useState(data.allowedDeliveryDates[0] ?? '');
-  const [driverByOrder, setDriverByOrder] = useState<Record<string, string>>({});
+  const [plannedDate, setPlannedDate] = useState(data.routeDates[0] ?? '');
+  const [scheduleByOrder, setScheduleByOrder] = useState<Record<string, ShipmentScheduleDraft>>({});
   const [pendingKey, setPendingKey] = useState('');
   const canManage = data.capabilities.includes('hq.shipments.manage');
   const canDispatch = data.capabilities.includes('hq.shipments.dispatch');
-  const drivers = (data.availableActors ?? []).filter((actor) => actor.role === 'driver');
+  const drivers = data.drivers;
   const shipmentOrderIds = new Set(data.deliveries.map((delivery) => delivery.orderId).filter(Boolean));
   const unassigned = data.orders.filter((order) => order.status === 'approved' && order.source !== 'legacy_unverified' && !shipmentOrderIds.has(order.id));
   const visibleDeliveries = data.deliveries.filter((delivery) => !plannedDate || delivery.plannedDate === plannedDate);
@@ -22,11 +22,19 @@ export function HqDeliveryPage({ data, notify, refresh }: { data: BootstrapData;
   const routes = useMemo(() => drivers.map((driver) => ({ driver, deliveries: visibleDeliveries.filter((delivery) => delivery.driverId === driver.id) })).filter((entry) => entry.deliveries.length > 0), [drivers, visibleDeliveries]);
 
   useEffect(() => {
-    if (!data.allowedDeliveryDates.includes(plannedDate)) setPlannedDate(data.allowedDeliveryDates[0] ?? '');
-  }, [data.allowedDeliveryDates, plannedDate]);
+    if (!data.routeDates.includes(plannedDate)) setPlannedDate(data.routeDates[0] ?? '');
+  }, [data.routeDates, plannedDate]);
 
   function mutationOptions() {
     return { idempotencyKey: newIdempotencyKey() };
+  }
+
+  function scheduleFor(order: Order): ShipmentScheduleDraft {
+    return scheduleByOrder[order.id] ?? defaultShipmentSchedule(order);
+  }
+
+  function updateSchedule(order: Order, patch: Partial<ShipmentScheduleDraft>) {
+    setScheduleByOrder((current) => ({ ...current, [order.id]: { ...(current[order.id] ?? defaultShipmentSchedule(order)), ...patch } }));
   }
 
   function mutationError(error: unknown, fallback: string) {
@@ -39,12 +47,12 @@ export function HqDeliveryPage({ data, notify, refresh }: { data: BootstrapData;
   }
 
   async function createShipment(order: Order) {
-    const driverId = driverByOrder[order.id];
-    if (!driverId || !plannedDate || !canManage || pendingKey) return;
+    const schedule = scheduleFor(order);
+    if (!canManage || pendingKey) return;
     setPendingKey(`create:${order.id}`);
     try {
-      await mutateV2('/shipments', { orderId: order.id, driverId, plannedDate }, mutationOptions());
-      notify(`${order.storeName} 배송을 ${drivers.find((driver) => driver.id === driverId)?.name ?? '선택한 기사'}에게 배정했습니다.`, 'success');
+      await mutateV2('/shipments', shipmentMutationPayload(order.id, schedule), mutationOptions());
+      notify(`${order.storeName} 배송을 ${drivers.find((driver) => driver.id === schedule.driverId)?.name ?? '선택한 기사'}에게 배정했습니다.`, 'success');
       refresh();
     } catch (error) {
       mutationError(error, '배송 배정에 실패했습니다.');
@@ -72,7 +80,7 @@ export function HqDeliveryPage({ data, notify, refresh }: { data: BootstrapData;
       <section className="page-heading hq-heading">
         <div><p className="eyebrow"><span /> HQ LOGISTICS</p><h1>배송</h1><p>승인된 발주에 배송일과 기사를 배정하고 출발 상태를 관리합니다.</p></div>
         <div className="heading-tools">
-          <label className="date-picker"><CalendarDays size={18} /><span className="sr-only">배송일</span><select value={plannedDate} onChange={(event) => setPlannedDate(event.target.value)} disabled={data.allowedDeliveryDates.length === 0}>{data.allowedDeliveryDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label>
+          <label className="date-picker"><CalendarDays size={18} /><span className="sr-only">배송일</span><select value={plannedDate} onChange={(event) => setPlannedDate(event.target.value)} disabled={data.routeDates.length === 0}>{data.routeDates.map((date) => <option value={date} key={date}>{date}</option>)}</select></label>
         </div>
       </section>
 
@@ -87,14 +95,18 @@ export function HqDeliveryPage({ data, notify, refresh }: { data: BootstrapData;
         <section className="panel unassigned-panel">
           <div className="panel-heading"><div><span className="section-number">01</span><div><h2>배정이 필요한 승인 주문</h2><p>실제 기사와 배송일을 선택해야 배송 건이 생성됩니다.</p></div></div><span className={`count-badge ${unassigned.length ? 'danger-count' : ''}`}>{unassigned.length}곳</span></div>
           <div className="dispatch-list">
-            {unassigned.map((order) => (
+            {unassigned.map((order) => { const schedule = scheduleFor(order); const complete = Boolean(schedule.driverId && schedule.plannedDate && schedule.routeSequence && schedule.windowStart && schedule.windowEnd); return (
               <article key={order.id} className="dispatch-card">
                 <div className="dispatch-sequence"><Truck size={15} /></div>
-                <div><strong>{order.storeName}</strong><p><MapPin size={14} /> {order.storeAddress || '배송지 정보 없음'}</p><small>{order.code} · {order.itemCount}개 · {plannedDate || '배송일 미선택'}</small></div>
-                <label className="driver-select"><span className="sr-only">{order.storeName} 배송 기사 선택</span><select value={driverByOrder[order.id] ?? ''} onChange={(event) => setDriverByOrder((current) => ({ ...current, [order.id]: event.target.value }))}><option value="" disabled>기사 선택</option>{drivers.map((driver) => <option value={driver.id} key={driver.id}>{driver.name}</option>)}</select><ChevronDown size={15} /></label>
-                <Button data-testid={`shipment-create-${order.id}`} disabled={!canManage || !plannedDate || !driverByOrder[order.id] || Boolean(pendingKey)} onClick={() => createShipment(order)}>{pendingKey === `create:${order.id}` ? '배정 중…' : canManage ? '배정' : '권한 없음'}</Button>
+                <div><strong>{order.storeName}</strong><p><MapPin size={14} /> {order.storeAddress || '배송지 정보 없음'}</p><small>{order.code} · {order.itemCount}개 · 요청일 {order.deliveryDate.slice(0, 10)}</small></div>
+                <label className="driver-select"><span className="sr-only">{order.storeName} 배송 기사 선택</span><select value={schedule.driverId} onChange={(event) => updateSchedule(order, { driverId: event.target.value })}><option value="" disabled>기사 선택</option>{drivers.map((driver) => <option value={driver.id} key={driver.id}>{driver.name}</option>)}</select><ChevronDown size={15} /></label>
+                <label className="driver-select"><span className="sr-only">{order.storeName} 배송 예정일</span><input aria-label={`${order.storeName} 배송 예정일`} type="date" value={schedule.plannedDate} onChange={(event) => updateSchedule(order, { plannedDate: event.target.value })} /></label>
+                <label className="driver-select"><span className="sr-only">{order.storeName} 경로 순번</span><input aria-label={`${order.storeName} 경로 순번`} type="number" min="1" max="9999" placeholder="순번" value={schedule.routeSequence} onChange={(event) => updateSchedule(order, { routeSequence: event.target.value })} /></label>
+                <label className="driver-select"><span className="sr-only">{order.storeName} 배송 시작 시간</span><input aria-label={`${order.storeName} 배송 시작 시간`} type="time" value={schedule.windowStart} onChange={(event) => updateSchedule(order, { windowStart: event.target.value })} /></label>
+                <label className="driver-select"><span className="sr-only">{order.storeName} 배송 종료 시간</span><input aria-label={`${order.storeName} 배송 종료 시간`} type="time" value={schedule.windowEnd} onChange={(event) => updateSchedule(order, { windowEnd: event.target.value })} /></label>
+                <Button data-testid={`shipment-create-${order.id}`} disabled={!canManage || !complete || Boolean(pendingKey)} onClick={() => createShipment(order)}>{pendingKey === `create:${order.id}` ? '배정 중…' : canManage ? '배정' : '권한 없음'}</Button>
               </article>
-            ))}
+            ); })}
             {unassigned.length === 0 && <EmptyState icon={<Check size={24} />} title="배정할 승인 주문이 없습니다">새 승인 주문이 생기면 여기에 표시됩니다.</EmptyState>}
           </div>
         </section>

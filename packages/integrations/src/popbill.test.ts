@@ -27,6 +27,7 @@ function baseServices(): PopbillSdkServices {
     tax: {
       registIssue: (_corp, _invoice, _write, _force, _memo, _email, _dealKey, _user, success) => success({ code: 1 }),
       getInfo: (_corp, _type, _key, _user, _success, error) => error({ code: -110000, message: "not found" }),
+      getPDFURL: (_corp, _type, _key, _user, success) => success("https://download.popbill.com/tax-invoice.pdf"),
     },
     bank: {
       requestJob: (_corp, _bank, _account, _from, _to, _user, success) => success("job"),
@@ -38,6 +39,68 @@ function baseServices(): PopbillSdkServices {
     message: { sendSMS: (_corp, _sender, _to, _name, _body, _reserve, _ads, _senderName, _requestNum, _user, success) => success("sms") },
   };
 }
+
+test("Popbill original PDF is retrieved through the official short-lived URL contract", async () => {
+  const services = baseServices();
+  services.tax.getInfo = (_corp, _type, _key, _user, success) => success({ itemKey: "item", stateCode: 304 });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), "https://download.popbill.com/tax-invoice.pdf");
+    return new Response(new TextEncoder().encode("%PDF-1.4\nmock\n%%EOF\n"), { status: 200, headers: { "content-type": "application/pdf" } });
+  };
+  try {
+    const original = await new ProductionPopbillProvider(config, services).getTaxInvoiceOriginal(invoice);
+    assert.equal(original?.mimeType, "application/pdf");
+    assert.equal(original?.fileName, `${invoice.providerManagementKey}.pdf`);
+    assert.equal(new TextDecoder().decode(original?.bytes).startsWith("%PDF-"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Popbill PDF retrieval rejects non-default ports and oversized Content-Length before buffering", async () => {
+  const services = baseServices();
+  services.tax.getInfo = (_corp, _type, _key, _user, success) => success({ itemKey: "item", stateCode: 304 });
+  services.tax.getPDFURL = (_corp, _type, _key, _user, success) => success("https://download.popbill.com:8443/tax.pdf");
+  await assert.rejects(new ProductionPopbillProvider(config, services).getTaxInvoiceOriginal(invoice), /Popbill 이외/);
+
+  services.tax.getPDFURL = (_corp, _type, _key, _user, success) => success("https://download.popbill.com/tax.pdf");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new Uint8Array([1]), { status: 200, headers: { "content-length": String(20 * 1024 * 1024 + 1) } });
+  try {
+    await assert.rejects(new ProductionPopbillProvider(config, services).getTaxInvoiceOriginal(invoice), /크기가 허용 범위/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Popbill PDF retrieval stops a chunked response once the streamed body exceeds 20 MB", async () => {
+  const services = baseServices();
+  services.tax.getInfo = (_corp, _type, _key, _user, success) => success({ itemKey: "item", stateCode: 304 });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(10 * 1024 * 1024));
+      controller.enqueue(new Uint8Array(10 * 1024 * 1024 + 1));
+      controller.close();
+    },
+  }), { status: 200 });
+  try {
+    await assert.rejects(new ProductionPopbillProvider(config, services).getTaxInvoiceOriginal(invoice),
+      (error: { code?: string }) => error.code === "POPBILL_PDF_INVALID_SIZE");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a terminal provider management key is rejected instead of being presented as a recoverable retry", async () => {
+  const services = baseServices();
+  let issueCalls = 0;
+  services.tax.getInfo = (_corp, _type, _key, _user, success) => success({ itemKey: "failed-item", stateCode: 305 });
+  services.tax.registIssue = (...args) => { issueCalls += 1; args[8]({ code: 1 }); };
+  await assert.rejects(new ProductionPopbillProvider(config, services).issueTaxInvoice(invoice), /실패하거나 취소된 관리키/);
+  assert.equal(issueCalls, 0);
+});
 
 test("Popbill timeout 뒤 관리키 조회로 실제 접수번호를 확인한 경우만 성공 처리한다", async () => {
   let lookup = 0;
@@ -54,11 +117,37 @@ test("Popbill timeout 뒤 관리키 조회로 실제 접수번호를 확인한 �
   assert.equal(lookup, 2);
 });
 
+test("delayed management-key visibility retries lookup with the same key without a second registIssue", async () => {
+  const services = baseServices();
+  let lookups = 0;
+  let issueCalls = 0;
+  services.tax.getInfo = (_corp, _type, key, _user, success, error) => {
+    assert.equal(key, invoice.providerManagementKey);
+    lookups += 1;
+    if (lookups <= 2) error({ code: -110000, message: "not visible yet" });
+    else success({ itemKey: "delayed-item", stateCode: 300 });
+  };
+  services.tax.registIssue = (_corp, _body, _write, _force, _memo, _email, _dealKey, _user, _success, error) => {
+    issueCalls += 1;
+    error(new Error("timeout after provider acceptance"));
+  };
+  const provider = new ProductionPopbillProvider(config, services);
+
+  await assert.rejects(provider.issueTaxInvoice(invoice),
+    (error: { code?: string }) => error.code === "POPBILL_OUTCOME_UNKNOWN");
+  const recovered = await provider.issueTaxInvoice(invoice);
+
+  assert.equal(recovered.receiptId, "delayed-item");
+  assert.equal(issueCalls, 1);
+  assert.equal(lookups, 3);
+});
+
 test("Popbill 응답과 관리키 조회 모두 접수번호가 없으면 성공을 금지한다", async () => {
   const services = baseServices();
   services.tax.registIssue = (_corp, _body, _write, _force, _memo, _email, _dealKey, _user, success) => success({ code: 1 });
   const provider = new ProductionPopbillProvider(config, services);
-  await assert.rejects(provider.issueTaxInvoice(invoice), /실제 문서/);
+  await assert.rejects(provider.issueTaxInvoice(invoice),
+    (error: { code?: string }) => error.code === "POPBILL_OUTCOME_UNKNOWN");
 });
 
 test("공식 registIssue 인자 순서를 지키고 수정계산서 법정 필드를 전달한다", async () => {

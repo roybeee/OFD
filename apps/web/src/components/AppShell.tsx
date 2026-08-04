@@ -8,6 +8,7 @@ import {
   PackageCheck,
   ReceiptText,
   Route,
+  UserRound,
 } from './icons';
 import type { Role } from '../types';
 import { pathCapability } from '../lib/access';
@@ -24,11 +25,12 @@ const navByRole: Record<Role, NavItem[]> = {
     { path: '/hq/delivery', label: '배송', icon: Route },
     { path: '/hq/reconciliation', label: '입금 대사', icon: Landmark },
     { path: '/hq/invoices', label: '정산·세금계산서', icon: FileCheck2 },
+    { path: '/hq/accounts', label: '계정 관리', icon: UserRound },
   ],
   driver: [{ path: '/driver/today', label: '오늘 배송', icon: Bike }],
 };
 
-export function AppShell({ role, path, actorName, actorRole, storeName, deliveryCount, capabilities, onNavigate, onLogout, children }: {
+export function AppShell({ role, path, actorName, actorRole, storeName, deliveryCount, capabilities, onNavigate, onLogout, logoutPending = false, children }: {
   role: Role;
   path: string;
   actorName: string;
@@ -38,6 +40,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
   capabilities: string[];
   onNavigate: (path: string) => void;
   onLogout: () => void;
+  logoutPending?: boolean;
   children: ReactNode;
 }) {
   const nav = navByRole[role].filter((item) => capabilities.includes(pathCapability[item.path]));
@@ -59,7 +62,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
             <div className="profile-button" aria-label={`로그인 사용자 ${actorName}`}>
               <span>{actorName.slice(0, 1)}</span><span className="profile-copy"><strong>{actorName}</strong><small>{actorRoleLabel}</small></span>
             </div>
-            <button type="button" className="logout-button" onClick={onLogout}>로그아웃</button>
+            <button type="button" className="logout-button" onClick={onLogout} disabled={logoutPending}>{logoutPending ? '로그아웃 중…' : '로그아웃'}</button>
           </div>
         </div>
 

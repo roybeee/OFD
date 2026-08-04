@@ -8,10 +8,10 @@ server {
   add_header X-Content-Type-Options "nosniff" always;
   add_header Referrer-Policy "strict-origin-when-cross-origin" always;
   add_header Permissions-Policy "camera=(self), geolocation=(), microphone=()" always;
-  add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; connect-src 'self' ${API_UPSTREAM}; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
+  add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
 
   location /api/v2/ {
-    proxy_pass ${API_UPSTREAM};
+    proxy_pass http://${API_UPSTREAM_HOSTPORT};
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -29,5 +29,15 @@ server {
     access_log off;
     add_header Content-Type text/plain;
     return 200 "ok\n";
+  }
+
+  location = /readyz {
+    access_log off;
+    proxy_pass http://${API_UPSTREAM_HOSTPORT}/api/v2/ready;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 5s;
   }
 }

@@ -28,7 +28,15 @@
     "infra:down": "docker compose -f infra/docker-compose.yml down",
     "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=200",
     "smoke:built-api": "node infra/scripts/smoke-built-api.mjs",
-    "preflight": "node infra/scripts/validate-production-env.mjs"
+    "preflight": "node infra/scripts/validate-production-env.mjs",
+    "legacy:migrate": "node infra/scripts/legacy-migration.mjs",
+    "legacy:migrate:export": "node infra/scripts/legacy-migration.mjs export",
+    "legacy:migrate:dry-run": "node infra/scripts/legacy-migration.mjs dry-run",
+    "legacy:migrate:report": "node infra/scripts/legacy-migration.mjs report",
+    "legacy:migrate:apply": "node infra/scripts/legacy-migration.mjs apply",
+    "legacy:migrate:cutover-check": "node infra/scripts/legacy-migration.mjs cutover-check",
+    "legacy:migrate:rollback-check": "node infra/scripts/legacy-migration.mjs rollback-check",
+    "render:rollback": "node infra/scripts/deploy/rollback-render-deploy.mjs"
   },
   "engines": {
     "node": ">=22.12.0",
