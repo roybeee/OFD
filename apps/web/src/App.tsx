@@ -10,12 +10,15 @@ import { HqInvoicesPage } from './pages/HqInvoicesPage';
 import { HqAccountsPage } from './pages/HqAccountsPage';
 import { HqOrdersPage } from './pages/HqOrdersPage';
 import { HqReconciliationPage } from './pages/HqReconciliationPage';
+import { HqSalesPage } from './pages/HqSalesPage';
+import { HqProductsPage } from './pages/HqProductsPage';
+import { HqOpeningsPage } from './pages/HqOpeningsPage';
 import { StoreDocumentsPage } from './pages/StoreDocumentsPage';
 import { StoreOrdersPage } from './pages/StoreOrdersPage';
 import type { BootstrapData, PublicActor, Toast } from './types';
 import { browserPathFor, canAccessPath, defaultPathFor, logicalPathFromLocation, roleForPath } from './lib/access';
 
-const knownPaths = new Set(['/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/accounts', '/driver/today', '/unauthorized']);
+const knownPaths = new Set(['/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/sales', '/hq/products', '/hq/openings', '/hq/accounts', '/driver/today', '/unauthorized']);
 
 function initialPath() {
   const logicalPath = logicalPathFromLocation(window.location.pathname, import.meta.env.BASE_URL);
@@ -177,6 +180,9 @@ export default function App() {
       {path === '/hq/delivery' && <HqDeliveryPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
       {path === '/hq/reconciliation' && <HqReconciliationPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
       {path === '/hq/invoices' && <HqInvoicesPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
+      {path === '/hq/sales' && <HqSalesPage data={data} notify={notify} />}
+      {path === '/hq/products' && <HqProductsPage data={data} notify={notify} />}
+      {path === '/hq/openings' && <HqOpeningsPage data={data} notify={notify} />}
       {path === '/hq/accounts' && <HqAccountsPage data={data} notify={notify} onCurrentSessionRevoked={currentSessionRevoked} />}
       {path === '/driver/today' && <DriverTodayPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
       <ToastRegion toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />

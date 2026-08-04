@@ -445,6 +445,63 @@ async function authPost<T>(path: string, body: Record<string, unknown>): Promise
   return apiRequest<T>(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OFD': '1' }, body: JSON.stringify(body) }, false);
 }
 
+/* ── POS·현장 운영 (V1 이식) ── */
+export type PosReportUnit = 'day' | 'week' | 'month';
+export type PosReportMix = { key: string; name: string; productId: string | null; qty: number; amount: number; stores: Array<{ storeId: string; qty: number; amount: number }> };
+export type PosReportRow = { bucket: string; label: string; perStore: Record<string, { qty: number; amount: number }>; total: { qty: number; amount: number }; mix: PosReportMix[] };
+export type PosReportResult = { unit: PosReportUnit; rows: PosReportRow[]; storeIds: string[] };
+export type PosProduct = { id: string; sku: string; name: string; category: string; storeId: string | null; consumerPrice: number | null };
+export type PosDeviation = { productId: string; productName: string; storeId: string; consumerPrice: number; avgSoldPrice: number; deviationPct: number };
+export type PosUnmatched = { storeId: string; rawName: string; qty: number; amount: number; suggestion: { productId: string; productName: string; similarity: number } | null };
+export type PosWasteItem = { productId: string; productName: string; received: number | null; sold: number; waste: number | null; over: number; wasteRatePct: number | null; lossAmount: number | null };
+export type PosWasteResult = { storeId: string; date: string; hasReceipt: boolean; hasPos: boolean; items: PosWasteItem[]; totals: { received: number | null; sold: number; waste: number | null; wasteRatePct: number | null; lossAmount: number | null } };
+export type OpeningTask = { id: string; phase: string; group: string; title: string; detail: string; owner: 'hq' | 'pt' | 'both'; dayOffset: number; deadline: string; done: boolean; doneAt: string | null; memo: string; overdue: boolean; custom: boolean };
+export type OpeningSummary = { id: string; name: string; region: string | null; openDate: string; mode: string; storeType: string; stage: string; storeId: string | null; memo: string; total: number; done: number; overdue: number; progressPct: number; dDay: number; phases: Record<string, { total: number; done: number }> };
+export type OpeningDetail = OpeningSummary & { tasks: OpeningTask[] };
+export type OpeningBoard = { openings: OpeningSummary[]; board: Record<string, OpeningSummary[]>; kpi: { active: number; overdue: number; within30Days: number } };
+
+function getV2<T>(path: string): Promise<T> {
+  return apiRequest<T>(path, { method: 'GET', headers: { Accept: 'application/json' } }, true);
+}
+const query = (params: Record<string, string | undefined>) =>
+  Object.entries(params).filter(([, value]) => value).map(([key, value]) => `${key}=${encodeURIComponent(value!)}`).join('&');
+
+export function loadPosReport(from: string, to: string, unit: PosReportUnit, stores: string[] = [], products: string[] = []) {
+  return getV2<PosReportResult>(`/pos/report?${query({ from, to, unit, stores: stores.join(',') || undefined, products: products.join(',') || undefined })}`);
+}
+export function loadPosProducts(from: string, to: string) {
+  return getV2<{ products: PosProduct[]; deviations: PosDeviation[] }>(`/pos/products?${query({ from, to })}`);
+}
+export function loadPosUnmatched(from: string, to: string) {
+  return getV2<{ items: PosUnmatched[] }>(`/pos/unmatched?${query({ from, to })}`);
+}
+export function loadPosWaste(storeId: string, date: string) {
+  return getV2<PosWasteResult>(`/pos/waste?${query({ storeId, date })}`);
+}
+export function loadPosLinks() {
+  return getV2<{ links: Array<{ id: string; storeId: string; merchantId: string; status: string; lastSyncAt: string | null }> }>('/pos/links');
+}
+export function syncPosV2(from: string, to: string, idempotencyKey: string) {
+  return mutateV2<{ from: string; to: string; results: Array<{ merchantId: string; rows: number; status: string; error?: string }> }>('/pos/sync', { from, to }, { idempotencyKey });
+}
+export function createPosAliasV2(rawName: string, productId: string, idempotencyKey: string) {
+  return mutateV2<{ aliasId: string; scopeStoreId: string | null; relinked: number }>('/pos/aliases', { rawName, productId }, { idempotencyKey });
+}
+export function createPosProductV2(input: { name: string; category: string; storeId: string | null; consumerPrice: number | null; rawName?: string }, idempotencyKey: string) {
+  return mutateV2<{ product: PosProduct }>('/pos/products', input, { idempotencyKey });
+}
+export function loadOpeningsV2() { return getV2<OpeningBoard>('/openings'); }
+export function loadOpeningV2(id: string) { return getV2<OpeningDetail>(`/openings/${encodeURIComponent(id)}`); }
+export function createOpeningV2(input: { name: string; region: string | null; openDate: string; mode: string; storeType: string; stage: string }, idempotencyKey: string) {
+  return mutateV2<OpeningDetail>('/openings', input, { idempotencyKey });
+}
+export function patchOpeningV2(id: string, body: Record<string, unknown>) {
+  return apiRequest<OpeningSummary>(`/openings/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-OFD': '1' }, body: JSON.stringify(body) }, true);
+}
+export function toggleOpeningTaskV2(taskId: string, done: boolean, memo?: string) {
+  return apiRequest<{ ok: boolean }>(`/openings/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-OFD': '1' }, body: JSON.stringify(memo === undefined ? { done } : { done, memo }) }, true);
+}
+
 export function logoutV2() { return authPost<Record<string, unknown>>('/auth/logout', {}); }
 
 export type LoginResult = { authenticated: boolean; mfaRequired: boolean; challengeToken?: string; actor: PublicActor };
