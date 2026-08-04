@@ -76,3 +76,89 @@ test("빈 행 배열은 아무것도 저장하지 않는다", async () => {
   assert.equal(await store.recordSales("store-mapdal", [], "sync"), 0);
   assert.deepEqual(await store.dailyTotals("2026-01-01", "2026-12-31"), []);
 });
+
+/* ── 2단계: 상품·별칭 ── */
+
+test("이름 직결 매칭: 매장 전용 상품이 공통 상품보다 우선한다", async () => {
+  const store = new MemoryPosStore();
+  const common = await store.createProduct({ name: "아메리카노", category: "음료", storeId: null, consumerPrice: 4_500 });
+  const exclusive = await store.createProduct({ name: "아메리카노", category: "음료", storeId: "store-mapdal", consumerPrice: 5_000 });
+  await store.recordSales("store-mapdal", [{ date: "2026-08-03", rawName: "아메리카노", qty: 1, amount: 5_000 }], "sync");
+  await store.recordSales("store-doksan", [{ date: "2026-08-03", rawName: "아메리카노", qty: 1, amount: 4_500 }], "sync");
+  assert.equal(await store.resolveUnmatched(), 2);
+  const unmatched = await store.listUnmatched("2026-08-03", "2026-08-03");
+  assert.equal(unmatched.length, 0);
+  const dev = await store.priceDeviations("2026-08-03", "2026-08-03", 0);
+  assert.equal(dev.find((d) => d.storeId === "store-mapdal")?.productId, exclusive.id, "맵달은 전용 상품으로");
+  assert.equal(dev.find((d) => d.storeId === "store-doksan")?.productId, common.id, "독산은 공통 상품으로");
+});
+
+test("전용 상품 별칭은 그 매장 매출만 소급 매핑한다 (오귀속 차단)", async () => {
+  const store = new MemoryPosStore();
+  const exclusive = await store.createProduct({ name: "콜드브루", category: "음료", storeId: "store-mapdal", consumerPrice: 5_500 });
+  const rows = [{ date: "2026-08-03", rawName: "ICE 브루잉커피", qty: 2, amount: 11_000 }];
+  await store.recordSales("store-mapdal", rows, "sync");
+  await store.recordSales("store-doksan", rows, "sync");
+  const { scopeStoreId, relinked } = await store.upsertAlias("ICE 브루잉커피", exclusive.id);
+  assert.equal(scopeStoreId, "store-mapdal");
+  assert.equal(relinked, 1, "타 매장 동명 매출은 건드리지 않는다");
+  const unmatched = await store.listUnmatched("2026-08-03", "2026-08-03");
+  assert.deepEqual(unmatched.map((u) => u.storeId), ["store-doksan"]);
+});
+
+test("별칭 해제는 해당 스코프만 미매칭으로 원복한다", async () => {
+  const store = new MemoryPosStore();
+  const product = await store.createProduct({ name: "봉투포장", category: "기타", storeId: null, consumerPrice: 100 });
+  await store.recordSales("store-mapdal", [{ date: "2026-08-03", rawName: "봉투", qty: 3, amount: 300 }], "sync");
+  const { aliasId, relinked } = await store.upsertAlias("봉투", product.id);
+  assert.equal(relinked, 1);
+  const removed = await store.removeAlias(aliasId);
+  assert.deepEqual(removed, { reverted: 1 });
+  assert.equal((await store.listUnmatched("2026-08-03", "2026-08-03")).length, 1);
+  assert.equal(await store.removeAlias(aliasId), null, "이미 지운 별칭은 null");
+});
+
+test("정규화: 공백·대소문자가 달라도 같은 별칭으로 본다", async () => {
+  const store = new MemoryPosStore();
+  const product = await store.createProduct({ name: "1 DONUT + 1 COFFEE", category: "세트", storeId: null, consumerPrice: 7_000 });
+  await store.recordSales("store-mapdal", [{ date: "2026-08-03", rawName: "1 donut + 1 coffee", qty: 1, amount: 7_000 }], "sync");
+  assert.equal(await store.resolveUnmatched(), 1, "이름 직결도 정규화 기준으로 매칭");
+  assert.equal((await store.upsertAlias("1 DONUT + 1 COFFEE", product.id)).relinked, 1);
+});
+
+test("유사도 제안: 타 매장 전용 상품은 제안에서 제외한다", async () => {
+  const store = new MemoryPosStore();
+  await store.createProduct({ name: "그린티초코", category: "도넛", storeId: "store-doksan", consumerPrice: 4_100 });
+  await store.recordSales("store-mapdal", [{ date: "2026-08-03", rawName: "그린티초코도넛", qty: 1, amount: 4_100 }], "sync");
+  const [item] = await store.listUnmatched("2026-08-03", "2026-08-03");
+  assert.equal(item?.suggestion, null, "독산 전용 상품을 맵달 미매칭에 제안하면 안 된다");
+  await store.createProduct({ name: "그린티초코", category: "도넛", storeId: null, consumerPrice: 4_100 });
+  const [again] = await store.listUnmatched("2026-08-03", "2026-08-03");
+  assert.ok((again?.suggestion?.similarity ?? 0) >= 60, "공통 상품은 제안된다");
+});
+
+test("가격 편차: 임계값 이상만, 절대값 내림차순", async () => {
+  const store = new MemoryPosStore();
+  const cinnamon = await store.createProduct({ name: "시나몬슈가", category: "도넛", storeId: null, consumerPrice: 3_400 });
+  const plain = await store.createProduct({ name: "플레인", category: "도넛", storeId: null, consumerPrice: 3_000 });
+  await store.recordSales("store-doksan", [
+    { date: "2026-08-03", rawName: "시나몬슈가", qty: 10, amount: 37_130 }, /* +9.2% */
+    { date: "2026-08-03", rawName: "플레인", qty: 10, amount: 30_000 },    /* 0% */
+  ], "sync");
+  await store.resolveUnmatched();
+  const deviations = await store.priceDeviations("2026-08-03", "2026-08-03", 3);
+  assert.equal(deviations.length, 1);
+  assert.equal(deviations[0]?.productId, cinnamon.id);
+  assert.equal(deviations[0]?.deviationPct, 9.2);
+  assert.equal((await store.priceDeviations("2026-08-03", "2026-08-03", 0)).find((d) => d.productId === plain.id)?.deviationPct, 0);
+});
+
+test("상품 수정: 카테고리·스코프·소비자가", async () => {
+  const store = new MemoryPosStore();
+  const product = await store.createProduct({ name: "냉동 고메도넛 세트", category: "도넛", storeId: null, consumerPrice: 23_100 });
+  const updated = await store.updateProduct(product.id, { category: "세트", storeId: "store-mapdal", consumerPrice: 22_000 });
+  assert.equal(updated?.category, "세트");
+  assert.equal(updated?.storeId, "store-mapdal");
+  assert.equal(updated?.consumerPrice, 22_000);
+  assert.equal(await store.updateProduct("없는-id", { category: "도넛" }), null);
+});

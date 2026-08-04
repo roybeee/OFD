@@ -402,6 +402,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           from, to,
         });
         const rows = await posStore.recordSales(link.storeId, items, from === to ? "sync" : "backfill");
+        await posStore.resolveUnmatched(link.storeId);
         await posStore.touchLinkSynced(link.id, new Date());
         await posStore.recordRun({ storeId: link.storeId, from, to, rows, status: "ok" });
         results.push({ merchantId: link.merchantId, rows, status: "ok" });
@@ -420,6 +421,89 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
     const from = dateOnly.test(query.from ?? "") ? query.from! : to;
     return { from, to, totals: await posStore.dailyTotals(from, to) };
+  });
+
+  /* ── 상품·별칭 (V1 이식 2단계) ── */
+  app.get("/api/v2/pos/products", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    const [products, deviations] = await Promise.all([
+      posStore.listProducts(), posStore.priceDeviations(from, to, 3),
+    ]);
+    return { products, deviations, from, to };
+  });
+
+  app.post("/api/v2/pos/products", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { name?: string; category?: string; storeId?: string | null; consumerPrice?: number | null; rawName?: string };
+    if (!body?.name?.trim()) throw new PosDomainError("PRODUCT_NAME_REQUIRED", "상품명이 필요합니다.", 422);
+    const category = ["도넛", "링도넛", "음료", "굿즈", "서비스", "세트", "기타"].includes(body.category ?? "") ? body.category! : "기타";
+    const product = await posStore.createProduct({
+      name: body.name.trim(), category, storeId: body.storeId ?? null,
+      consumerPrice: typeof body.consumerPrice === "number" ? body.consumerPrice : null,
+    });
+    /* 미매칭 승격: 원본 품목명이 오면 별칭까지 걸어 소급 매칭 */
+    const promoted = body.rawName?.trim() ? await posStore.upsertAlias(body.rawName, product.id) : null;
+    await posStore.resolveUnmatched();
+    reply.code(201);
+    return { product, promoted };
+  });
+
+  app.patch("/api/v2/pos/products/:id", async (request) => {
+    assertPosRole(request.actor);
+    const body = request.body as { category?: string; storeId?: string | null; consumerPrice?: number | null };
+    const patch: Record<string, unknown> = {};
+    if (body.category !== undefined) {
+      if (!["도넛", "링도넛", "음료", "굿즈", "서비스", "세트", "기타"].includes(body.category)) {
+        throw new PosDomainError("BAD_CATEGORY", "허용되지 않는 카테고리입니다.", 422);
+      }
+      patch.category = body.category;
+    }
+    if (Object.hasOwn(body, "storeId")) patch.storeId = body.storeId ?? null;
+    if (Object.hasOwn(body, "consumerPrice")) patch.consumerPrice = body.consumerPrice ?? null;
+    const product = await posStore.updateProduct((request.params as { id: string }).id, patch);
+    if (!product) throw new PosDomainError("PRODUCT_NOT_FOUND", "상품을 찾을 수 없습니다.", 404);
+    return { product };
+  });
+
+  app.get("/api/v2/pos/unmatched", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    return { from, to, items: await posStore.listUnmatched(from, to) };
+  });
+
+  app.get("/api/v2/pos/aliases", async (request) => {
+    assertPosRole(request.actor);
+    return { aliases: await posStore.listAliases() };
+  });
+
+  app.post("/api/v2/pos/aliases", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { rawName?: string; productId?: string };
+    if (!body?.rawName?.trim() || !body.productId) {
+      throw new PosDomainError("ALIAS_FIELDS", "rawName, productId가 필요합니다.", 422);
+    }
+    try {
+      const result = await posStore.upsertAlias(body.rawName, body.productId);
+      reply.code(201);
+      return result; /* scopeStoreId가 있으면 해당 매장에만 적용됐다는 뜻 */
+    } catch (error) {
+      if (error instanceof Error && error.message === "PRODUCT_NOT_FOUND") {
+        throw new PosDomainError("PRODUCT_NOT_FOUND", "상품을 찾을 수 없습니다.", 404);
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/api/v2/pos/aliases/:id", async (request) => {
+    assertPosRole(request.actor);
+    const result = await posStore.removeAlias((request.params as { id: string }).id);
+    if (!result) throw new PosDomainError("ALIAS_NOT_FOUND", "별칭을 찾을 수 없습니다.", 404);
+    return result; /* reverted = 미매칭으로 소급 원복된 행 수 */
   });
 
   app.post("/api/v2/webhooks/tossplace", async (request) => {

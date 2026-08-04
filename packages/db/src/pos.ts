@@ -25,7 +25,48 @@ export interface PosStore {
   touchLinkSynced(id: string, at: Date): Promise<void>;
   recordRun(run: PosSyncRun): Promise<void>;
   recordWebhookInbox(provider: string, payload: unknown): Promise<void>;
+  /* ── 2단계: 상품·별칭 ── */
+  createProduct(input: PosProductInput): Promise<PosProduct>;
+  listProducts(): Promise<PosProduct[]>;
+  updateProduct(id: string, patch: Partial<Pick<PosProduct, "category" | "storeId" | "consumerPrice">>): Promise<PosProduct | null>;
+  upsertAlias(rawName: string, productId: string): Promise<{ aliasId: string; scopeStoreId: string | null; relinked: number }>;
+  removeAlias(aliasId: string): Promise<{ reverted: number } | null>;
+  listAliases(): Promise<PosAlias[]>;
+  resolveUnmatched(storeId?: string): Promise<number>;
+  listUnmatched(from: string, to: string): Promise<PosUnmatched[]>;
+  priceDeviations(from: string, to: string, thresholdPct: number): Promise<PosDeviation[]>;
   close(): Promise<void>;
+}
+
+export interface PosProductInput {
+  name: string; category: string; storeId: string | null; consumerPrice: number | null; sku?: string; unit?: string;
+}
+export interface PosProduct extends PosProductInput { id: string; active: boolean }
+export interface PosAlias { id: string; alias: string; storeId: string | null; productId: string; productName: string }
+export interface PosUnmatched {
+  storeId: string; rawName: string; qty: number; amount: number;
+  suggestion: { productId: string; productName: string; similarity: number } | null;
+}
+export interface PosDeviation {
+  productId: string; productName: string; storeId: string;
+  consumerPrice: number; avgSoldPrice: number; deviationPct: number;
+}
+
+/** V1 normName 이식: 공백 제거 + 소문자 */
+export const normalizeAlias = (value: string): string => value.replace(/\s+/g, "").toLowerCase();
+
+/** V1 유사도 제안 이식: 바이그램 Dice 계수 (0~100) */
+export function aliasSimilarity(a: string, b: string): number {
+  const na = normalizeAlias(a); const nb = normalizeAlias(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 100;
+  const grams = (v: string) => { const g = new Map<string, number>();
+    for (let i = 0; i < v.length - 1; i++) { const k = v.slice(i, i + 2); g.set(k, (g.get(k) ?? 0) + 1); } return g; };
+  const ga = grams(na); const gb = grams(nb);
+  let overlap = 0;
+  for (const [k, ca] of ga) overlap += Math.min(ca, gb.get(k) ?? 0);
+  const total = [...ga.values()].reduce((x, y) => x + y, 0) + [...gb.values()].reduce((x, y) => x + y, 0);
+  return total ? Math.round((2 * overlap / total) * 100) : 0;
 }
 
 export class PostgresPosStore implements PosStore {
@@ -109,6 +150,113 @@ export class PostgresPosStore implements PosStore {
        ON CONFLICT DO NOTHING`,
       [randomUUID(), provider, `tossplace:${randomUUID()}`, JSON.stringify(payload ?? {})]);
   }
+  async createProduct(input: PosProductInput): Promise<PosProduct> {
+    const sku = input.sku ?? `POS-${randomUUID().slice(0, 8)}`;
+    const res = await this.pool.query(
+      `INSERT INTO products (sku, name, unit, category, store_id, consumer_price)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING id, sku, name, unit, category, store_id, consumer_price, active`,
+      [sku, input.name, input.unit ?? "EA", input.category, input.storeId, input.consumerPrice]);
+    return mapProduct(res.rows[0]);
+  }
+  async listProducts(): Promise<PosProduct[]> {
+    const res = await this.pool.query(
+      "SELECT id, sku, name, unit, category, store_id, consumer_price, active FROM products WHERE active ORDER BY category, name");
+    return res.rows.map(mapProduct);
+  }
+  async updateProduct(id: string, patch: Partial<Pick<PosProduct, "category" | "storeId" | "consumerPrice">>): Promise<PosProduct | null> {
+    const res = await this.pool.query(
+      `UPDATE products SET
+         category = COALESCE($2, category),
+         store_id = CASE WHEN $3 THEN $4 ELSE store_id END,
+         consumer_price = CASE WHEN $5 THEN $6 ELSE consumer_price END,
+         updated_at = now()
+       WHERE id = $1
+       RETURNING id, sku, name, unit, category, store_id, consumer_price, active`,
+      [id, patch.category ?? null,
+       Object.hasOwn(patch, "storeId"), patch.storeId ?? null,
+       Object.hasOwn(patch, "consumerPrice"), patch.consumerPrice ?? null]);
+    return res.rows[0] ? mapProduct(res.rows[0]) : null;
+  }
+  async upsertAlias(rawName: string, productId: string): Promise<{ aliasId: string; scopeStoreId: string | null; relinked: number }> {
+    const alias = normalizeAlias(rawName);
+    const prod = await this.pool.query("SELECT store_id FROM products WHERE id = $1 AND active", [productId]);
+    if (!prod.rows[0]) throw new Error("PRODUCT_NOT_FOUND");
+    const scope: string | null = prod.rows[0].store_id ?? null;
+    const up = await this.pool.query(
+      `INSERT INTO product_aliases (alias, store_id, product_id) VALUES ($1,$2,$3)
+       ON CONFLICT (alias, COALESCE(store_id, '00000000-0000-0000-0000-000000000000'::uuid))
+       DO UPDATE SET product_id = EXCLUDED.product_id
+       RETURNING id`, [alias, scope, productId]);
+    const relink = await this.pool.query(
+      `UPDATE pos_sales SET product_id = $1, updated_at = now()
+       WHERE lower(regexp_replace(raw_name, '\\s+', '', 'g')) = $2
+         AND ($3::uuid IS NULL OR store_id = $3)`, [productId, alias, scope]);
+    return { aliasId: up.rows[0].id, scopeStoreId: scope, relinked: relink.rowCount ?? 0 };
+  }
+  async removeAlias(aliasId: string): Promise<{ reverted: number } | null> {
+    const found = await this.pool.query("DELETE FROM product_aliases WHERE id = $1 RETURNING alias, store_id, product_id", [aliasId]);
+    if (!found.rows[0]) return null;
+    const { alias, store_id: scope, product_id: productId } = found.rows[0];
+    const rev = await this.pool.query(
+      `UPDATE pos_sales SET product_id = NULL, updated_at = now()
+       WHERE product_id = $1 AND lower(regexp_replace(raw_name, '\\s+', '', 'g')) = $2
+         AND ($3::uuid IS NULL OR store_id = $3)`, [productId, alias, scope]);
+    return { reverted: rev.rowCount ?? 0 };
+  }
+  async listAliases(): Promise<PosAlias[]> {
+    const res = await this.pool.query(
+      `SELECT a.id, a.alias, a.store_id, a.product_id, p.name AS product_name
+       FROM product_aliases a JOIN products p ON p.id = a.product_id ORDER BY a.created_at DESC`);
+    return res.rows.map((r) => ({ id: r.id, alias: r.alias, storeId: r.store_id ?? null, productId: r.product_id, productName: r.product_name }));
+  }
+  async resolveUnmatched(storeId?: string): Promise<number> {
+    /* 우선순위: 매장 별칭 → 공통 별칭 → 매장 전용 상품명 → 공통 상품명 (V1 resolveSku 이식) */
+    const res = await this.pool.query(
+      `WITH target AS (
+         SELECT s.id, s.store_id, lower(regexp_replace(s.raw_name, '\\s+', '', 'g')) AS norm
+         FROM pos_sales s WHERE s.product_id IS NULL AND ($1::uuid IS NULL OR s.store_id = $1)
+       ), resolved AS (
+         SELECT t.id, COALESCE(a_store.product_id, a_global.product_id, p_store.id, p_global.id) AS pid
+         FROM target t
+         LEFT JOIN product_aliases a_store ON a_store.alias = t.norm AND a_store.store_id = t.store_id
+         LEFT JOIN product_aliases a_global ON a_global.alias = t.norm AND a_global.store_id IS NULL
+         LEFT JOIN products p_store ON p_store.active AND p_store.store_id = t.store_id
+           AND lower(regexp_replace(p_store.name, '\\s+', '', 'g')) = t.norm
+         LEFT JOIN products p_global ON p_global.active AND p_global.store_id IS NULL
+           AND lower(regexp_replace(p_global.name, '\\s+', '', 'g')) = t.norm
+       )
+       UPDATE pos_sales s SET product_id = r.pid, updated_at = now()
+       FROM resolved r WHERE s.id = r.id AND r.pid IS NOT NULL`, [storeId ?? null]);
+    return res.rowCount ?? 0;
+  }
+  async listUnmatched(from: string, to: string): Promise<PosUnmatched[]> {
+    const res = await this.pool.query(
+      `SELECT store_id, raw_name, SUM(qty)::int AS qty, SUM(amount)::bigint AS amount
+       FROM pos_sales WHERE product_id IS NULL AND sale_date BETWEEN $1 AND $2
+       GROUP BY store_id, raw_name ORDER BY SUM(amount) DESC`, [from, to]);
+    const products = await this.listProducts();
+    return res.rows.map((r) => ({
+      storeId: r.store_id, rawName: r.raw_name, qty: Number(r.qty), amount: Number(r.amount),
+      suggestion: bestSuggestion(r.raw_name, r.store_id, products),
+    }));
+  }
+  async priceDeviations(from: string, to: string, thresholdPct: number): Promise<PosDeviation[]> {
+    const res = await this.pool.query(
+      `SELECT s.product_id, p.name, s.store_id, p.consumer_price,
+              (SUM(s.amount)::numeric / NULLIF(SUM(s.qty), 0)) AS avg_price
+       FROM pos_sales s JOIN products p ON p.id = s.product_id
+       WHERE s.sale_date BETWEEN $1 AND $2 AND p.consumer_price IS NOT NULL AND p.consumer_price > 0
+       GROUP BY s.product_id, p.name, s.store_id, p.consumer_price`, [from, to]);
+    return res.rows.map((r) => {
+      const avg = Number(r.avg_price ?? 0);
+      const base = Number(r.consumer_price);
+      return { productId: r.product_id, productName: r.name, storeId: r.store_id,
+        consumerPrice: base, avgSoldPrice: Math.round(avg),
+        deviationPct: base ? Math.round(((avg - base) / base) * 1000) / 10 : 0 };
+    }).filter((d) => Math.abs(d.deviationPct) >= thresholdPct)
+      .sort((a, b) => Math.abs(b.deviationPct) - Math.abs(a.deviationPct));
+  }
   async close(): Promise<void> { await this.pool.end(); }
 }
 
@@ -155,12 +303,132 @@ export class MemoryPosStore implements PosStore {
   }
   async recordRun(run: PosSyncRun): Promise<void> { this.runs.push({ ...run }); }
   async recordWebhookInbox(_provider: string, payload: unknown): Promise<void> { this.inbox.push(payload); }
+  private products = new Map<string, PosProduct>();
+  private aliases = new Map<string, { alias: string; storeId: string | null; productId: string }>();
+  async createProduct(input: PosProductInput): Promise<PosProduct> {
+    const product: PosProduct = { id: randomUUID(), active: true, unit: input.unit ?? "EA",
+      sku: input.sku ?? `POS-${randomUUID().slice(0, 8)}`, ...input };
+    this.products.set(product.id, product);
+    return { ...product };
+  }
+  async listProducts(): Promise<PosProduct[]> { return [...this.products.values()].filter((p) => p.active).map((p) => ({ ...p })); }
+  async updateProduct(id: string, patch: Partial<Pick<PosProduct, "category" | "storeId" | "consumerPrice">>): Promise<PosProduct | null> {
+    const product = this.products.get(id);
+    if (!product) return null;
+    if (patch.category !== undefined) product.category = patch.category;
+    if (Object.hasOwn(patch, "storeId")) product.storeId = patch.storeId ?? null;
+    if (Object.hasOwn(patch, "consumerPrice")) product.consumerPrice = patch.consumerPrice ?? null;
+    return { ...product };
+  }
+  async upsertAlias(rawName: string, productId: string): Promise<{ aliasId: string; scopeStoreId: string | null; relinked: number }> {
+    const product = this.products.get(productId);
+    if (!product?.active) throw new Error("PRODUCT_NOT_FOUND");
+    const alias = normalizeAlias(rawName);
+    const scope = product.storeId ?? null;
+    const key = `${alias}|${scope ?? ""}`;
+    let id = [...this.aliases.entries()].find(([, a]) => `${a.alias}|${a.storeId ?? ""}` === key)?.[0];
+    if (!id) { id = randomUUID(); }
+    this.aliases.set(id, { alias, storeId: scope, productId });
+    let relinked = 0;
+    for (const [k, row] of this.sales) {
+      if (normalizeAlias(row.rawName) !== alias) continue;
+      if (scope && row.storeId !== scope) continue;
+      this.salesProduct.set(k, productId); relinked++;
+    }
+    return { aliasId: id, scopeStoreId: scope, relinked };
+  }
+  async removeAlias(aliasId: string): Promise<{ reverted: number } | null> {
+    const found = this.aliases.get(aliasId);
+    if (!found) return null;
+    this.aliases.delete(aliasId);
+    let reverted = 0;
+    for (const [k, row] of this.sales) {
+      if (this.salesProduct.get(k) !== found.productId) continue;
+      if (normalizeAlias(row.rawName) !== found.alias) continue;
+      if (found.storeId && row.storeId !== found.storeId) continue;
+      this.salesProduct.delete(k); reverted++;
+    }
+    return { reverted };
+  }
+  async listAliases(): Promise<PosAlias[]> {
+    return [...this.aliases.entries()].map(([id, a]) => ({ id, alias: a.alias, storeId: a.storeId,
+      productId: a.productId, productName: this.products.get(a.productId)?.name ?? "" }));
+  }
+  private salesProduct = new Map<string, string>();
+  async resolveUnmatched(storeId?: string): Promise<number> {
+    let resolved = 0;
+    for (const [k, row] of this.sales) {
+      if (this.salesProduct.has(k)) continue;
+      if (storeId && row.storeId !== storeId) continue;
+      const norm = normalizeAlias(row.rawName);
+      const aliasHit = [...this.aliases.values()].find((a) => a.alias === norm && a.storeId === row.storeId)
+        ?? [...this.aliases.values()].find((a) => a.alias === norm && a.storeId === null);
+      const nameHit = [...this.products.values()].find((p) => p.active && p.storeId === row.storeId && normalizeAlias(p.name) === norm)
+        ?? [...this.products.values()].find((p) => p.active && p.storeId === null && normalizeAlias(p.name) === norm);
+      const pid = aliasHit?.productId ?? nameHit?.id;
+      if (pid) { this.salesProduct.set(k, pid); resolved++; }
+    }
+    return resolved;
+  }
+  async listUnmatched(from: string, to: string): Promise<PosUnmatched[]> {
+    const acc = new Map<string, PosUnmatched>();
+    const products = await this.listProducts();
+    for (const [k, row] of this.sales) {
+      if (this.salesProduct.has(k) || row.date < from || row.date > to) continue;
+      const key = `${row.storeId}|${row.rawName}`;
+      const cur = acc.get(key) ?? { storeId: row.storeId, rawName: row.rawName, qty: 0, amount: 0,
+        suggestion: bestSuggestion(row.rawName, row.storeId, products) };
+      cur.qty += row.qty; cur.amount += row.amount;
+      acc.set(key, cur);
+    }
+    return [...acc.values()].sort((a, b) => b.amount - a.amount);
+  }
+  async priceDeviations(from: string, to: string, thresholdPct: number): Promise<PosDeviation[]> {
+    const acc = new Map<string, { qty: number; amount: number; storeId: string; productId: string }>();
+    for (const [k, row] of this.sales) {
+      const pid = this.salesProduct.get(k);
+      if (!pid || row.date < from || row.date > to) continue;
+      const key = `${pid}|${row.storeId}`;
+      const cur = acc.get(key) ?? { qty: 0, amount: 0, storeId: row.storeId, productId: pid };
+      cur.qty += row.qty; cur.amount += row.amount;
+      acc.set(key, cur);
+    }
+    const out: PosDeviation[] = [];
+    for (const { qty, amount, storeId, productId } of acc.values()) {
+      const product = this.products.get(productId);
+      if (!product?.consumerPrice || !qty) continue;
+      const avg = amount / qty;
+      const pct = Math.round(((avg - product.consumerPrice) / product.consumerPrice) * 1000) / 10;
+      if (Math.abs(pct) >= thresholdPct) out.push({ productId, productName: product.name, storeId,
+        consumerPrice: product.consumerPrice, avgSoldPrice: Math.round(avg), deviationPct: pct });
+    }
+    return out.sort((a, b) => Math.abs(b.deviationPct) - Math.abs(a.deviationPct));
+  }
   async close(): Promise<void> {}
 }
 
 export function createPosStore(env: NodeJS.ProcessEnv): PosStore {
   return env.REPOSITORY_MODE === "postgres" ? PostgresPosStore.fromEnv(env) : new MemoryPosStore();
 }
+
+function bestSuggestion(rawName: string, storeId: string, products: PosProduct[]): PosUnmatched["suggestion"] {
+  let best: PosUnmatched["suggestion"] = null;
+  for (const p of products) {
+    if (p.storeId && p.storeId !== storeId) continue; /* 타 매장 전용 상품은 제안하지 않는다 */
+    const similarity = aliasSimilarity(rawName, p.name);
+    if (similarity >= 60 && (!best || similarity > best.similarity)) {
+      best = { productId: p.id, productName: p.name, similarity };
+    }
+  }
+  return best;
+}
+
+const mapProduct = (r: Record<string, unknown>): PosProduct => ({
+  id: String(r.id), sku: String(r.sku), name: String(r.name), unit: String(r.unit),
+  category: String(r.category), storeId: (r.store_id as string | null) ?? null,
+  consumerPrice: r.consumer_price === null || r.consumer_price === undefined ? null : Number(r.consumer_price),
+  active: Boolean(r.active),
+});
 
 const mapLink = (r: Record<string, unknown>): PosLink => ({
   id: String(r.id), storeId: String(r.store_id), merchantId: String(r.merchant_id),

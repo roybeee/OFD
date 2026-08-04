@@ -511,6 +511,7 @@ export class OfdWorker {
           from: day, to: day,
         });
         const rows = await store.recordSales(link.storeId, items, "sync");
+        await store.resolveUnmatched(link.storeId);
         await store.touchLinkSynced(link.id, new Date());
         await store.recordRun({ storeId: link.storeId, from: day, to: day, rows, status: "ok" });
       } catch (error) {
