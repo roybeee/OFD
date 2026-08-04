@@ -16,6 +16,9 @@ import { SESSION_COOKIE } from "./auth.ts";
 import { AuthService } from "./auth-service.ts";
 import { idempotentMutation } from "./idempotency.ts";
 import { ProcurementService } from "./service.ts";
+import { createOpeningStore, createPosStore, OPENING_PHASES, type OpeningPhase, type OpeningStage } from "@ofd/db";
+import { DomainError as PosDomainError } from "@ofd/domain";
+import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
 
 export interface BuildAppOptions {
   env?: NodeJS.ProcessEnv;
@@ -69,7 +72,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook("preHandler", async (request) => {
     const path = request.url.split("?")[0];
     if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login" || path === "/api/v2/auth/mfa"
-      || path === "/api/v2/webhooks/popbill" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
+      || path === "/api/v2/webhooks/popbill" || path === "/api/v2/webhooks/tossplace" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
     request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
   });
 
@@ -345,6 +348,287 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const { id } = idParams.parse(request.params);
     return idempotentMutation(request, reply, repository, request.actor, 200,
       (scoped) => service.withRepository(scoped).requeueDeadLetter(request.actor, id));
+  });
+
+  /* ── POS 수집 (V1 이식 1단계) ───────────────────────── */
+  const posStore = createPosStore(env);
+  app.addHook("onClose", async () => { await posStore.close(); });
+  const assertPosRole = (actor: { role?: string } | undefined) => {
+    const role = actor?.role ?? "";
+    if (!["master", "finance", "admin"].includes(role)) {
+      throw new PosDomainError("FORBIDDEN", "POS 연동 권한이 없습니다.", 403);
+    }
+  };
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const seoulToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+
+  app.get("/api/v2/pos/links", async (request) => {
+    assertPosRole(request.actor);
+    const links = await posStore.listLinks();
+    return { links: links.map(({ accessKeyEnc: _a, secretKeyEnc: _s, ...safe }) => safe) };
+  });
+
+  app.post("/api/v2/pos/links", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { storeId?: string; merchantId?: string; accessKey?: string; secretKey?: string };
+    if (!body?.storeId || !body.merchantId || !body.accessKey || !body.secretKey) {
+      throw new PosDomainError("POS_LINK_FIELDS", "storeId, merchantId, accessKey, secretKey가 필요합니다.", 422);
+    }
+    const encryptionKey = env.ENCRYPTION_KEY ?? "";
+    const link = await posStore.upsertLink({
+      storeId: body.storeId, merchantId: body.merchantId, status: "active",
+      accessKeyEnc: encryptPosSecret(body.accessKey, encryptionKey),
+      secretKeyEnc: encryptPosSecret(body.secretKey, encryptionKey),
+    });
+    reply.code(201);
+    return { id: link.id, storeId: link.storeId, merchantId: link.merchantId, status: link.status };
+  });
+
+  app.post("/api/v2/pos/sync", async (request) => {
+    assertPosRole(request.actor);
+    const body = (request.body ?? {}) as { from?: string; to?: string; merchantId?: string };
+    const to = dateOnly.test(body.to ?? "") ? body.to! : seoulToday();
+    const from = dateOnly.test(body.from ?? "") ? body.from! : to;
+    if (from > to) throw new PosDomainError("POS_RANGE", "from은 to보다 늦을 수 없습니다.", 422);
+    const encryptionKey = env.ENCRYPTION_KEY ?? "";
+    const links = (await posStore.listLinks()).filter((l) => l.status === "active" && (!body.merchantId || l.merchantId === body.merchantId));
+    const results: Array<{ merchantId: string; rows: number; status: string; error?: string }> = [];
+    for (const link of links) {
+      try {
+        const items = await fetchTossDailyItems({
+          merchantId: link.merchantId,
+          accessKey: decryptPosSecret(link.accessKeyEnc, encryptionKey),
+          secretKey: decryptPosSecret(link.secretKeyEnc, encryptionKey),
+          from, to,
+        });
+        const rows = await posStore.recordSales(link.storeId, items, from === to ? "sync" : "backfill");
+        await posStore.resolveUnmatched(link.storeId);
+        await posStore.touchLinkSynced(link.id, new Date());
+        await posStore.recordRun({ storeId: link.storeId, from, to, rows, status: "ok" });
+        results.push({ merchantId: link.merchantId, rows, status: "ok" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await posStore.recordRun({ storeId: link.storeId, from, to, rows: 0, status: "error", error: message });
+        results.push({ merchantId: link.merchantId, rows: 0, status: "error", error: message });
+      }
+    }
+    return { from, to, results };
+  });
+
+  app.get("/api/v2/pos/daily", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    return { from, to, totals: await posStore.dailyTotals(from, to) };
+  });
+
+  /* ── 상품·별칭 (V1 이식 2단계) ── */
+  app.get("/api/v2/pos/products", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    const [products, deviations] = await Promise.all([
+      posStore.listProducts(), posStore.priceDeviations(from, to, 3),
+    ]);
+    return { products, deviations, from, to };
+  });
+
+  app.post("/api/v2/pos/products", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { name?: string; category?: string; storeId?: string | null; consumerPrice?: number | null; rawName?: string };
+    if (!body?.name?.trim()) throw new PosDomainError("PRODUCT_NAME_REQUIRED", "상품명이 필요합니다.", 422);
+    const category = ["도넛", "링도넛", "음료", "굿즈", "서비스", "세트", "기타"].includes(body.category ?? "") ? body.category! : "기타";
+    const product = await posStore.createProduct({
+      name: body.name.trim(), category, storeId: body.storeId ?? null,
+      consumerPrice: typeof body.consumerPrice === "number" ? body.consumerPrice : null,
+    });
+    /* 미매칭 승격: 원본 품목명이 오면 별칭까지 걸어 소급 매칭 */
+    const promoted = body.rawName?.trim() ? await posStore.upsertAlias(body.rawName, product.id) : null;
+    await posStore.resolveUnmatched();
+    reply.code(201);
+    return { product, promoted };
+  });
+
+  app.patch("/api/v2/pos/products/:id", async (request) => {
+    assertPosRole(request.actor);
+    const body = request.body as { category?: string; storeId?: string | null; consumerPrice?: number | null };
+    const patch: Record<string, unknown> = {};
+    if (body.category !== undefined) {
+      if (!["도넛", "링도넛", "음료", "굿즈", "서비스", "세트", "기타"].includes(body.category)) {
+        throw new PosDomainError("BAD_CATEGORY", "허용되지 않는 카테고리입니다.", 422);
+      }
+      patch.category = body.category;
+    }
+    if (Object.hasOwn(body, "storeId")) patch.storeId = body.storeId ?? null;
+    if (Object.hasOwn(body, "consumerPrice")) patch.consumerPrice = body.consumerPrice ?? null;
+    const product = await posStore.updateProduct((request.params as { id: string }).id, patch);
+    if (!product) throw new PosDomainError("PRODUCT_NOT_FOUND", "상품을 찾을 수 없습니다.", 404);
+    return { product };
+  });
+
+  app.get("/api/v2/pos/unmatched", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    return { from, to, items: await posStore.listUnmatched(from, to) };
+  });
+
+  app.get("/api/v2/pos/aliases", async (request) => {
+    assertPosRole(request.actor);
+    return { aliases: await posStore.listAliases() };
+  });
+
+  app.post("/api/v2/pos/aliases", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { rawName?: string; productId?: string };
+    if (!body?.rawName?.trim() || !body.productId) {
+      throw new PosDomainError("ALIAS_FIELDS", "rawName, productId가 필요합니다.", 422);
+    }
+    try {
+      const result = await posStore.upsertAlias(body.rawName, body.productId);
+      reply.code(201);
+      return result; /* scopeStoreId가 있으면 해당 매장에만 적용됐다는 뜻 */
+    } catch (error) {
+      if (error instanceof Error && error.message === "PRODUCT_NOT_FOUND") {
+        throw new PosDomainError("PRODUCT_NOT_FOUND", "상품을 찾을 수 없습니다.", 404);
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/api/v2/pos/aliases/:id", async (request) => {
+    assertPosRole(request.actor);
+    const result = await posStore.removeAlias((request.params as { id: string }).id);
+    if (!result) throw new PosDomainError("ALIAS_NOT_FOUND", "별칭을 찾을 수 없습니다.", 404);
+    return result; /* reverted = 미매칭으로 소급 원복된 행 수 */
+  });
+
+  app.get("/api/v2/pos/report", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { from?: string; to?: string; unit?: string; stores?: string; products?: string };
+    const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
+    const from = dateOnly.test(query.from ?? "") ? query.from! : to;
+    const unit = query.unit === "week" || query.unit === "month" ? query.unit : "day";
+    const csv = (value?: string) => value?.split(",").map((v) => v.trim()).filter(Boolean);
+    const filter: import("@ofd/db").PosReportFilter = {};
+    const storeIds = csv(query.stores);
+    const productIds = csv(query.products);
+    if (storeIds?.length) filter.storeIds = storeIds;
+    if (productIds?.length) filter.productIds = productIds;
+    return posStore.report(from, to, unit, filter);
+  });
+
+  app.get("/api/v2/pos/waste", async (request) => {
+    assertPosRole(request.actor);
+    const query = request.query as { storeId?: string; date?: string };
+    if (!query.storeId) throw new PosDomainError("STORE_REQUIRED", "storeId가 필요합니다.", 422);
+    const date = dateOnly.test(query.date ?? "") ? query.date! : seoulToday();
+    return posStore.wasteReport(query.storeId, date);
+  });
+
+  /* ── 오픈 프로세스 (V1 이식 5단계) ── */
+  const openingStore = createOpeningStore(env);
+  app.addHook("onClose", async () => { await openingStore.close(); });
+  const STAGES: OpeningStage[] = ["상담중", "진행", "보류", "완료"];
+
+  app.get("/api/v2/openings", async (request) => {
+    assertPosRole(request.actor);
+    const openings = await openingStore.list();
+    const board: Record<string, unknown[]> = { 상담중: [], 진행: [], 보류: [], 완료: [] };
+    for (const opening of openings) (board[opening.stage] ??= []).push(opening);
+    return {
+      openings, board,
+      kpi: {
+        active: openings.filter((o) => o.stage === "진행").length,
+        overdue: openings.reduce((acc, o) => acc + o.overdue, 0),
+        within30Days: openings.filter((o) => o.stage === "진행" && o.dDay >= 0 && o.dDay <= 30).length,
+      },
+    };
+  });
+
+  app.post("/api/v2/openings", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as {
+      name?: string; region?: string | null; openDate?: string;
+      mode?: string; storeType?: string; stage?: string; memo?: string;
+    };
+    if (!body?.name?.trim()) throw new PosDomainError("OPENING_NAME_REQUIRED", "매장명이 필요합니다.", 422);
+    if (!dateOnly.test(body.openDate ?? "")) throw new PosDomainError("OPENING_DATE_REQUIRED", "오픈일(YYYY-MM-DD)이 필요합니다.", 422);
+    const opening = await openingStore.create({
+      name: body.name.trim(), region: body.region?.trim() || null, openDate: body.openDate!,
+      mode: body.mode === "운영대행" ? "운영대행" : "가맹",
+      storeType: body.storeType === "포장형" ? "포장형" : "테이블형",
+      stage: body.stage === "진행" ? "진행" : "상담중",
+      memo: body.memo ?? "",
+    });
+    reply.code(201);
+    return opening;
+  });
+
+  app.get("/api/v2/openings/:id", async (request) => {
+    assertPosRole(request.actor);
+    const detail = await openingStore.get((request.params as { id: string }).id);
+    if (!detail) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+    return detail;
+  });
+
+  app.patch("/api/v2/openings/:id", async (request) => {
+    assertPosRole(request.actor);
+    const id = (request.params as { id: string }).id;
+    const body = request.body as { stage?: string; openDate?: string; storeId?: string };
+    if (body.storeId) {
+      const confirmed = await openingStore.confirmOpen(id, body.storeId);
+      if (!confirmed) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+      return confirmed;
+    }
+    if (body.stage) {
+      if (!STAGES.includes(body.stage as OpeningStage)) throw new PosDomainError("BAD_STAGE", "허용되지 않는 단계입니다.", 422);
+      const moved = await openingStore.setStage(id, body.stage as OpeningStage);
+      if (!moved) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+      return moved;
+    }
+    if (dateOnly.test(body.openDate ?? "")) {
+      const moved = await openingStore.reschedule(id, body.openDate!);
+      if (!moved) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+      return moved;
+    }
+    throw new PosDomainError("NOTHING_TO_UPDATE", "stage, openDate, storeId 중 하나가 필요합니다.", 422);
+  });
+
+  app.post("/api/v2/openings/:id/tasks", async (request, reply) => {
+    assertPosRole(request.actor);
+    const body = request.body as { phase?: string; group?: string; title?: string; detail?: string; owner?: string; dayOffset?: number };
+    if (!body?.title?.trim()) throw new PosDomainError("TASK_TITLE_REQUIRED", "항목명이 필요합니다.", 422);
+    const phase = OPENING_PHASES.includes(body.phase as OpeningPhase) ? (body.phase as OpeningPhase) : "D-1주차";
+    const task = await openingStore.addTask((request.params as { id: string }).id, {
+      phase, group: body.group?.trim() || "추가 항목", title: body.title.trim(),
+      detail: body.detail ?? "", owner: body.owner === "hq" ? "hq" : body.owner === "both" ? "both" : "pt",
+      dayOffset: typeof body.dayOffset === "number" ? body.dayOffset : -7,
+    });
+    if (!task) throw new PosDomainError("OPENING_NOT_FOUND", "오픈 프로젝트를 찾을 수 없습니다.", 404);
+    reply.code(201);
+    return task;
+  });
+
+  app.patch("/api/v2/openings/tasks/:taskId", async (request) => {
+    assertPosRole(request.actor);
+    const body = request.body as { done?: boolean; memo?: string };
+    const actorId = (request.actor as { id?: string } | undefined)?.id ?? null;
+    const updated = await openingStore.toggleTask(
+      (request.params as { taskId: string }).taskId, body.done === true, actorId, body.memo);
+    if (!updated) throw new PosDomainError("TASK_NOT_FOUND", "항목을 찾을 수 없습니다.", 404);
+    return { ok: true };
+  });
+
+  app.post("/api/v2/webhooks/tossplace", async (request) => {
+    const payload = request.body as { merchantId?: unknown } | null;
+    await posStore.recordWebhookInbox("tossplace", payload);
+    const merchantId = payload && typeof payload.merchantId !== "undefined" ? String(payload.merchantId) : null;
+    const known = merchantId ? await posStore.findLinkByMerchant(merchantId) : null;
+    return { ok: true, merchantId, known: Boolean(known) };
   });
 
   app.post("/api/v2/webhooks/popbill", async (request, reply) => {

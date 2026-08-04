@@ -2,6 +2,7 @@ export * from "./config.ts";
 export * from "./email.ts";
 export * from "./popbill.ts";
 export * from "./storage.ts";
+export * from "./tossplace.ts";
 
 import type { EmailProvider } from "./email.ts";
 import { MockEmailProvider, SmtpEmailProvider } from "./email.ts";

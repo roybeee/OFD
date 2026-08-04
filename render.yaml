@@ -318,12 +318,12 @@ services:
 
 databases:
   - name: ofd-postgres
-    plan: basic-1gb
+    plan: basic-256mb
     region: singapore
     postgresMajorVersion: "16"
     databaseName: ofd_v2
     user: ofd
-    diskSizeGB: 15
-    storageAutoscalingEnabled: true
+    diskSizeGB: 1
+    storageAutoscalingEnabled: false
     connectionPool: none
     ipAllowList: []
