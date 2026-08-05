@@ -1061,10 +1061,10 @@ function capabilitiesFor(actor: Actor): string[] {
   const map: Record<Actor["role"], string[]> = {
     store_owner: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
     store_staff: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.documents.read"],
-    hq_ops: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request", "hq.shipments.manage", "hq.shipments.dispatch", "hq.drivers.read"],
-    hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read"],
+    hq_ops: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request", "hq.shipments.manage", "hq.shipments.dispatch", "hq.drivers.read", "hq.pos.read"],
+    hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read"],
     hq_master: ["hq.settlements.approve", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
-      "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.drivers.read"],
+      "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.drivers.read", "hq.pos.read"],
     auditor: ["hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
     driver: ["driver.deliveries.read", "driver.deliveries.complete"],
     system: [],

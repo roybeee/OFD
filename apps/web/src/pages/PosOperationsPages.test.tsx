@@ -12,7 +12,7 @@ const data = {
   stores: [{ id: 'store-1', name: '맵달서울점' }, { id: 'store-2', name: '독산점' }],
   products: [], orders: [], deliveries: [], bankMatches: [], paymentRequests: [], bankTransactions: [],
   manualMatchCandidates: [], settlements: [], invoices: [], documents: [], drivers: [],
-  generatedAt: '', capabilities: ['hq.orders.read'], allowedDeliveryDates: [], routeDates: [],
+  generatedAt: '', capabilities: ['hq.pos.read'], allowedDeliveryDates: [], routeDates: [],
   meta: { apiVersion: 'v2', appMode: 'production', providerMode: 'production', externalIssueEnabled: false },
 } satisfies BootstrapData;
 
