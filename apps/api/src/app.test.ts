@@ -146,8 +146,11 @@ describe("OFD v2 API", () => {
 
   it("발주 생성과 멱등 재시도를 한 번만 처리한다", async () => {
     const app = await demoApp();
+    /* 고정 날짜는 그 날이 오면 당일-발주 검증에 걸려 깨진다(date-rot) — 허용 배송일에서 동적으로 취한다 */
+    const bootstrapForDate = await app.inject({ method: "GET", url: "/api/v2/bootstrap" });
+    const requestedDeliveryDate = bootstrapForDate.json().allowedDeliveryDates[0] as string;
     const payload = {
-      storeId: DEMO_IDS.storeDoksan, requestedDeliveryDate: "2026-08-05",
+      storeId: DEMO_IDS.storeDoksan, requestedDeliveryDate,
       items: [{ productId: DEMO_IDS.productBean, quantity: 2 }],
     };
     const headers = { "idempotency-key": "create-order-test" };
