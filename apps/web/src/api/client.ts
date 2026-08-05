@@ -490,6 +490,12 @@ export function createPosAliasV2(rawName: string, productId: string, idempotency
 export function createPosProductV2(input: { name: string; category: string; storeId: string | null; consumerPrice: number | null; rawName?: string }, idempotencyKey: string) {
   return mutateV2<{ product: PosProduct }>('/pos/products', input, { idempotencyKey });
 }
+export function createPosStoreV2(input: { name: string; code?: string; billingCycle: string; paymentMethod: string; notificationPhone?: string }, idempotencyKey: string) {
+  return mutateV2<{ store: { id: string; code: string; name: string } }>('/pos/stores', input, { idempotencyKey });
+}
+export function createPosLinkV2(input: { storeId: string; merchantId: string; accessKey: string; secretKey: string }, idempotencyKey: string) {
+  return mutateV2<{ id: string; storeId: string; merchantId: string; status: string }>('/pos/links', input, { idempotencyKey });
+}
 export function loadOpeningsV2() { return getV2<OpeningBoard>('/openings'); }
 export function loadOpeningV2(id: string) { return getV2<OpeningDetail>(`/openings/${encodeURIComponent(id)}`); }
 export function createOpeningV2(input: { name: string; region: string | null; openDate: string; mode: string; storeType: string; stage: string }, idempotencyKey: string) {

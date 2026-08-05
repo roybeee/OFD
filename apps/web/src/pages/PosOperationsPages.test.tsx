@@ -57,6 +57,12 @@ describe('POS 현장 운영 화면', () => {
     vi.unstubAllGlobals();
   });
 
+  function setValue(element: HTMLInputElement | HTMLSelectElement, value: string) {
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, value);
+    element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+  }
+
   async function render(node: React.ReactElement) {
     await act(async () => {
       root = createRoot(container);
@@ -87,6 +93,50 @@ describe('POS 현장 운영 화면', () => {
     expect(container.textContent).toContain('90.7%');
     const reopened = [...container.querySelectorAll('button.row-toggle')].find((node) => node.textContent?.includes('2026-08-03'))!;
     expect(reopened.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('POS 연동: 링크가 없으면 설정 패널이 자동으로 열리고, 매장 등록→토스 연동을 순서대로 보낸다', async () => {
+    const captured: Array<{ url: string; body: unknown }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'POST' && url.includes('/pos/stores')) {
+        captured.push({ url, body: JSON.parse(String(init.body)) });
+        return json({ store: { id: 'store-9', code: 'ST003', name: '판교점' } }, 201);
+      }
+      if (init?.method === 'POST' && url.includes('/pos/links')) {
+        captured.push({ url, body: JSON.parse(String(init.body)) });
+        return json({ id: 'link-9', storeId: 'store-9', merchantId: '777', status: 'active' }, 201);
+      }
+      if (url.includes('/pos/report')) return json({ unit: 'day', storeIds: [], rows: [] });
+      if (url.includes('/pos/links')) return json({ links: [] });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const notify = vi.fn();
+    await render(<HqSalesPage data={data} notify={notify} />);
+
+    expect(container.textContent).toContain('POS 연동 관리');
+    expect(container.textContent).toContain('아직 연동된 매장이 없습니다');
+
+    const nameInput = [...container.querySelectorAll('input[type="text"]')].find((node) => (node as HTMLInputElement).placeholder.includes('독산점')) as HTMLInputElement;
+    await act(async () => { setValue(nameInput, '판교점'); });
+    const storeButton = [...container.querySelectorAll('button')].find((node) => node.textContent === '매장 등록') as HTMLButtonElement;
+    await act(async () => { storeButton.click(); });
+    expect(captured[0]?.url).toContain('/pos/stores');
+    expect(captured[0]?.body).toMatchObject({ name: '판교점', billingCycle: 'monthly' });
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('ST003'), 'success');
+
+    const merchantInput = [...container.querySelectorAll('input[type="text"]')].find((node) => (node as HTMLInputElement).placeholder.includes('매장 ID')) as HTMLInputElement;
+    const [accessInput, secretInput] = [...container.querySelectorAll('input[type="password"]')] as HTMLInputElement[];
+    await act(async () => {
+      setValue(merchantInput, '777');
+      setValue(accessInput, 'AK');
+      setValue(secretInput, 'SK');
+    });
+    const linkButton = [...container.querySelectorAll('button')].find((node) => node.textContent === '연동 등록') as HTMLButtonElement;
+    await act(async () => { linkButton.click(); });
+    expect(captured[1]?.url).toContain('/pos/links');
+    expect(captured[1]?.body).toMatchObject({ storeId: 'store-9', merchantId: '777', accessKey: 'AK', secretKey: 'SK' });
   });
 
   it('매출현황: 집계 단위를 바꾸면 해당 unit으로 다시 조회한다', async () => {

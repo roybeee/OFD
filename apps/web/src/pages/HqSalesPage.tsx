@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  loadPosReport, loadPosLinks, newIdempotencyKey, syncPosV2,
+  createPosLinkV2, createPosStoreV2, loadPosReport, loadPosLinks, newIdempotencyKey, syncPosV2,
   type PosReportResult, type PosReportUnit,
 } from '../api/client';
 import { Button, EmptyState, MetricCard } from '../components/ui';
@@ -16,7 +16,7 @@ const shiftDays = (date: string, days: number) => {
 };
 
 /** V1 매출현황 이식: 기간×매장 피벗 + 행 클릭 시 품목별 판매 드릴다운 */
-export function HqSalesPage({ notify }: { data: BootstrapData; notify: (message: string, tone?: Toast['tone']) => void }) {
+export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (message: string, tone?: Toast['tone']) => void }) {
   const [unit, setUnit] = useState<PosReportUnit>('day');
   const [to, setTo] = useState(seoulToday);
   const [from, setFrom] = useState(() => shiftDays(seoulToday(), -29));
@@ -28,14 +28,21 @@ export function HqSalesPage({ notify }: { data: BootstrapData; notify: (message:
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
+  const [links, setLinks] = useState<Array<{ id: string; storeId: string; merchantId: string; lastSyncAt: string | null }>>([]);
+  const [localStores, setLocalStores] = useState<Array<{ id: string; name: string }>>(() => data.stores.map((store) => ({ id: store.id, name: store.name })));
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [storeForm, setStoreForm] = useState({ name: '', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
+  const [linkForm, setLinkForm] = useState({ storeId: '', merchantId: '', accessKey: '', secretKey: '' });
+  const [setupBusy, setSetupBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [result, links] = await Promise.all([loadPosReport(from, to, unit, storeFilter), loadPosLinks()]);
+      const [result, linkResult] = await Promise.all([loadPosReport(from, to, unit, storeFilter), loadPosLinks()]);
       setReport(result);
-      setStoreNames(Object.fromEntries(links.links.map((link) => [link.storeId, link.merchantId])));
+      setLinks(linkResult.links.map(({ id, storeId, merchantId, lastSyncAt }) => ({ id, storeId, merchantId, lastSyncAt })));
+      setStoreNames(Object.fromEntries(linkResult.links.map((link) => [link.storeId, link.merchantId])));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '매출을 불러오지 못했습니다.');
     } finally {
@@ -52,6 +59,46 @@ export function HqSalesPage({ notify }: { data: BootstrapData; notify: (message:
     const qty = rows.reduce((acc, row) => acc + row.total.qty, 0);
     return { amount, qty, buckets: rows.length, average: rows.length ? Math.round(amount / rows.length) : 0 };
   }, [report]);
+
+  async function submitStore() {
+    if (storeForm.name.trim().length < 2) { notify('매장명을 2자 이상 입력해 주세요.', 'warning'); return; }
+    setSetupBusy(true);
+    try {
+      const created = await createPosStoreV2({
+        name: storeForm.name.trim(), billingCycle: storeForm.billingCycle,
+        paymentMethod: storeForm.paymentMethod, notificationPhone: storeForm.notificationPhone,
+      }, newIdempotencyKey());
+      setLocalStores((current) => [...current, { id: created.store.id, name: created.store.name }]);
+      setLinkForm((current) => ({ ...current, storeId: created.store.id }));
+      setStoreForm({ name: '', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
+      notify(`${created.store.name} 매장 등록 완료 (${created.store.code}) — 아래에서 토스 키를 연결해 주세요.`, 'success');
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : '매장 등록에 실패했습니다.', 'warning');
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  async function submitLink() {
+    if (!linkForm.storeId || !linkForm.merchantId.trim() || !linkForm.accessKey.trim() || !linkForm.secretKey.trim()) {
+      notify('매장, merchantId, 액세스 키, 시크릿 키를 모두 입력해 주세요.', 'warning');
+      return;
+    }
+    setSetupBusy(true);
+    try {
+      await createPosLinkV2({
+        storeId: linkForm.storeId, merchantId: linkForm.merchantId.trim(),
+        accessKey: linkForm.accessKey.trim(), secretKey: linkForm.secretKey.trim(),
+      }, newIdempotencyKey());
+      notify('토스플레이스 연동 완료 — [POS 동기화]로 수집을 시작하세요.', 'success');
+      setLinkForm({ storeId: '', merchantId: '', accessKey: '', secretKey: '' });
+      await refresh();
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : '연동 등록에 실패했습니다.', 'warning');
+    } finally {
+      setSetupBusy(false);
+    }
+  }
 
   async function runSync() {
     setSyncing(true);
@@ -92,9 +139,64 @@ export function HqSalesPage({ notify }: { data: BootstrapData; notify: (message:
           <p>{from} ~ {to} · POS 실측 기준 · 데이터가 있는 기간만 표시</p>
         </div>
         <div className="page-actions">
+          <Button type="button" variant="ghost" onClick={() => setSetupOpen((value) => !value)} aria-expanded={setupOpen}>POS 연동 관리</Button>
           <Button type="button" variant="secondary" onClick={runSync} disabled={syncing}>{syncing ? '수집 중…' : 'POS 동기화'}</Button>
         </div>
       </header>
+
+      {(setupOpen || links.length === 0) && (
+        <section className="panel" aria-labelledby="pos-setup-heading">
+          <h2 id="pos-setup-heading">POS 연동 관리</h2>
+          {links.length > 0 ? (
+            <div className="table-wrap">
+              <table className="data-table compact">
+                <thead><tr><th scope="col">merchantId</th><th scope="col">매장</th><th scope="col">마지막 수집</th></tr></thead>
+                <tbody>
+                  {links.map((link) => (
+                    <tr key={link.id}>
+                      <th scope="row">{link.merchantId}</th>
+                      <td>{localStores.find((store) => store.id === link.storeId)?.name ?? link.storeId.slice(0, 8)}</td>
+                      <td className="muted">{link.lastSyncAt ? link.lastSyncAt.slice(0, 16).replace('T', ' ') : '아직 없음'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="muted">아직 연동된 매장이 없습니다. 매장을 등록하고 토스플레이스 키를 연결하면 30분마다 자동 수집됩니다.</p>}
+
+          <h3 className="setup-sub">① 매장 등록 <span className="muted">(목록에 없을 때만)</span></h3>
+          <div className="form-grid">
+            <label>매장명<input type="text" value={storeForm.name} onChange={(event) => setStoreForm({ ...storeForm, name: event.target.value })} placeholder="예: 독산점" /></label>
+            <label>청구 방식
+              <select value={storeForm.billingCycle} onChange={(event) => setStoreForm({ ...storeForm, billingCycle: event.target.value })}>
+                <option value="monthly">월 합산</option><option value="per_delivery">건별</option>
+              </select>
+            </label>
+            <label>결제 조건
+              <select value={storeForm.paymentMethod} onChange={(event) => setStoreForm({ ...storeForm, paymentMethod: event.target.value })}>
+                <option value="monthly_credit">월 외상</option><option value="prepaid">선결제</option>
+              </select>
+            </label>
+            <label>알림 연락처<input type="text" value={storeForm.notificationPhone} onChange={(event) => setStoreForm({ ...storeForm, notificationPhone: event.target.value })} placeholder="010-0000-0000" /></label>
+          </div>
+          <Button type="button" variant="secondary" onClick={submitStore} disabled={setupBusy}>매장 등록</Button>
+
+          <h3 className="setup-sub">② 토스플레이스 연동</h3>
+          <div className="form-grid">
+            <label>매장
+              <select value={linkForm.storeId} onChange={(event) => setLinkForm({ ...linkForm, storeId: event.target.value })}>
+                <option value="">선택…</option>
+                {localStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+              </select>
+            </label>
+            <label>merchantId<input type="text" value={linkForm.merchantId} onChange={(event) => setLinkForm({ ...linkForm, merchantId: event.target.value })} placeholder="토스 개발자센터의 매장 ID" /></label>
+            <label>액세스 키<input type="password" value={linkForm.accessKey} onChange={(event) => setLinkForm({ ...linkForm, accessKey: event.target.value })} autoComplete="off" /></label>
+            <label>시크릿 키<input type="password" value={linkForm.secretKey} onChange={(event) => setLinkForm({ ...linkForm, secretKey: event.target.value })} autoComplete="off" /></label>
+          </div>
+          <Button type="button" onClick={submitLink} disabled={setupBusy}>{setupBusy ? '처리 중…' : '연동 등록'}</Button>
+          <p className="muted setup-note">키는 서버에서 AES-256-GCM으로 암호화되어 저장되며 화면에 다시 표시되지 않습니다.</p>
+        </section>
+      )}
 
       <div className="filter-bar">
         <div className="filter-group" role="group" aria-label="집계 단위">

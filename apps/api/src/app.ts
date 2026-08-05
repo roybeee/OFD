@@ -19,6 +19,9 @@ import { ProcurementService } from "./service.ts";
 import { createOpeningStore, createPosStore, OPENING_PHASES, type OpeningPhase, type OpeningStage } from "@ofd/db";
 import { DomainError as PosDomainError } from "@ofd/domain";
 import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
+import { randomUUID as posRandomUUID } from "node:crypto";
+import type { Actor as PosActor, Store as PosStoreRecord } from "@ofd/domain";
+import { audit as posAudit } from "./events.ts";
 
 export interface BuildAppOptions {
   env?: NodeJS.ProcessEnv;
@@ -355,12 +358,53 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook("onClose", async () => { await posStore.close(); });
   const assertPosRole = (actor: { role?: string } | undefined) => {
     const role = actor?.role ?? "";
-    if (!["master", "finance", "admin"].includes(role)) {
+    /* 실제 V2 역할은 hq_* 접두 — 접두 없는 값은 메모리 모드 테스트 하위호환 */
+    if (!["hq_master", "hq_finance", "hq_ops", "master", "finance", "admin"].includes(role)) {
       throw new PosDomainError("FORBIDDEN", "POS 연동 권한이 없습니다.", 403);
     }
   };
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
   const seoulToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+
+  /* 초기 구축용 매장 등록 — 새 DB에는 매장이 없어 레거시 이관 없이도 시작할 수 있어야 한다 */
+  app.post("/api/v2/pos/stores", async (request, reply) => {
+    const role = String(request.actor?.role ?? "");
+    if (role !== "hq_master" && role !== "master") {
+      throw new PosDomainError("FORBIDDEN", "마스터만 매장을 등록할 수 있습니다.", 403);
+    }
+    const body = request.body as { code?: string; name?: string; billingCycle?: string; paymentMethod?: string; notificationPhone?: string };
+    const name = body?.name?.trim() ?? "";
+    if (name.length < 2) throw new PosDomainError("STORE_NAME_REQUIRED", "매장명(2자 이상)이 필요합니다.", 422);
+    const entities = await repository.list<{ id: string; isHeadquarters?: boolean; businessNumber: string; legalName: string; representativeName: string; address: string; businessType: string; businessCategory: string; email: string }>("legal_entity");
+    const headquarters = entities.find((entity) => entity.isHeadquarters);
+    if (!headquarters) {
+      throw new PosDomainError("HQ_REQUIRED", "본사 정보가 없습니다. bootstrap-admin을 먼저 실행해 주세요.", 409);
+    }
+    const stores = await repository.list<PosStoreRecord>("store");
+    const code = (body.code?.trim() || `ST${String(stores.length + 1).padStart(3, "0")}`).toUpperCase();
+    if (stores.some((store) => store.code === code)) {
+      throw new PosDomainError("STORE_CODE_DUP", "이미 사용 중인 매장 코드입니다.", 409);
+    }
+    const store: PosStoreRecord = {
+      id: posRandomUUID(), code, name,
+      business: {
+        businessNumber: headquarters.businessNumber, legalName: headquarters.legalName,
+        representativeName: headquarters.representativeName, address: headquarters.address,
+        businessType: headquarters.businessType, businessCategory: headquarters.businessCategory,
+        email: headquarters.email,
+      },
+      billingCycle: body.billingCycle === "per_delivery" ? "per_delivery" : "monthly",
+      paymentMethod: body.paymentMethod === "prepaid" ? "prepaid" : "monthly_credit",
+      notificationPhone: (body.notificationPhone ?? "").replace(/[^0-9]/g, "") || "01000000000",
+      active: true, version: 1,
+    };
+    await repository.commit({
+      changes: [{ type: "store", id: store.id, expectedVersion: null, value: store }],
+      audits: [posAudit(request.actor as PosActor, "system", store.id, "store.created", undefined, undefined, { code, name })],
+    });
+    reply.code(201);
+    return { store: { id: store.id, code, name } };
+  });
 
   app.get("/api/v2/pos/links", async (request) => {
     assertPosRole(request.actor);
