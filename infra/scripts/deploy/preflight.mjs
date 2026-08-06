@@ -10,7 +10,7 @@ export function validateDeploymentEnv(env, requestedRole) {
   if (env.APP_MODE !== 'production') errors.push('APP_MODE must be production for a deployment');
   if (env.REPOSITORY_MODE !== 'postgres') errors.push('REPOSITORY_MODE must be postgres for a deployment');
   if (!ROLES.has(role)) errors.push('SERVICE_ROLE must be api, worker, or migrate');
-  if (!/^postgresql:\/\//.test(String(env.DATABASE_URL ?? ''))) errors.push('DATABASE_URL must point to Postgres');
+  if (!/^postgres(ql)?:\/\//.test(String(env.DATABASE_URL ?? '').trim())) errors.push('DATABASE_URL must point to Postgres');
   if (env.STORAGE_MODE !== 's3') errors.push('STORAGE_MODE must be s3 for a deployment');
   if (!/^[0-9a-f]{40}$/i.test(String(env.RELEASE_SHA ?? ''))) errors.push('RELEASE_SHA must be a 40-character Git commit SHA');
   if (role === 'api') {

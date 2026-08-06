@@ -5,7 +5,7 @@ import pg from 'pg';
 
 if (process.env.APP_MODE !== 'test') throw new Error('CI PostgreSQL runtime smoke requires APP_MODE=test');
 if (process.env.REPOSITORY_MODE !== 'postgres') throw new Error('CI PostgreSQL runtime smoke requires REPOSITORY_MODE=postgres');
-if (!String(process.env.DATABASE_URL ?? '').startsWith('postgresql://')) throw new Error('CI PostgreSQL runtime smoke requires PostgreSQL');
+if (!/^postgres(ql)?:\/\//.test(String(process.env.DATABASE_URL ?? '').trim())) throw new Error('CI PostgreSQL runtime smoke requires PostgreSQL');
 
 const migrationFiles = (await readdir(new URL('../../../packages/db/migrations/', import.meta.url)))
   .filter((name) => /^\d+.*\.sql$/.test(name)).map((name) => name.replace(/\.sql$/, '')).sort();

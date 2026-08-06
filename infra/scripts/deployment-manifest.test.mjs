@@ -24,6 +24,8 @@ const safe = {
 
 test('deployment preflight requires a production Postgres/S3 runtime and a known role', () => {
   assert.deepEqual(validateDeploymentEnv(safe, 'api'), []);
+  /* Render fromDatabase connectionString은 postgres:// 스킴 — 반드시 통과해야 한다 (2026-08-07 배포 장애 회귀 방지) */
+  assert.deepEqual(validateDeploymentEnv({ ...safe, DATABASE_URL: 'postgres://ofd:pw@dpg-abc123-a/ofd_v2' }, 'migrate'), []);
   assert.ok(validateDeploymentEnv({ ...safe, DATABASE_URL: 'memory://demo' }, 'api').some((error) => /Postgres/i.test(error)));
   assert.ok(validateDeploymentEnv({ ...safe, APP_MODE: 'test' }, 'api').some((error) => /APP_MODE/i.test(error)));
   assert.ok(validateDeploymentEnv({ ...safe, REPOSITORY_MODE: 'memory' }, 'api').some((error) => /REPOSITORY_MODE/i.test(error)));

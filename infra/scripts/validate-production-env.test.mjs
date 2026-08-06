@@ -157,3 +157,21 @@ test('rejects production provider mode without the explicit kill-switch release'
 test('does not enforce production secrets for local development', () => {
   assert.deepEqual(validateProductionEnv({ NODE_ENV: 'development' }), []);
 });
+
+test('accepts both official libpq schemes — Render fromDatabase provides postgres://', () => {
+  /* 2026-08-07 배포 장애 회귀 방지: Render의 connectionString은 postgres:// 스킴이고
+   * pg 라이브러리는 둘 다 받는다. 검증이 postgresql://만 고집하면 pre-deploy가 스스로 실패한다. */
+  assert.deepEqual(validateProductionEnv({ ...safeProduction, DATABASE_URL: 'postgres://ofd:pw@dpg-abc123-a/ofd' }), []);
+  assert.deepEqual(validateProductionEnv({ ...safeProduction, DATABASE_URL: '  postgresql://ofd:pw@db.internal/ofd  ' }), []);
+});
+
+test('reports only the scheme when DATABASE_URL is wrong — never the value itself', () => {
+  const wrong = validateProductionEnv({ ...safeProduction, DATABASE_URL: 'mysql://root:secret@db/ofd' });
+  assert.ok(wrong.some((error) => error.includes('found: scheme "mysql"')));
+  assert.ok(!wrong.join(' ').includes('secret'), '자격증명은 어떤 오류 메시지에도 나오면 안 된다');
+  const missing = validateProductionEnv({ ...safeProduction, DATABASE_URL: '' });
+  assert.ok(missing.some((error) => error.includes('found: missing')));
+  const pasted = validateProductionEnv({ ...safeProduction, DATABASE_URL: 'dpg-abc123-not-a-url' });
+  assert.ok(pasted.some((error) => error.includes('found: no scheme')));
+  assert.ok(!pasted.join(' ').includes('dpg-abc123'), '스킴 없는 값도 그대로 노출하지 않는다');
+});

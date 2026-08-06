@@ -72,8 +72,16 @@ export function validateProductionEnv(env) {
   if (env.SESSION_SECRET && env.SESSION_SECRET === env.ENCRYPTION_KEY) {
     errors.push('SESSION_SECRET and ENCRYPTION_KEY must be different');
   }
-  if (!String(env.DATABASE_URL ?? '').startsWith('postgresql://')) {
-    errors.push('DATABASE_URL must use postgresql://');
+  /* postgresql://와 postgres://는 동일한 공식 libpq 스킴이다. Render의 fromDatabase
+   * connectionString은 postgres://를 주므로 둘 다 받아야 배포가 자기 검증에 걸리지 않는다.
+   * 진단 메시지는 스킴만 알려주고 값(자격증명)은 절대 출력하지 않는다. */
+  {
+    const raw = String(env.DATABASE_URL ?? '').trim();
+    if (!/^postgres(ql)?:\/\//.test(raw)) {
+      const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(raw)?.[1];
+      const found = raw === '' ? 'missing' : scheme ? `scheme "${scheme}"` : 'no scheme';
+      errors.push(`DATABASE_URL must use postgresql:// or postgres:// (found: ${found})`);
+    }
   }
   for (const name of ['PUBLIC_APP_URL', 'WEB_ORIGIN']) {
     if (!String(env[name] ?? '').startsWith('https://')) {
