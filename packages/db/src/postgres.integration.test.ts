@@ -11,7 +11,7 @@ test("PostgreSQL repository applies and exercises the complete durable contract"
   const migrations = await discoverMigrations();
   assert.deepEqual(migrations.map((migration) => migration.version), [
     "001_v2_core", "002_phase3_finance_documents", "003_outbox_leases", "004_legacy_import_control",
-    "005_pos_ingestion", "006_product_aliases", "007_store_openings",
+    "005_pos_ingestion", "006_product_aliases", "007_store_openings", "008_field_operations",
   ]);
   const migrationPool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
   const migrationClient = await migrationPool.connect();

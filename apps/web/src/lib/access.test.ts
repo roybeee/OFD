@@ -32,3 +32,23 @@ describe('V2 deployment base path', () => {
     expect(defaultPathFor(['hq.accounts.manage'])).toBe('/hq/accounts');
   });
 });
+
+describe('현장 운영 경로 (V1 매장 대장·가맹 영업·감사 이식)', () => {
+  it('새 경로는 각자의 권한으로만 열린다', () => {
+    expect(canAccessPath('/hq/stores', ['hq.stores.manage'])).toBe(true);
+    expect(canAccessPath('/hq/leads', ['hq.leads.manage'])).toBe(true);
+    expect(canAccessPath('/hq/audit', ['hq.audit.read'])).toBe(true);
+    expect(canAccessPath('/hq/stores', ['hq.pos.read'])).toBe(false, 'POS 조회 권한만으로 대장을 수정 화면에 들어가게 하지 않는다');
+    expect(canAccessPath('/hq/audit', ['hq.leads.manage'])).toBe(false);
+  });
+
+  it('마스터의 기본 화면은 여전히 정산·세금계산서다', () => {
+    const masterCaps = ['hq.settlements.approve', 'hq.settlements.draft', 'hq.invoices.read', 'hq.invoices.approve',
+      'hq.pos.read', 'hq.stores.manage', 'hq.leads.manage', 'hq.notices.manage', 'hq.audit.read', 'hq.accounts.manage'];
+    expect(defaultPathFor(masterCaps)).toBe('/hq/invoices');
+  });
+
+  it('감사인은 조회 권한만으로 감사 로그에 도달한다', () => {
+    expect(defaultPathFor(['hq.audit.read'])).toBe('/hq/audit');
+  });
+});

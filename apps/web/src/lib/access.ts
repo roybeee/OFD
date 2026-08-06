@@ -10,6 +10,9 @@ export const pathCapability: Record<string, string> = {
   '/hq/sales': 'hq.pos.read',
   '/hq/products': 'hq.pos.read',
   '/hq/openings': 'hq.pos.read',
+  '/hq/stores': 'hq.stores.manage',
+  '/hq/leads': 'hq.leads.manage',
+  '/hq/audit': 'hq.audit.read',
   '/hq/accounts': 'hq.accounts.manage',
   '/driver/today': 'driver.deliveries.read',
 };

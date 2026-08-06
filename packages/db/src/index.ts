@@ -27,6 +27,7 @@ export function createRepository(env: NodeJS.ProcessEnv = process.env): StateRep
 }
 
 export * from "./pos.ts";
+export * from "./field.ts";
 
 export * from "./opening-template.ts";
 export * from "./openings.ts";

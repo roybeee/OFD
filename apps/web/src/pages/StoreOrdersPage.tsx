@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
@@ -19,12 +19,35 @@ import {
 import { calculateCartTotals, formatMoney, formatShortDate } from '../lib/workflows';
 import type { BootstrapData, Order, Product } from '../types';
 import { Button, MetricCard, StatusBadge } from '../components/ui';
-import { mutateV2, newIdempotencyKey } from '../api/client';
+import { loadNoticesV2, mutateV2, newIdempotencyKey, type NoticeRow } from '../api/client';
 import { useAccessibleDialog } from '../components/useAccessibleDialog';
 
 function readableDeliveryDate(value: string) {
   const date = new Date(`${value.slice(0, 10)}T12:00:00`);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(date);
+}
+
+/** 본사 공지 배너 — 매장 대장 화면에서 등록한 공지가 여기로 나간다 (V1 notices 이식) */
+function StoreNoticeBanner() {
+  const [notices, setNotices] = useState<NoticeRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    loadNoticesV2().then((result) => { if (!cancelled) setNotices(result.notices.slice(0, 3)); })
+      .catch(() => { /* 공지는 부가 정보 — 실패해도 발주 화면은 그대로 동작한다 */ });
+    return () => { cancelled = true; };
+  }, []);
+  if (notices.length === 0) return null;
+  return (
+    <div className="notice-banner" role="note" aria-label="본사 공지">
+      {notices.map((notice) => (
+        <div key={notice.id}>
+          <strong>{notice.pinned ? '📌 ' : ''}{notice.title}</strong>
+          {notice.body && <span className="muted"> — {notice.body}</span>}
+          <small className="muted"> · {notice.date}</small>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function StoreOrdersPage({ data, notify, refresh }: { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void; refresh: () => void }) {
@@ -74,6 +97,7 @@ export function StoreOrdersPage({ data, notify, refresh }: { data: BootstrapData
 
   return (
     <main id="main-content" data-testid="store-order-screen" className="page page-store" tabIndex={-1}>
+      <StoreNoticeBanner />
       <section className="page-heading">
         <div>
           <p className="eyebrow"><span /> STORE WORKSPACE</p>

@@ -167,3 +167,39 @@ test("worker heartbeat is persisted with state and expiry", async () => {
   await repository.recordWorkerHeartbeat(heartbeat);
   assert.deepEqual(await repository.getWorkerHeartbeat(heartbeat.workerId), heartbeat);
 });
+
+test("감사 검색은 키워드·KST 일자·시스템 제외·페이지네이션을 함께 적용한다", async () => {
+  const repository = new MemoryRepository();
+  const push = async (action: string, actorRole: string, occurredAt: string, storeId?: string) => {
+    await repository.commit({
+      changes: [{ type: "store", id: `s-${action}-${occurredAt}`, expectedVersion: null, value: { id: "x", version: 1 } }],
+      audits: [{ id: `a-${action}-${occurredAt}`, aggregateType: "store", aggregateId: "x", action,
+        actorId: actorRole === "system" ? "scheduler" : "master-1", actorRole: actorRole as "hq_master",
+        ...(storeId ? { storeId } : {}), metadata: { note: action }, occurredAt }],
+    });
+  };
+  await push("매장 등록", "hq_master", "2026-08-01T02:00:00.000Z", "store-1");
+  await push("POS 자동 수집", "system", "2026-08-02T02:00:00.000Z", "store-1");
+  await push("가맹점 오픈 등록", "hq_master", "2026-08-03T14:30:00.000Z", "store-2"); // KST 2026-08-03 23:30
+  await push("숙려기간 미준수 사후기록", "hq_master", "2026-08-03T16:00:00.000Z", "store-2"); // KST 2026-08-04 01:00
+
+  const all = await repository.searchAudit({});
+  assert.equal(all.total, 4);
+  assert.equal(all.rows[0]?.action, "숙려기간 미준수 사후기록", "최신순");
+
+  assert.equal((await repository.searchAudit({ excludeSystem: true })).total, 3, "스케줄러 항목 제외");
+  assert.equal((await repository.searchAudit({ q: "오픈" })).total, 1, "키워드는 action에 걸린다");
+  assert.equal((await repository.searchAudit({ q: "scheduler" })).total, 1, "액터로도 찾는다");
+
+  const kstDay = await repository.searchAudit({ from: "2026-08-03", to: "2026-08-03" });
+  assert.equal(kstDay.total, 1, "16:00Z는 KST로 다음 날이므로 제외된다");
+  assert.equal(kstDay.rows[0]?.action, "가맹점 오픈 등록");
+
+  const paged = await repository.searchAudit({ limit: 2, page: 2 });
+  assert.equal(paged.total, 4);
+  assert.equal(paged.rows.length, 2);
+  assert.equal(paged.rows[0]?.action, "POS 자동 수집", "2페이지는 3번째 항목부터");
+
+  assert.deepEqual(await repository.searchAudit({ storeIds: [] }), { rows: [], total: 0 }, "빈 스코프는 즉시 차단");
+  assert.equal((await repository.searchAudit({ storeIds: ["store-2"] })).total, 2);
+});

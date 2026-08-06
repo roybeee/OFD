@@ -45,6 +45,8 @@ function IconBase({ name, size = 24, ...props }: SVGProps<SVGSVGElement> & { nam
     case 'server-off': body = <><rect x="3" y="4" width="18" height="6" rx="2" /><rect x="3" y="14" width="18" height="6" rx="2" /><path d="M7 7h.01M7 17h.01M3 3l18 18" /></>; break;
     case 'bag': body = <><path d="M5 8h14l1 13H4L5 8Z" /><path d="M9 9V6a3 3 0 0 1 6 0v3" /></>; break;
     case 'sparkles': body = <><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2L12 3ZM5 14l.7 2.3L8 17l-2.3.7L5 20l-.7-2.3L2 17l2.3-.7L5 14ZM19 12l.5 1.5L21 14l-1.5.5L19 16l-.5-1.5L17 14l1.5-.5L19 12Z" /></>; break;
+    case 'handshake': body = <><path d="m3 12 4-4 5 5 5-5 4 4-9 8-9-8Z" /><path d="M7 8 12 3l5 5" /></>; break;
+    case 'scroll': body = <><path d="M5 5h11v14H5z" /><path d="M16 8h3v11a2 2 0 0 1-2 2H7M8 9h5M8 13h5" /></>; break;
     case 'swap': body = <><path d="M4 8h15l-4-4M20 16H5l4 4" /></>; break;
     default: body = <><circle cx="12" cy="12" r="9" /><path d="M8 12h8" /></>;
   }
@@ -108,3 +110,5 @@ export const ArrowDownUp = icon('swap');
 export const RotateCcw = icon('refresh');
 export const Circle = icon('circle');
 export const Filter = icon('default');
+export const Handshake = icon('handshake');
+export const ScrollText = icon('scroll');

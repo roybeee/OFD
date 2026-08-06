@@ -1713,3 +1713,28 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 }
 .setup-sub { padding: 13px 17px 0; font-size: 12.5px; font-weight: 800; }
 .setup-note { padding: 0 17px 15px; font-size: 10.5px; }
+
+/* ── 현장 운영 (매장 대장 · 가맹 영업 · 감사 로그) ── */
+.kanban.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 1280px) { .kanban.cols-6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .kanban.cols-6 { grid-template-columns: 1fr; } }
+.lead-badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 800;
+  background: rgba(0,0,0,.04); }
+.lead-badge.tone-red { color: var(--red); background: rgba(224,49,49,.08); }
+.lead-badge.tone-green { color: var(--green); background: rgba(38,128,62,.1); }
+.lead-fields { display: grid; gap: 6px; }
+.lead-fields label { display: grid; gap: 4px; color: var(--muted); font-size: 10.5px; font-weight: 750; }
+.lead-fields input[type="date"] { min-height: 34px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; }
+.kanban-card textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 11.5px; resize: vertical; }
+.inline-check { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 750; }
+.row-actions { display: inline-flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.notice-admin-list { list-style: none; margin: 0; padding: 6px 17px 15px; display: grid; gap: 9px; }
+.notice-admin-list li { display: flex; justify-content: space-between; align-items: center; gap: 11px;
+  padding: 10px 13px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.9); font-size: 12.5px; }
+.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 11px; font-size: 12px; }
+.audit-filter .form-grid { align-items: end; }
+.data-table input, .data-table select { min-height: 36px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; max-width: 170px; }
+.notice-banner { display: grid; gap: 7px; padding: 12px 15px; margin-bottom: 13px; border: 1px solid var(--orange, #e8590c);
+  border-radius: 12px; background: rgba(232,89,12,.06); font-size: 12.5px; }
+.notice-banner strong { font-weight: 800; }
+.notice-banner .muted { font-size: 11.5px; }

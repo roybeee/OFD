@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
 import pg from "pg";
 import { deterministicOutboxJitter, outboxRetryDelayMs,
-  type AggregateChange, type AggregateType, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
   type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
@@ -140,6 +140,46 @@ export class PostgresRepository implements StateRepository {
       ...(row.after_data !== null ? { after: row.after_data } : {}),
       metadata: row.metadata, occurredAt: row.occurred_at.toISOString(),
     }));
+  }
+
+  async searchAudit(input: AuditSearchInput): Promise<{ rows: AuditEvent[]; total: number }> {
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+    const page = Math.max(input.page ?? 1, 1);
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (input.storeIds !== undefined) {
+      if (input.storeIds.length === 0) return { rows: [], total: 0 };
+      params.push(input.storeIds);
+      where.push(`store_id = ANY($${params.length}::text[])`);
+    }
+    if (input.q) {
+      params.push(`%${input.q}%`);
+      const p = `$${params.length}`;
+      where.push(`(action ILIKE ${p} OR aggregate_type ILIKE ${p} OR aggregate_id ILIKE ${p} OR actor_id ILIKE ${p} OR metadata::text ILIKE ${p})`);
+    }
+    /* 일자 비교는 KST 기준 — 서버·DB 타임존과 무관하게 사용자가 보는 날짜와 일치시킨다 */
+    if (input.from) { params.push(input.from); where.push(`(occurred_at AT TIME ZONE 'Asia/Seoul')::date >= $${params.length}::date`); }
+    if (input.to) { params.push(input.to); where.push(`(occurred_at AT TIME ZONE 'Asia/Seoul')::date <= $${params.length}::date`); }
+    if (input.excludeSystem) where.push(`actor_role <> 'system'`);
+    const scope = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const counted = await this.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM audit_ledger ${scope}`, params);
+    const total = Number(counted.rows[0]?.total ?? 0);
+    const result = await this.query<{
+      id: string; aggregate_type: string; aggregate_id: string; action: string; actor_id: string; actor_role: AuditEvent["actorRole"];
+      store_id: string | null; before_data: unknown | null; after_data: unknown | null; metadata: Record<string, unknown>; occurred_at: Date;
+    }>(`SELECT * FROM audit_ledger ${scope} ORDER BY sequence DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, (page - 1) * limit]);
+    return {
+      total,
+      rows: result.rows.map((row) => ({
+        id: row.id, aggregateType: row.aggregate_type, aggregateId: row.aggregate_id, action: row.action,
+        actorId: row.actor_id, actorRole: row.actor_role,
+        ...(row.store_id !== null ? { storeId: row.store_id } : {}),
+        ...(row.before_data !== null ? { before: row.before_data } : {}),
+        ...(row.after_data !== null ? { after: row.after_data } : {}),
+        metadata: row.metadata, occurredAt: row.occurred_at.toISOString(),
+      })),
+    };
   }
 
   async transaction<T>(run: (repository: StateRepository) => Promise<T>): Promise<T> {

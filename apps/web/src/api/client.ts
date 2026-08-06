@@ -348,7 +348,13 @@ export function normalizeBootstrap(input: unknown): BootstrapData {
     drivers,
     stores: rawStores.filter((store) => Boolean(text(store.id))).map((store) => ({ id: text(store.id), name: text(store.name, '매장'),
       ...(store.storeKind === '직영' || store.storeKind === '가맹' ? { storeKind: store.storeKind } : {}),
-      ...(text(store.code) ? { code: text(store.code) } : {}) })),
+      ...(text(store.code) ? { code: text(store.code) } : {}),
+      ...(text(store.region) ? { region: text(store.region) } : {}),
+      ...(text(store.roadAddress) ? { roadAddress: text(store.roadAddress) } : {}),
+      ...(text(store.notificationPhone) ? { notificationPhone: text(store.notificationPhone) } : {}),
+      ...(typeof store.openDate === 'string' ? { openDate: store.openDate } : {}),
+      ...(typeof store.active === 'boolean' ? { active: store.active } : {}),
+      ...(typeof store.version === 'number' ? { version: store.version } : {}) })),
     store: {
       id: text(currentStore.id), name: text(currentStore.name), businessName: text(business.legalName, text(currentStore.name)),
       billingPolicy: text(currentStore.billingCycle) === 'per_delivery' ? '배송 건별' : text(currentStore.billingCycle) === 'monthly' ? '월 합산' : '확인 필요',
@@ -501,6 +507,63 @@ export function createPosStoreV2(input: { name: string; code?: string; billingCy
 export function createPosLinkV2(input: { storeId: string; merchantId: string; accessKey: string; secretKey: string }, idempotencyKey: string) {
   return mutateV2<{ id: string; storeId: string; merchantId: string; status: string }>('/pos/links', input, { idempotencyKey });
 }
+/* ── 현장 운영 (매장 대장·가맹 영업·감사·공지) ── */
+export type StoreLedgerRow = {
+  id: string; code: string; name: string; storeKind?: '직영' | '가맹'; region?: string; roadAddress?: string;
+  notificationPhone: string; openDate?: string | null; active: boolean; version: number;
+};
+export type FranchiseLead = {
+  id: string; name: string; phone: string; area: string; storeName: string; stage: number;
+  docDate: string | null; advisor: boolean; openTarget: string; memo: string; flag: boolean;
+  storeId: string | null; version: number;
+  cooling: { has: boolean; days?: number; gate?: string; ok?: boolean };
+};
+export type AuditRow = {
+  id: string; aggregateType: string; aggregateId: string; action: string; actorId: string; actorRole: string;
+  storeId?: string; metadata: Record<string, unknown>; occurredAt: string;
+};
+export type NoticeRow = { id: string; date: string; title: string; body: string; pinned: boolean };
+
+function jsonRequest<T>(path: string, method: 'PATCH' | 'PUT' | 'DELETE', body?: Record<string, unknown>) {
+  return apiRequest<T>(path, {
+    method, headers: { 'Content-Type': 'application/json', 'X-OFD': '1' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }, true);
+}
+
+export function updatePosStoreV2(id: string, patch: Record<string, unknown>) {
+  return jsonRequest<{ store: StoreLedgerRow; changed: string[] }>(`/pos/stores/${encodeURIComponent(id)}`, 'PATCH', patch);
+}
+export function loadNaverMapKeyV2() { return getV2<{ keyId: string | null }>('/pos/config/navermap'); }
+export function saveNaverMapKeyV2(keyId: string) { return jsonRequest<{ keyId: string }>('/pos/config/navermap', 'PUT', { keyId }); }
+
+export function loadLeadsV2() { return getV2<{ stages: string[]; leads: FranchiseLead[] }>('/leads'); }
+export function createLeadV2(input: Record<string, unknown>, idempotencyKey: string) {
+  return mutateV2<{ lead: FranchiseLead }>('/leads', input, { idempotencyKey });
+}
+export function updateLeadV2(id: string, patch: Record<string, unknown>) {
+  return jsonRequest<{ lead: FranchiseLead }>(`/leads/${encodeURIComponent(id)}`, 'PATCH', patch);
+}
+export function moveLeadStageV2(id: string, dir: 'next' | 'back', override: boolean, idempotencyKey: string) {
+  return mutateV2<{ lead: FranchiseLead; createdStoreId?: string }>(`/leads/${encodeURIComponent(id)}/stage`,
+    { dir, ...(override ? { override: true } : {}) }, { idempotencyKey });
+}
+export function deleteLeadV2(id: string) { return jsonRequest<{ ok: boolean }>(`/leads/${encodeURIComponent(id)}`, 'DELETE'); }
+
+export function searchAuditV2(input: { q?: string; from?: string; to?: string; noSched?: boolean; page?: number; limit?: number }) {
+  return getV2<{ rows: AuditRow[]; total: number }>(`/audit?${query({
+    q: input.q, from: input.from, to: input.to,
+    noSched: input.noSched ? '1' : undefined,
+    page: String(input.page ?? 1), limit: String(input.limit ?? 50),
+  })}`);
+}
+
+export function loadNoticesV2() { return getV2<{ notices: NoticeRow[] }>('/notices'); }
+export function createNoticeV2(input: { title: string; body?: string; pinned?: boolean }, idempotencyKey: string) {
+  return mutateV2<{ notice: NoticeRow }>('/notices', input, { idempotencyKey });
+}
+export function deleteNoticeV2(id: string) { return jsonRequest<{ ok: boolean }>(`/notices/${encodeURIComponent(id)}`, 'DELETE'); }
+
 export function loadOpeningsV2() { return getV2<OpeningBoard>('/openings'); }
 export function loadOpeningV2(id: string) { return getV2<OpeningDetail>(`/openings/${encodeURIComponent(id)}`); }
 export function createOpeningV2(input: { name: string; region: string | null; openDate: string; mode: string; storeType: string; stage: string }, idempotencyKey: string) {

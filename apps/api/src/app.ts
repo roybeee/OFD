@@ -16,7 +16,8 @@ import { SESSION_COOKIE } from "./auth.ts";
 import { AuthService } from "./auth-service.ts";
 import { idempotentMutation } from "./idempotency.ts";
 import { ProcurementService } from "./service.ts";
-import { createOpeningStore, createPosStore, OPENING_PHASES, type OpeningPhase, type OpeningStage } from "@ofd/db";
+import { coolingGate, createFieldStore, createOpeningStore, createPosStore, kstToday, LEAD_STAGES,
+  OPENING_PHASES, type OpeningPhase, type OpeningStage } from "@ofd/db";
 import { DomainError as PosDomainError } from "@ofd/domain";
 import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
 import { randomUUID as posRandomUUID } from "node:crypto";
@@ -699,6 +700,210 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const updated = await openingStore.toggleTask(
       (request.params as { taskId: string }).taskId, body.done === true, actorId, body.memo);
     if (!updated) throw new PosDomainError("TASK_NOT_FOUND", "항목을 찾을 수 없습니다.", 404);
+    return { ok: true };
+  });
+
+  /* ── 현장 운영 (V1 매장 대장·가맹 영업·감사·공지 이식) ── */
+  const fieldStore = createFieldStore(env);
+  app.addHook("onClose", async () => { await fieldStore.close(); });
+  const assertFieldRole = (actor: { role?: string } | undefined, masterOnly = false) => {
+    const role = actor?.role ?? "";
+    const allowed = masterOnly ? ["hq_master", "master"] : ["hq_master", "hq_ops", "master", "admin"];
+    if (!allowed.includes(role)) throw new PosDomainError("FORBIDDEN", "현장 운영 권한이 없습니다.", 403);
+  };
+
+  /* 매장 대장 수정 — 낙관적 잠금 + 변경 항목만 감사에 남긴다 */
+  app.patch("/api/v2/pos/stores/:id", async (request) => {
+    assertFieldRole(request.actor);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const current = await repository.get<PosStoreRecord>("store", id);
+    if (!current) throw new PosDomainError("STORE_NOT_FOUND", "매장을 찾을 수 없습니다.", 404);
+    const expectedVersion = Number(body.expectedVersion ?? current.version);
+    const next: PosStoreRecord = { ...current, version: current.version + 1 };
+    const changed: Record<string, unknown> = {};
+    const setText = (key: "name" | "region" | "roadAddress", min = 1) => {
+      if (typeof body[key] !== "string") return;
+      const value = (body[key] as string).trim();
+      if (value.length < min) throw new PosDomainError("VALIDATION_ERROR", "값이 너무 짧습니다.", 422);
+      if (value !== (current[key] ?? "")) { (next as unknown as Record<string, unknown>)[key] = value; changed[key] = value; }
+    };
+    setText("name", 2); setText("region"); setText("roadAddress");
+    if (body.storeKind === "직영" || body.storeKind === "가맹") {
+      if (body.storeKind !== current.storeKind) { next.storeKind = body.storeKind; changed.storeKind = body.storeKind; }
+    }
+    if (typeof body.notificationPhone === "string") {
+      const digits = body.notificationPhone.replace(/[^0-9]/g, "");
+      if (digits && digits !== current.notificationPhone) { next.notificationPhone = digits; changed.notificationPhone = digits; }
+    }
+    if (typeof body.openDate === "string" || body.openDate === null) {
+      const value = body.openDate === null || body.openDate === "" ? null : String(body.openDate);
+      if (value !== null && !dateOnly.test(value)) throw new PosDomainError("VALIDATION_ERROR", "오픈일은 YYYY-MM-DD 형식이어야 합니다.", 422);
+      if (value !== (current.openDate ?? null)) { next.openDate = value; changed.openDate = value; }
+    }
+    if (typeof body.active === "boolean" && body.active !== current.active) { next.active = body.active; changed.active = body.active; }
+    if (Object.keys(changed).length === 0) return { store: current, changed: [] };
+    await repository.commit({
+      changes: [{ type: "store", id, expectedVersion, value: next }],
+      audits: [posAudit(request.actor as PosActor, "store", id, "store.updated", id, undefined, undefined,
+        { changed: Object.keys(changed), values: changed })],
+    });
+    return { store: next, changed: Object.keys(changed) };
+  });
+
+  /* 네이버 지도 키 — 조회는 POS 역할 전체(지도를 그려야 하므로), 저장은 마스터 */
+  app.get("/api/v2/pos/config/navermap", async (request) => {
+    assertPosRole(request.actor);
+    return { keyId: await fieldStore.getSetting("navermap.keyId") };
+  });
+  app.put("/api/v2/pos/config/navermap", async (request) => {
+    assertFieldRole(request.actor, true);
+    const keyId = String((request.body as { keyId?: unknown })?.keyId ?? "").trim();
+    await fieldStore.putSetting("navermap.keyId", keyId);
+    await repository.commit({ changes: [],
+      audits: [posAudit(request.actor as PosActor, "system", "navermap", "settings.updated", undefined, undefined, undefined,
+        { key: "navermap.keyId", set: keyId.length > 0 })] });
+    return { keyId };
+  });
+
+  /* 가맹 영업 파이프라인 — 숙려기간(가맹사업법 제7조③)을 서버에서 강제한다 */
+  app.get("/api/v2/leads", async (request) => {
+    assertFieldRole(request.actor);
+    const leads = await fieldStore.listLeads();
+    const today = kstToday();
+    return {
+      stages: LEAD_STAGES,
+      leads: leads.map((lead) => ({ ...lead, cooling: coolingGate(lead, today) })),
+    };
+  });
+  app.post("/api/v2/leads", async (request, reply) => {
+    assertFieldRole(request.actor);
+    const body = request.body as { name?: string };
+    const name = (body?.name ?? "").trim();
+    if (name.length < 2) throw new PosDomainError("LEAD_NAME_REQUIRED", "이름(2자 이상)이 필요합니다.", 422);
+    const lead = await fieldStore.createLead({ ...(request.body as object), name });
+    await repository.commit({ changes: [],
+      audits: [posAudit(request.actor as PosActor, "system", lead.id, "lead.created", undefined, undefined, undefined, { name })] });
+    reply.code(201);
+    return { lead: { ...lead, cooling: coolingGate(lead) } };
+  });
+  app.patch("/api/v2/leads/:id", async (request) => {
+    assertFieldRole(request.actor);
+    const { id } = request.params as { id: string };
+    const lead = await fieldStore.updateLead(id, request.body as Record<string, never>);
+    if (!lead) throw new PosDomainError("LEAD_NOT_FOUND", "리드를 찾을 수 없습니다.", 404);
+    await repository.commit({ changes: [],
+      audits: [posAudit(request.actor as PosActor, "system", id, "lead.updated", undefined, undefined, undefined,
+        { fields: Object.keys((request.body as object) ?? {}) })] });
+    return { lead: { ...lead, cooling: coolingGate(lead) } };
+  });
+  app.post("/api/v2/leads/:id/stage", async (request) => {
+    assertFieldRole(request.actor);
+    const { id } = request.params as { id: string };
+    const body = request.body as { dir?: unknown; override?: unknown };
+    const dir = body.dir === "back" ? -1 : 1;
+    const lead = await fieldStore.getLead(id);
+    if (!lead) throw new PosDomainError("LEAD_NOT_FOUND", "리드를 찾을 수 없습니다.", 404);
+    const stage = lead.stage + dir;
+    if (stage < 0 || stage >= LEAD_STAGES.length) throw new PosDomainError("LEAD_STAGE_RANGE", "더 이동할 단계가 없습니다.", 422);
+    /* 정보공개서 제공(2) → 가맹계약(3) 진입만 숙려기간 대상 */
+    const wasFlagged = lead.flag;
+    let flag = lead.flag;
+    if (dir === 1 && lead.stage === 2) {
+      const gate = coolingGate(lead);
+      if (!gate.has) throw new PosDomainError("COOLING_DOC_DATE_REQUIRED", "정보공개서 제공일을 먼저 입력해 주세요.", 422);
+      if (!gate.ok) {
+        if (body.override !== true) {
+          throw new PosDomainError("COOLING", `숙려기간 미경과 — ${gate.gate} 이후 가맹계약이 가능합니다.`, 409, { gate: gate.gate, days: gate.days });
+        }
+        flag = true;
+      }
+    }
+    let storeId: string | null | undefined;
+    const audits = [] as ReturnType<typeof posAudit>[];
+    /* 실사·공사(4) → 오픈완료(5): 가맹 매장을 대장에 자동 등록 */
+    if (dir === 1 && lead.stage === 4 && !lead.storeId) {
+      const entities = await repository.list<{ id: string; isHeadquarters?: boolean; businessNumber: string; legalName: string;
+        representativeName: string; address: string; businessType: string; businessCategory: string; email: string }>("legal_entity");
+      const headquarters = entities.find((entity) => entity.isHeadquarters);
+      if (!headquarters) throw new PosDomainError("HQ_REQUIRED", "본사 정보가 없습니다.", 409);
+      const stores = await repository.list<PosStoreRecord>("store");
+      const name = (lead.storeName || `${lead.name} 가맹점`).trim();
+      let code = `ST${String(stores.length + 1).padStart(3, "0")}`;
+      while (stores.some((store) => store.code === code)) code = `ST${String(Number(code.slice(2)) + 1).padStart(3, "0")}`;
+      const store: PosStoreRecord = {
+        id: posRandomUUID(), code, name,
+        business: { businessNumber: headquarters.businessNumber, legalName: headquarters.legalName,
+          representativeName: headquarters.representativeName, address: headquarters.address,
+          businessType: headquarters.businessType, businessCategory: headquarters.businessCategory, email: headquarters.email },
+        billingCycle: "monthly", paymentMethod: "monthly_credit",
+        notificationPhone: lead.phone.replace(/[^0-9]/g, "") || "01000000000",
+        active: true, version: 1, storeKind: "가맹",
+        ...(lead.area ? { region: lead.area } : {}),
+      };
+      storeId = store.id;
+      audits.push(posAudit(request.actor as PosActor, "store", store.id, "가맹점 오픈 등록", store.id, undefined, undefined,
+        { leadId: id, code, name }));
+      await repository.commit({ changes: [{ type: "store", id: store.id, expectedVersion: null, value: store }], audits });
+      audits.length = 0;
+    }
+    const updated = await fieldStore.setLeadStage(id, stage, flag, storeId);
+    if (!updated) throw new PosDomainError("LEAD_NOT_FOUND", "리드를 찾을 수 없습니다.", 404);
+    audits.push(posAudit(request.actor as PosActor, "system", id, "lead.stage", undefined, undefined, undefined,
+      { from: LEAD_STAGES[lead.stage], to: LEAD_STAGES[stage] }));
+    if (flag && !wasFlagged) {
+      audits.push(posAudit(request.actor as PosActor, "system", id, "숙려기간 미준수 사후기록", undefined, undefined, undefined,
+        { docDate: lead.docDate, advisor: lead.advisor, gate: coolingGate(lead).gate }));
+    }
+    await repository.commit({ changes: [], audits });
+    return { lead: { ...updated, cooling: coolingGate(updated) }, ...(storeId ? { createdStoreId: storeId } : {}) };
+  });
+  app.delete("/api/v2/leads/:id", async (request) => {
+    assertFieldRole(request.actor);
+    const { id } = request.params as { id: string };
+    if (!(await fieldStore.removeLead(id))) throw new PosDomainError("LEAD_NOT_FOUND", "리드를 찾을 수 없습니다.", 404);
+    await repository.commit({ changes: [],
+      audits: [posAudit(request.actor as PosActor, "system", id, "lead.deleted", undefined, undefined, undefined, {})] });
+    return { ok: true };
+  });
+
+  /* 감사 로그 검색 — 마스터·재무·감사인 */
+  app.get("/api/v2/audit", async (request) => {
+    const role = String(request.actor?.role ?? "");
+    if (!["hq_master", "hq_finance", "auditor", "master", "finance", "admin"].includes(role)) {
+      throw new PosDomainError("FORBIDDEN", "감사 로그 조회 권한이 없습니다.", 403);
+    }
+    const query = request.query as { q?: string; from?: string; to?: string; noSched?: string; page?: string; limit?: string };
+    const result = await repository.searchAudit({
+      ...(query.q ? { q: String(query.q) } : {}),
+      ...(dateOnly.test(query.from ?? "") ? { from: query.from! } : {}),
+      ...(dateOnly.test(query.to ?? "") ? { to: query.to! } : {}),
+      excludeSystem: query.noSched === "1" || query.noSched === "true",
+      page: Math.max(Number(query.page ?? 1) || 1, 1),
+      limit: Math.min(Math.max(Number(query.limit ?? 50) || 50, 1), 200),
+    });
+    return result;
+  });
+
+  /* 공지 — 조회는 로그인한 모두(매장 화면 배너), 관리는 본사 */
+  app.get("/api/v2/notices", async () => ({ notices: await fieldStore.listNotices() }));
+  app.post("/api/v2/notices", async (request, reply) => {
+    assertFieldRole(request.actor);
+    const body = request.body as { title?: string; body?: string; pinned?: boolean };
+    const title = (body?.title ?? "").trim();
+    if (title.length < 2) throw new PosDomainError("NOTICE_TITLE_REQUIRED", "제목(2자 이상)이 필요합니다.", 422);
+    const notice = await fieldStore.createNotice({ title, ...(body.body ? { body: body.body } : {}), pinned: body.pinned === true });
+    await repository.commit({ changes: [],
+      audits: [posAudit(request.actor as PosActor, "system", notice.id, "notice.created", undefined, undefined, undefined, { title })] });
+    reply.code(201);
+    return { notice };
+  });
+  app.delete("/api/v2/notices/:id", async (request) => {
+    assertFieldRole(request.actor);
+    const { id } = request.params as { id: string };
+    if (!(await fieldStore.removeNotice(id))) throw new PosDomainError("NOTICE_NOT_FOUND", "공지를 찾을 수 없습니다.", 404);
+    await repository.commit({ changes: [],
+      audits: [posAudit(request.actor as PosActor, "system", id, "notice.deleted", undefined, undefined, undefined, {})] });
     return { ok: true };
   });
 

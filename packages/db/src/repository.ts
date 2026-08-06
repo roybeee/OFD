@@ -86,11 +86,25 @@ export interface RepositoryReadiness {
   };
 }
 
+export interface AuditSearchInput {
+  q?: string;
+  /** KST 일자 (YYYY-MM-DD) 포함 범위 */
+  from?: string;
+  to?: string;
+  /** 스케줄러·시스템 액터가 남긴 항목 제외 */
+  excludeSystem?: boolean;
+  storeIds?: string[];
+  page?: number;
+  limit?: number;
+}
+
 export interface StateRepository {
   get<T>(type: AggregateType, id: string): Promise<T | undefined>;
   list<T>(type: AggregateType, storeIds?: string[]): Promise<T[]>;
   commit(request: CommitRequest): Promise<void>;
   listAudit(limit?: number, storeIds?: string[]): Promise<AuditEvent[]>;
+  /** 감사 로그 검색 (V1 감사 화면 이식) — 키워드·KST 일자 범위·시스템 제외·페이지네이션 */
+  searchAudit(input: AuditSearchInput): Promise<{ rows: AuditEvent[]; total: number }>;
   transaction<T>(run: (repository: StateRepository) => Promise<T>): Promise<T>;
   /** Runs against freshly-read state while holding a process/distributed exclusive lock for the supplied business key. */
   exclusiveTransaction<T>(key: string, run: (repository: StateRepository) => Promise<T>): Promise<T>;

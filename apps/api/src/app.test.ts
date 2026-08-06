@@ -32,6 +32,112 @@ describe("OFD v2 API", () => {
     expect(JSON.stringify(bootstrap.json())).not.toContain("passwordHash");
   });
 
+  it("가맹 영업 파이프라인은 숙려기간을 서버에서 강제하고 override는 사후기록을 남긴다", async () => {
+    const app = await demoApp();
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+
+    const created = await app.inject({ method: "POST", url: "/api/v2/leads", headers: master,
+      payload: { name: "김가맹", phone: "010-1234-5678", area: "수원 영통", storeName: "영통점" } });
+    expect(created.statusCode).toBe(201);
+    const leadId = (created.json() as { lead: { id: string; stage: number } }).lead.id;
+
+    /* 리드(0) → 상담(1) → 정보공개서 제공(2)까지는 게이트 없음 */
+    for (const _ of [0, 1]) {
+      const moved = await app.inject({ method: "POST", url: `/api/v2/leads/${leadId}/stage`, headers: master, payload: {} });
+      expect(moved.statusCode).toBe(200);
+    }
+    /* 제공일 없이 가맹계약 진입 시도 → 입력 요구 */
+    const noDoc = await app.inject({ method: "POST", url: `/api/v2/leads/${leadId}/stage`, headers: master, payload: {} });
+    expect(noDoc.statusCode).toBe(422);
+    expect(noDoc.json()).toMatchObject({ error: { code: "COOLING_DOC_DATE_REQUIRED" } });
+
+    /* 오늘 제공 → 14일 미경과이므로 409 + 개방일 안내 */
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    await app.inject({ method: "PATCH", url: `/api/v2/leads/${leadId}`, headers: master, payload: { docDate: today } });
+    const blocked = await app.inject({ method: "POST", url: `/api/v2/leads/${leadId}/stage`, headers: master, payload: {} });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json()).toMatchObject({ error: { code: "COOLING", details: { days: 14 } } });
+
+    /* override → 통과하되 flag가 서고 감사에 사후기록이 남는다 */
+    const forced = await app.inject({ method: "POST", url: `/api/v2/leads/${leadId}/stage`, headers: master, payload: { override: true } });
+    expect(forced.statusCode).toBe(200);
+    expect(forced.json()).toMatchObject({ lead: { stage: 3, flag: true } });
+    const audit = await app.inject({ method: "GET", url: "/api/v2/audit?q=숙려", headers: master });
+    expect((audit.json() as { total: number }).total).toBe(1);
+
+    /* 실사·공사(4) → 오픈완료(5)에서 가맹 매장이 대장에 자동 등록된다 */
+    await app.inject({ method: "POST", url: `/api/v2/leads/${leadId}/stage`, headers: master, payload: {} });
+    const opened = await app.inject({ method: "POST", url: `/api/v2/leads/${leadId}/stage`, headers: master, payload: {} });
+    expect(opened.statusCode).toBe(200);
+    const body = opened.json() as { lead: { stage: number; storeId: string | null }; createdStoreId?: string };
+    expect(body.lead.stage).toBe(5);
+    expect(body.createdStoreId).toBeTruthy();
+    expect(body.lead.storeId).toBe(body.createdStoreId);
+    const bootstrap = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: master });
+    const stores = (bootstrap.json() as { stores: Array<{ id: string; name: string; storeKind?: string }> }).stores;
+    expect(stores.find((store) => store.id === body.createdStoreId)).toMatchObject({ name: "영통점", storeKind: "가맹" });
+
+    /* 단계 범위를 넘어서면 거부하고, 점주는 접근 자체가 막힌다 */
+    expect((await app.inject({ method: "POST", url: `/api/v2/leads/${leadId}/stage`, headers: master, payload: {} })).statusCode).toBe(422);
+    expect((await app.inject({ method: "GET", url: "/api/v2/leads", headers: { "x-demo-actor-id": DEMO_IDS.owner } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "DELETE", url: `/api/v2/leads/${leadId}`, headers: master })).statusCode).toBe(200);
+    expect((await app.inject({ method: "DELETE", url: `/api/v2/leads/${leadId}`, headers: master })).statusCode).toBe(404);
+  });
+
+  it("매장 대장 수정은 변경 항목만 감사에 남기고 버전 충돌을 막는다", async () => {
+    const app = await demoApp();
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+    const before = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: master });
+    const store = (before.json() as { stores: Array<{ id: string; name: string }> }).stores[0]!;
+
+    const patched = await app.inject({ method: "PATCH", url: `/api/v2/pos/stores/${store.id}`, headers: master,
+      payload: { storeKind: "직영", region: "서울 금천", openDate: "2026-03-02", notificationPhone: "010-2222-3333" } });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json()).toMatchObject({ store: { storeKind: "직영", region: "서울 금천", openDate: "2026-03-02", notificationPhone: "01022223333" } });
+    expect((patched.json() as { changed: string[] }).changed.sort()).toEqual(["notificationPhone", "openDate", "region", "storeKind"]);
+
+    /* 같은 값 재전송은 변경 없음으로 처리해 감사 로그를 오염시키지 않는다 */
+    const noop = await app.inject({ method: "PATCH", url: `/api/v2/pos/stores/${store.id}`, headers: master, payload: { storeKind: "직영" } });
+    expect(noop.json()).toMatchObject({ changed: [] });
+
+    /* 낡은 버전으로 쓰면 409 */
+    const stale = await app.inject({ method: "PATCH", url: `/api/v2/pos/stores/${store.id}`, headers: master,
+      payload: { expectedVersion: 1, region: "부산" } });
+    expect(stale.statusCode).toBe(409);
+
+    expect((await app.inject({ method: "PATCH", url: `/api/v2/pos/stores/${store.id}`, headers: master, payload: { openDate: "2026-3-2" } })).statusCode).toBe(422);
+    expect((await app.inject({ method: "PATCH", url: "/api/v2/pos/stores/없음", headers: master, payload: { region: "x" } })).statusCode).toBe(404);
+    expect((await app.inject({ method: "PATCH", url: `/api/v2/pos/stores/${store.id}`, headers: { "x-demo-actor-id": DEMO_IDS.owner }, payload: { region: "x" } })).statusCode).toBe(403);
+  });
+
+  it("공지와 지도 키를 관리하고 감사 검색은 필터를 적용한다", async () => {
+    const app = await demoApp();
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+    const created = await app.inject({ method: "POST", url: "/api/v2/notices", headers: master,
+      payload: { title: "광복절 배송 휴무", body: "8/15 배송 없음", pinned: true } });
+    expect(created.statusCode).toBe(201);
+    const noticeId = (created.json() as { notice: { id: string } }).notice.id;
+    /* 공지는 점주 화면 배너에 쓰므로 조회는 열려 있고 관리는 본사만 */
+    const seen = await app.inject({ method: "GET", url: "/api/v2/notices", headers: { "x-demo-actor-id": DEMO_IDS.owner } });
+    expect((seen.json() as { notices: Array<{ title: string }> }).notices[0]).toMatchObject({ title: "광복절 배송 휴무", pinned: true });
+    expect((await app.inject({ method: "POST", url: "/api/v2/notices", headers: { "x-demo-actor-id": DEMO_IDS.owner }, payload: { title: "무단 공지" } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: "/api/v2/notices", headers: master, payload: { title: "짧" } })).statusCode).toBe(422);
+    expect((await app.inject({ method: "DELETE", url: `/api/v2/notices/${noticeId}`, headers: master })).statusCode).toBe(200);
+
+    await app.inject({ method: "PUT", url: "/api/v2/pos/config/navermap", headers: master, payload: { keyId: "naver-key-1" } });
+    expect((await app.inject({ method: "GET", url: "/api/v2/pos/config/navermap", headers: master })).json()).toEqual({ keyId: "naver-key-1" });
+    expect((await app.inject({ method: "PUT", url: "/api/v2/pos/config/navermap", headers: { "x-demo-actor-id": DEMO_IDS.ops }, payload: { keyId: "x" } })).statusCode).toBe(403);
+
+    const search = await app.inject({ method: "GET", url: "/api/v2/audit?q=notice&limit=1", headers: master });
+    expect(search.statusCode).toBe(200);
+    const result = search.json() as { rows: Array<{ action: string }>; total: number };
+    expect(result.total).toBeGreaterThanOrEqual(2); // 생성·삭제
+    expect(result.rows.length).toBe(1);
+    expect((await app.inject({ method: "GET", url: "/api/v2/audit", headers: { "x-demo-actor-id": DEMO_IDS.owner } })).statusCode).toBe(403);
+    const future = await app.inject({ method: "GET", url: "/api/v2/audit?from=2030-01-01", headers: master });
+    expect((future.json() as { total: number }).total).toBe(0);
+  });
+
   it("월별 정산 집계(V1 정산 탭 이식)를 재무·마스터에게 제공하고 점주는 차단한다", async () => {
     const app = await demoApp();
     const summary = await app.inject({ method: "GET", url: "/api/v2/settlements/monthly?month=2026-07",

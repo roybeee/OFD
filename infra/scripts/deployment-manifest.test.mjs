@@ -47,7 +47,9 @@ test('Render blueprint defines Web proxy, private API, worker, managed Postgres,
   assert.match(manifest, /fromService:[\s\S]*property:\s*hostport/);
   assert.match(manifest, /healthCheckPath:\s*\/readyz/);
   assert.match(manifest, /key:\s*REPOSITORY_MODE\s*\n\s*value:\s*postgres/);
-  assert.match(manifest, /autoDeployTrigger:\s*off/);
+  /* 자동배포는 켠다 — 꺼두면 푸시가 라이브에 반영되지 않아 서비스 간 버전 스큐가 생긴다(2026-08 장애 재발 방지) */
+  assert.match(manifest, /autoDeployTrigger:\s*commit/);
+  assert.doesNotMatch(manifest, /autoDeployTrigger:\s*off/);
   assert.match(manifest, /databases:[\s\S]*postgresMajorVersion:\s*['"]16['"][\s\S]*ipAllowList:\s*\[\]/);
   assert.match(manifest, /key:\s*SESSION_SECRET\s*\n\s*sync:\s*false/);
   assert.match(manifest, /key:\s*ENCRYPTION_KEY\s*\n\s*sync:\s*false/);

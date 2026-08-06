@@ -8,7 +8,7 @@ services:
     dockerContext: .
     dockerCommand: nginx -g 'daemon off;'
     healthCheckPath: /readyz
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     maxShutdownDelaySeconds: 30
     envVars:
       - key: API_UPSTREAM_HOSTPORT
@@ -26,7 +26,7 @@ services:
     dockerContext: .
     dockerCommand: node apps/api/dist/server.js
     preDeployCommand: node infra/scripts/deploy/preflight.mjs migrate && node packages/db/dist/migrate.js
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
@@ -132,7 +132,7 @@ services:
     dockerContext: .
     dockerCommand: node apps/worker/dist/main.js
     preDeployCommand: node infra/scripts/deploy/preflight.mjs worker
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     maxShutdownDelaySeconds: 120
     envVars:
       - key: NODE_ENV

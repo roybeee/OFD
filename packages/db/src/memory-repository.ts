@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
 import { outboxRetryDelayMs,
-  type AggregateChange, type AggregateType, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
   type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
@@ -114,6 +114,31 @@ export class MemoryRepository implements StateRepository {
       .slice(-limit)
       .reverse()
       .map(clone);
+  }
+
+  async searchAudit(input: AuditSearchInput): Promise<{ rows: AuditEvent[]; total: number }> {
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+    const page = Math.max(input.page ?? 1, 1);
+    if (input.storeIds !== undefined && input.storeIds.length === 0) return { rows: [], total: 0 };
+    const needle = input.q?.toLowerCase();
+    const kstDate = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date(iso));
+    const matched = this.audits.filter((event) => {
+      if (input.storeIds !== undefined && !(event.storeId && input.storeIds.includes(event.storeId))) return false;
+      if (input.excludeSystem && event.actorRole === "system") return false;
+      if (input.from || input.to) {
+        const date = kstDate(event.occurredAt);
+        if (input.from && date < input.from) return false;
+        if (input.to && date > input.to) return false;
+      }
+      if (needle) {
+        const haystack = [event.action, event.aggregateType, event.aggregateId, event.actorId, JSON.stringify(event.metadata)]
+          .join(" ").toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return true;
+    });
+    const ordered = [...matched].reverse();
+    return { total: ordered.length, rows: ordered.slice((page - 1) * limit, (page - 1) * limit + limit).map(clone) };
   }
 
   async transaction<T>(run: (repository: StateRepository) => Promise<T>): Promise<T> {

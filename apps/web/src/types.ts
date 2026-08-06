@@ -184,7 +184,8 @@ export type BootstrapData = {
   supportEmail?: string;
   availableActors?: Array<{ id: string; name: string; role: string }>;
   drivers: Array<{ id: string; name: string }>;
-  stores: Array<{ id: string; name: string; storeKind?: '직영' | '가맹'; code?: string }>;
+  stores: Array<{ id: string; name: string; storeKind?: '직영' | '가맹'; code?: string;
+    region?: string; roadAddress?: string; notificationPhone?: string; openDate?: string | null; active?: boolean; version?: number }>;
   capabilities: string[];
   allowedDeliveryDates: string[];
   routeDates: string[];
