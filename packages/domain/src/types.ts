@@ -102,6 +102,11 @@ export interface Store {
   notificationPhone: string;
   active: boolean;
   version: number;
+  /* V1 매장 대장 이식 필드 — 기존 payload 하위호환을 위해 선택 필드 */
+  storeKind?: "직영" | "가맹";
+  region?: string;
+  roadAddress?: string;
+  openDate?: string | null;
 }
 
 export interface Product {

@@ -31,7 +31,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
   const [links, setLinks] = useState<Array<{ id: string; storeId: string; merchantId: string; lastSyncAt: string | null }>>([]);
   const [localStores, setLocalStores] = useState<Array<{ id: string; name: string }>>(() => data.stores.map((store) => ({ id: store.id, name: store.name })));
   const [setupOpen, setSetupOpen] = useState(false);
-  const [storeForm, setStoreForm] = useState({ name: '', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
+  const [storeForm, setStoreForm] = useState({ name: '', storeKind: '직영', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
   const [linkForm, setLinkForm] = useState({ storeId: '', merchantId: '', accessKey: '', secretKey: '' });
   const [setupBusy, setSetupBusy] = useState(false);
 
@@ -65,12 +65,12 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
     setSetupBusy(true);
     try {
       const created = await createPosStoreV2({
-        name: storeForm.name.trim(), billingCycle: storeForm.billingCycle,
+        name: storeForm.name.trim(), storeKind: storeForm.storeKind, billingCycle: storeForm.billingCycle,
         paymentMethod: storeForm.paymentMethod, notificationPhone: storeForm.notificationPhone,
       }, newIdempotencyKey());
       setLocalStores((current) => [...current, { id: created.store.id, name: created.store.name }]);
       setLinkForm((current) => ({ ...current, storeId: created.store.id }));
-      setStoreForm({ name: '', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
+      setStoreForm({ name: '', storeKind: '직영', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
       notify(`${created.store.name} 매장 등록 완료 (${created.store.code}) — 아래에서 토스 키를 연결해 주세요.`, 'success');
     } catch (cause) {
       notify(cause instanceof Error ? cause.message : '매장 등록에 실패했습니다.', 'warning');
@@ -167,6 +167,11 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
           <h3 className="setup-sub">① 매장 등록 <span className="muted">(목록에 없을 때만)</span></h3>
           <div className="form-grid">
             <label>매장명<input type="text" value={storeForm.name} onChange={(event) => setStoreForm({ ...storeForm, name: event.target.value })} placeholder="예: 독산점" /></label>
+            <label>구분
+              <select value={storeForm.storeKind} onChange={(event) => setStoreForm({ ...storeForm, storeKind: event.target.value })}>
+                <option value="직영">직영</option><option value="가맹">가맹</option>
+              </select>
+            </label>
             <label>청구 방식
               <select value={storeForm.billingCycle} onChange={(event) => setStoreForm({ ...storeForm, billingCycle: event.target.value })}>
                 <option value="monthly">월 합산</option><option value="per_delivery">건별</option>

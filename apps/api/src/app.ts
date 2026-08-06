@@ -20,7 +20,8 @@ import { createOpeningStore, createPosStore, OPENING_PHASES, type OpeningPhase, 
 import { DomainError as PosDomainError } from "@ofd/domain";
 import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
 import { randomUUID as posRandomUUID } from "node:crypto";
-import type { Actor as PosActor, Store as PosStoreRecord } from "@ofd/domain";
+import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipment, Store as PosStoreRecord, TaxInvoice } from "@ofd/domain";
+import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
 import { audit as posAudit } from "./events.ts";
 
 export interface BuildAppOptions {
@@ -79,7 +80,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
   });
 
-  app.get("/api/v2/health", async () => ({ ok: true, mode: config.appMode, providerMode: config.providerMode, now: new Date().toISOString() }));
+  app.get("/api/v2/health", async () => ({ ok: true, mode: config.appMode, providerMode: config.providerMode,
+    now: new Date().toISOString(), commit: (env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null }));
   app.get("/api/v2/ready", async (_request, reply) => {
     const checkedAt = (options.readinessNow?.() ?? new Date());
     const expectedMigrations = requiredMigrations.map(({ version, checksumSha256 }) => ({ version, checksumSha256 }));
@@ -372,7 +374,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (role !== "hq_master" && role !== "master") {
       throw new PosDomainError("FORBIDDEN", "마스터만 매장을 등록할 수 있습니다.", 403);
     }
-    const body = request.body as { code?: string; name?: string; billingCycle?: string; paymentMethod?: string; notificationPhone?: string };
+    const body = request.body as { code?: string; name?: string; billingCycle?: string; paymentMethod?: string; notificationPhone?: string; storeKind?: string };
     const name = body?.name?.trim() ?? "";
     if (name.length < 2) throw new PosDomainError("STORE_NAME_REQUIRED", "매장명(2자 이상)이 필요합니다.", 422);
     const entities = await repository.list<{ id: string; isHeadquarters?: boolean; businessNumber: string; legalName: string; representativeName: string; address: string; businessType: string; businessCategory: string; email: string }>("legal_entity");
@@ -397,6 +399,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       paymentMethod: body.paymentMethod === "prepaid" ? "prepaid" : "monthly_credit",
       notificationPhone: (body.notificationPhone ?? "").replace(/[^0-9]/g, "") || "01000000000",
       active: true, version: 1,
+      ...(body.storeKind === "직영" || body.storeKind === "가맹" ? { storeKind: body.storeKind } : {}),
     };
     await repository.commit({
       changes: [{ type: "store", id: store.id, expectedVersion: null, value: store }],
@@ -404,6 +407,38 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
     reply.code(201);
     return { store: { id: store.id, code, name } };
+  });
+
+  /* ── 월별 정산 집계 (V1 정산 탭 이식) ──
+   * 공급 = 검수 확정 입고(KST 월 귀속), 매장 매출 = POS 실측, 로스 = 입고−판매(상품 매칭).
+   * 조회 전용이라 메이커-체커와 무관하게 마스터·재무·감사인이 본다. */
+  app.get("/api/v2/settlements/monthly", async (request) => {
+    const role = String(request.actor?.role ?? "");
+    if (!["hq_master", "hq_finance", "auditor", "master", "finance", "admin"].includes(role)) {
+      throw new PosDomainError("FORBIDDEN", "정산 집계 조회 권한이 없습니다.", 403);
+    }
+    const query = request.query as { month?: string };
+    const kstMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit" })
+      .format(new Date()).slice(0, 7);
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(query.month ?? "") ? query.month! : kstMonth;
+    const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+    const from = `${month}-01`;
+    const to = `${month}-${String(monthEnd).padStart(2, "0")}`;
+    const [stores, receipts, shipments, orders, settlements, invoices, posDaily, posProductQty] = await Promise.all([
+      repository.list<PosStoreRecord>("store"),
+      repository.list<GoodsReceipt>("receipt"),
+      repository.list<Shipment>("shipment"),
+      repository.list<PurchaseOrder>("order"),
+      repository.list<Settlement>("settlement"),
+      repository.list<TaxInvoice>("tax_invoice"),
+      posStore.dailyTotals(from, to),
+      posStore.productTotals(from, to),
+    ]);
+    return buildMonthlySettlementSummary(month, {
+      stores, receipts, shipments, orders, settlements, invoices,
+      posTotals: posDaily.map(({ storeId, qty, amount }) => ({ storeId, qty, amount })),
+      posProductQty,
+    });
   });
 
   app.get("/api/v2/pos/links", async (request) => {

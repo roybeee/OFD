@@ -723,7 +723,9 @@ export class ProcurementService {
     input: { storeId: string; periodStart: string; periodEnd: string; receiptIds?: string[] | undefined }): Promise<{
       settlement: Settlement; paymentRequest?: PaymentRequest;
     }> {
-    assertRole(actor, ["hq_finance"]);
+    /* 초안 '작성'은 재무·마스터 모두 허용 — 검토(재무)·최종 승인(마스터, 검토자≠승인자) 분리는 그대로다.
+     * 재무 계정이 아직 없는 초기 구축 단계에서도 수명주기를 시작할 수 있어야 한다(V1 이식 요구). */
+    assertRole(actor, ["hq_finance", "hq_master"]);
     assertRecentStepUp(actor);
     invariant(/^\d{4}-\d{2}-\d{2}$/.test(input.periodStart) && /^\d{4}-\d{2}-\d{2}$/.test(input.periodEnd) && input.periodStart <= input.periodEnd,
       "INVALID_PERIOD", "정산 기간이 올바르지 않습니다.");
@@ -1062,8 +1064,8 @@ function capabilitiesFor(actor: Actor): string[] {
     store_owner: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
     store_staff: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.documents.read"],
     hq_ops: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request", "hq.shipments.manage", "hq.shipments.dispatch", "hq.drivers.read", "hq.pos.read"],
-    hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read"],
-    hq_master: ["hq.settlements.approve", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
+    hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read"],
+    hq_master: ["hq.settlements.approve", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
       "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.drivers.read", "hq.pos.read"],
     auditor: ["hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
     driver: ["driver.deliveries.read", "driver.deliveries.complete"],

@@ -100,6 +100,19 @@ export type SettlementItem = {
   approvedBy?: string; approvedByName?: string; approvedAt?: string; version: number;
 };
 
+export type MonthlySettlementRow = {
+  storeId: string; code: string; name: string; storeKind: '직영' | '가맹' | null;
+  supplyConfirmed: number; receiptCount: number; settledGross: number; settlementCount: number;
+  invoiceSummary: { total: number; ntsSuccess: number; failed: number; inProgress: number };
+  posRevenue: number; posQty: number; supplyToPosPct: number | null;
+  receivedQty: number | null; soldQty: number; wasteQty: number | null; lossRate: number | null;
+};
+export type MonthlySettlementSummary = {
+  month: string;
+  rows: MonthlySettlementRow[];
+  totals: Omit<MonthlySettlementRow, 'storeId' | 'code' | 'name' | 'storeKind' | 'supplyToPosPct'>;
+};
+
 export type ModificationReasonCode = '01' | '02' | '03' | '04' | '05' | '06';
 
 export type Invoice = {
@@ -171,7 +184,7 @@ export type BootstrapData = {
   supportEmail?: string;
   availableActors?: Array<{ id: string; name: string; role: string }>;
   drivers: Array<{ id: string; name: string }>;
-  stores: Array<{ id: string; name: string }>;
+  stores: Array<{ id: string; name: string; storeKind?: '직영' | '가맹'; code?: string }>;
   capabilities: string[];
   allowedDeliveryDates: string[];
   routeDates: string[];

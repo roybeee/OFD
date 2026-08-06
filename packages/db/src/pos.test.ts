@@ -301,3 +301,17 @@ test("다른 매장·다른 일자의 입고가 섞이지 않는다", async () =
   const report = await store.wasteReport("store-doksan", "2026-08-03");
   assert.equal(report.hasReceipt, false, "해당 매장·일자 입고만 본다");
 });
+
+test("productTotals는 상품 매칭된 판매만 매장×상품으로 합산한다 (월별 정산 로스 계산용)", async () => {
+  const store = new MemoryPosStore();
+  await store.recordSales("store-mapdal", ROWS, "sync");
+  await store.recordSales("store-doksan", [{ date: "2026-08-03", rawName: "우유크림도넛", qty: 3, amount: 12_600 }], "sync");
+  assert.deepEqual(await store.productTotals("2026-08-01", "2026-08-31"), [], "매칭 전에는 비어 있다");
+  const donut = await store.createProduct({ name: "우유크림도넛", category: "도넛", storeId: null, consumerPrice: 4_200 });
+  await store.resolveUnmatched();
+  const totals = await store.productTotals("2026-08-01", "2026-08-31");
+  assert.equal(totals.length, 2, "두 매장 각각 한 행");
+  const mapdal = totals.find((row) => row.storeId === "store-mapdal");
+  assert.deepEqual(mapdal, { storeId: "store-mapdal", productId: donut.id, qty: 5, amount: 21_000 });
+  assert.deepEqual(await store.productTotals("2026-09-01", "2026-09-30"), [], "기간 밖은 제외");
+});

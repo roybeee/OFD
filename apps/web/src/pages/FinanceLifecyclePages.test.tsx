@@ -17,6 +17,16 @@ const baseData: BootstrapData = {
 
 function response(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }); }
 
+const monthlyRow = { storeId: 'store-1', code: 'GANGNAM', name: '강남점', storeKind: '가맹' as const,
+  supplyConfirmed: 110_000, receiptCount: 1, settledGross: 110_000, settlementCount: 1,
+  invoiceSummary: { total: 1, ntsSuccess: 0, failed: 0, inProgress: 1 },
+  posRevenue: 220_000, posQty: 40, supplyToPosPct: 50, receivedQty: 15, soldQty: 8, wasteQty: 7, lossRate: 46.7 };
+const emptyMonthly = { month: '2026-08', rows: [], totals: { supplyConfirmed: 0, receiptCount: 0, settledGross: 0, settlementCount: 0,
+  posRevenue: 0, posQty: 0, receivedQty: null, soldQty: 0, wasteQty: null, lossRate: null,
+  invoiceSummary: { total: 0, ntsSuccess: 0, failed: 0, inProgress: 0 } } };
+const isMonthly = (input: RequestInfo | URL) => String(input).includes('/settlements/monthly');
+const nonMonthlyCalls = (mock: ReturnType<typeof vi.fn>) => mock.mock.calls.filter(([input]) => !isMonthly(input as RequestInfo | URL));
+
 describe('finance lifecycle pages', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -63,11 +73,11 @@ describe('finance lifecycle pages', () => {
   });
 
   it('exposes finance review actions and an accessible invoice lifecycle dialog', async () => {
-    const data: BootstrapData = { ...baseData, capabilities: ['hq.settlements.manage', 'hq.invoices.prepare', 'hq.invoices.retry'],
+    const data: BootstrapData = { ...baseData, capabilities: ['hq.settlements.manage', 'hq.settlements.draft', 'hq.invoices.prepare', 'hq.invoices.retry'],
       settlements: [{ id: 'settlement-1', storeId: 'store-1', storeName: '강남점', periodStart: '2026-08-01', periodEnd: '2026-08-31', status: 'draft', receiptIds: ['receipt-1'], grossAmount: 11_000, supplyAmount: 10_000, vatAmount: 1_000, version: 1 }],
       invoices: [{ id: 'invoice-1', storeName: '강남점', period: '2026년 8월', grossAmount: 11_000, supplyAmount: 10_000, vatAmount: 1_000, status: 'draft', preparedBy: '재무 담당자', preparedById: 'finance-1', dueDate: '2026-09-10', issueDate: '2026-08-31', issueType: 'normal', version: 1 }],
     };
-    const fetchMock = vi.fn(async () => response({ invoice: {}, settlement: {} }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => isMonthly(input) ? response(emptyMonthly) : response({ invoice: {}, settlement: {} }));
     vi.stubGlobal('fetch', fetchMock);
     await act(async () => { root = createRoot(container); root.render(<HqInvoicesPage data={data} notify={vi.fn()} refresh={vi.fn()} />); });
     expect(container.querySelector('form[aria-label="정산 초안 생성"]')).toBeTruthy();
@@ -80,7 +90,7 @@ describe('finance lifecycle pages', () => {
     expect(dialog?.textContent).toContain('작성·검토·승인 분리');
     const invoiceReview = [...dialog!.querySelectorAll('button')].find((button) => button.textContent?.includes('재무 검토 완료'))!;
     await act(async () => invoiceReview.click());
-    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(['/api/v2/settlements/settlement-1/review', '/api/v2/invoices/invoice-1/review']);
+    expect(nonMonthlyCalls(fetchMock).map(([input]) => String(input))).toEqual(['/api/v2/settlements/settlement-1/review', '/api/v2/invoices/invoice-1/review']);
   });
 
   it('gates final settlement and invoice approval to the master role', async () => {
@@ -89,13 +99,13 @@ describe('finance lifecycle pages', () => {
       settlements: [{ id: 'settlement-1', storeId: 'store-1', storeName: '강남점', periodStart: '2026-08-01', periodEnd: '2026-08-31', status: 'reviewed', receiptIds: ['receipt-1'], grossAmount: 11_000, supplyAmount: 10_000, vatAmount: 1_000, reviewedBy: 'finance-1', reviewedByName: '재무 담당자', version: 2 }],
       invoices: [{ id: 'invoice-1', storeName: '강남점', period: '2026년 8월', grossAmount: 11_000, supplyAmount: 10_000, vatAmount: 1_000, status: 'reviewed', preparedBy: '재무 담당자', preparedById: 'finance-1', reviewedBy: 'finance-1', reviewedByName: '재무 담당자', dueDate: '2026-09-10', issueDate: '2026-08-31', issueType: 'normal', version: 2 }],
     };
-    const fetchMock = vi.fn(async () => response({ invoice: {}, settlement: {} }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => isMonthly(input) ? response(emptyMonthly) : response({ invoice: {}, settlement: {} }));
     vi.stubGlobal('fetch', fetchMock);
     await act(async () => { root = createRoot(container); root.render(<HqInvoicesPage data={data} notify={vi.fn()} refresh={vi.fn()} />); });
     await act(async () => [...container.querySelectorAll('button')].find((button) => button.textContent?.includes('마스터 승인'))!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('.invoice-row')!.click());
     await act(async () => [...container.querySelectorAll('aside button')].find((button) => button.textContent?.includes('마스터 승인'))!.click());
-    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(['/api/v2/settlements/settlement-1/approve', '/api/v2/invoices/invoice-1/approve']);
+    expect(nonMonthlyCalls(fetchMock).map(([input]) => String(input))).toEqual(['/api/v2/settlements/settlement-1/approve', '/api/v2/invoices/invoice-1/approve']);
   });
 
   it('offers only supported full-reversal reasons and retries a failed invoice exactly', async () => {
@@ -103,7 +113,7 @@ describe('finance lifecycle pages', () => {
       { id: 'success-1', storeName: '강남점', period: '2026년 7월', grossAmount: 11_000, supplyAmount: 10_000, vatAmount: 1_000, status: 'nts_success', preparedBy: '재무 담당자', preparedById: 'finance-1', dueDate: '2026-08-10', issueDate: '2026-07-31', issueType: 'normal', serialNumber: '123456789012345678901234', version: 3 },
       { id: 'failed-1', storeName: '강남점', period: '2026년 8월', grossAmount: 22_000, supplyAmount: 20_000, vatAmount: 2_000, status: 'failed', preparedBy: '재무 담당자', preparedById: 'finance-1', dueDate: '2026-09-10', issueDate: '2026-08-31', issueType: 'normal', failureReason: 'NTS timeout', version: 5 },
     ] };
-    const fetchMock = vi.fn(async () => response({ invoice: {} }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => isMonthly(input) ? response(emptyMonthly) : response({ invoice: {} }));
     vi.stubGlobal('fetch', fetchMock);
     await act(async () => { root = createRoot(container); root.render(<HqInvoicesPage data={data} notify={vi.fn()} refresh={vi.fn()} />); });
     await act(async () => container.querySelectorAll<HTMLButtonElement>('.invoice-row')[0]!.click());
@@ -114,7 +124,48 @@ describe('finance lifecycle pages', () => {
     await act(async () => container.querySelectorAll<HTMLButtonElement>('.invoice-row')[1]!.click());
     await act(async () => [...container.querySelectorAll('aside button')].find((button) => button.textContent?.includes('발행 재시도'))!.click());
     expect(fetchMock).toHaveBeenCalledWith('/api/v2/invoices/failed-1/retry', expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ expectedVersion: 5 });
+    expect(JSON.parse(String(nonMonthlyCalls(fetchMock)[0]?.[1]?.body))).toEqual({ expectedVersion: 5 });
+  });
+
+  it('renders the V1-ported monthly settlement summary with N/A-safe loss handling', async () => {
+    const data: BootstrapData = { ...baseData, capabilities: ['hq.invoices.read'] };
+    const noReceiptRow = { ...monthlyRow, storeId: 'store-2', code: 'MAPDAL', name: '맵달서울점', storeKind: '직영' as const,
+      supplyConfirmed: 0, receiptCount: 0, settledGross: 0, settlementCount: 0,
+      invoiceSummary: { total: 0, ntsSuccess: 0, failed: 0, inProgress: 0 },
+      posRevenue: 480_000, posQty: 120, supplyToPosPct: 0, receivedQty: null, soldQty: 0, wasteQty: null, lossRate: null };
+    const summary = { month: '2026-07', rows: [monthlyRow, noReceiptRow], totals: { supplyConfirmed: 110_000, receiptCount: 1,
+      settledGross: 110_000, settlementCount: 1, posRevenue: 700_000, posQty: 160, receivedQty: 15, soldQty: 8, wasteQty: 7,
+      lossRate: 46.7, invoiceSummary: { total: 1, ntsSuccess: 0, failed: 0, inProgress: 1 } } };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => isMonthly(input) ? response(summary) : response({}));
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => { root = createRoot(container); root.render(<HqInvoicesPage data={data} notify={vi.fn()} refresh={vi.fn()} />); });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v2/settlements/monthly?month=2026-08');
+    const panel = container.querySelector('[data-testid="monthly-settlement-panel"]')!;
+    expect(panel.textContent).toContain('강남점');
+    expect(panel.textContent).toContain('가맹');
+    expect(panel.textContent).toContain('46.7%');
+    expect(panel.textContent).toContain('맵달서울점');
+    expect(panel.textContent).toContain('—'); // 입고 없는 매장의 로스율은 N/A
+    expect(panel.textContent).toContain('합계');
+    const month = panel.querySelector<HTMLInputElement>('input[type="month"]')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(month, '2026-07'); month.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('month=2026-07');
+  });
+
+  it('lets the master start a settlement draft while review stays with finance', async () => {
+    const data: BootstrapData = { ...baseData,
+      actor: { id: 'master-1', name: '마스터', role: 'hq_master' },
+      capabilities: ['hq.settlements.approve', 'hq.settlements.draft', 'hq.invoices.read'],
+      settlements: [{ id: 'settlement-1', storeId: 'store-1', storeName: '강남점', periodStart: '2026-08-01', periodEnd: '2026-08-31', status: 'draft', receiptIds: ['receipt-1'], grossAmount: 11_000, supplyAmount: 10_000, vatAmount: 1_000, version: 1 }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => isMonthly(input) ? response(emptyMonthly) : response({ settlement: {}, paymentRequest: {} }));
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => { root = createRoot(container); root.render(<HqInvoicesPage data={data} notify={vi.fn()} refresh={vi.fn()} />); });
+    const form = container.querySelector<HTMLFormElement>('form[aria-label="정산 초안 생성"]');
+    expect(form).toBeTruthy();
+    expect(container.textContent).toContain('재무 검토는 재무 계정');
+    expect(container.textContent).toContain('재무 검토 대기'); // 마스터는 draft를 검토할 수 없음을 안내
+    expect([...container.querySelectorAll('button')].some((button) => button.textContent?.includes('재무 검토 완료'))).toBe(false);
   });
 
   it('fetches a short-lived original URL only when the store opens a document', async () => {

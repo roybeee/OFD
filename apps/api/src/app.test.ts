@@ -32,6 +32,35 @@ describe("OFD v2 API", () => {
     expect(JSON.stringify(bootstrap.json())).not.toContain("passwordHash");
   });
 
+  it("월별 정산 집계(V1 정산 탭 이식)를 재무·마스터에게 제공하고 점주는 차단한다", async () => {
+    const app = await demoApp();
+    const summary = await app.inject({ method: "GET", url: "/api/v2/settlements/monthly?month=2026-07",
+      headers: { "x-demo-actor-id": DEMO_IDS.master } });
+    expect(summary.statusCode).toBe(200);
+    const body = summary.json() as { month: string; rows: Array<Record<string, unknown>>; totals: Record<string, unknown> };
+    expect(body.month).toBe("2026-07");
+    const doksan = body.rows.find((row) => row.name === "독산점");
+    /* 데모 시드: 2026-07-30(KST) 확정 입고 1건 + 7월 귀속 정산 1건 + reviewed 계산서 1건 */
+    expect(doksan).toMatchObject({ receiptCount: 1, settlementCount: 1 });
+    expect((doksan as { supplyConfirmed: number }).supplyConfirmed).toBeGreaterThan(0);
+    expect((doksan as { invoiceSummary: { total: number; inProgress: number } }).invoiceSummary).toMatchObject({ total: 1, inProgress: 1 });
+    /* 배송 라인 4개(브리오슈2+원두2) 입고, POS 판매 없음 → 로스 100% */
+    expect(doksan).toMatchObject({ receivedQty: 4, soldQty: 0, wasteQty: 4, lossRate: 100 });
+    /* 입고가 없는 매장은 로스율을 단정하지 않는다 */
+    const hapjeong = body.rows.find((row) => row.name === "합정점");
+    expect(hapjeong).toMatchObject({ receivedQty: null, lossRate: null });
+    expect(body.totals).toMatchObject({ receiptCount: 1, settlementCount: 1 });
+
+    const denied = await app.inject({ method: "GET", url: "/api/v2/settlements/monthly",
+      headers: { "x-demo-actor-id": DEMO_IDS.owner } });
+    expect(denied.statusCode).toBe(403);
+
+    const badMonth = await app.inject({ method: "GET", url: "/api/v2/settlements/monthly?month=2026-13",
+      headers: { "x-demo-actor-id": DEMO_IDS.finance } });
+    expect(badMonth.statusCode).toBe(200);
+    expect((badMonth.json() as { month: string }).month).toMatch(/^\d{4}-\d{2}$/); // 잘못된 값은 현재 월로 폴백
+  });
+
   it("개인 이메일 로그인은 HttpOnly 세션을 발급하고 본사 계정은 MFA를 거친다", async () => {
     const app = await demoApp();
     const storeLogin = await app.inject({ method: "POST", url: "/api/v2/auth/login",

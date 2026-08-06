@@ -37,6 +37,25 @@ describe("ProcurementService accounting", () => {
     });
     expect(settlement).toMatchObject({ gross: 12, supply: 11, vat: 1 });
   });
+
+  it("마스터도 정산 초안을 작성할 수 있다 — 검토(재무)·승인(마스터, 검토자≠승인자) 분리는 유지", async () => {
+    const repository = createDemoRepository();
+    const master = (await repository.get<Actor>("actor", DEMO_IDS.master))!;
+    const owner = (await repository.get<Actor>("actor", DEMO_IDS.owner))!;
+    const service = new ProcurementService(repository, new MockObjectStorage(), "test");
+    /* 데모 시드의 확정 입고(2026-07-30)는 기존 정산에 묶여 있어 8월 기간으로는 초안 불가 → 새 입고를 만든다 */
+    const receipt: GoodsReceipt = { id: "master-draft-receipt", shipmentId: "master-draft-shipment", orderId: "00000000-0000-4000-8000-000000003003",
+      storeId: DEMO_IDS.storeDoksan, status: "confirmed", confirmedAt: "2026-08-05T02:00:00.000Z", confirmedBy: DEMO_IDS.driver,
+      gross: 33_000, supply: 30_000, vat: 3_000 };
+    await repository.commit({ changes: [{ type: "receipt", id: receipt.id, storeId: receipt.storeId, expectedVersion: null, value: receipt }] });
+    const { settlement } = await service.draftSettlement(master, {
+      storeId: DEMO_IDS.storeDoksan, periodStart: "2026-08-01", periodEnd: "2026-08-31", receiptIds: [receipt.id],
+    });
+    expect(settlement).toMatchObject({ status: "draft", gross: 33_000 });
+    /* 점주는 여전히 불가 */
+    await expect(service.draftSettlement(owner, { storeId: DEMO_IDS.storeDoksan, periodStart: "2026-08-01", periodEnd: "2026-08-31" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
   it("creates a monthly-credit payment request atomically and blocks settlement review before payment", async () => {
     const repository = createDemoRepository();
     const order: PurchaseOrder = {

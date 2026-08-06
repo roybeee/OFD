@@ -1,4 +1,4 @@
-import type { AdminActorSummary, BankMatch, BankTransactionItem, BootstrapData, Delivery, DocumentItem, Invoice, ManualMatchCandidate, ModificationReasonCode, Order, PaymentRequestItem, PaymentRequestStatus, Product, ProvisionableActorRole, PublicActor, SettlementItem, SettlementStatus } from '../types';
+import type { AdminActorSummary, BankMatch, BankTransactionItem, BootstrapData, Delivery, DocumentItem, Invoice, ManualMatchCandidate, ModificationReasonCode, Order, PaymentRequestItem, PaymentRequestStatus, Product, ProvisionableActorRole, PublicActor, SettlementItem, SettlementStatus , MonthlySettlementSummary } from '../types';
 
 export type BootstrapResult = { data: BootstrapData; source: 'live' };
 
@@ -346,7 +346,9 @@ export function normalizeBootstrap(input: unknown): BootstrapData {
     actor: { id: text(actor.id), name: text(actor.name), role: text(actor.role) },
     availableActors: array(raw.availableActors).map((item) => ({ id: text(item.id), name: text(item.name), role: text(item.role) })),
     drivers,
-    stores: rawStores.filter((store) => Boolean(text(store.id))).map((store) => ({ id: text(store.id), name: text(store.name, '매장') })),
+    stores: rawStores.filter((store) => Boolean(text(store.id))).map((store) => ({ id: text(store.id), name: text(store.name, '매장'),
+      ...(store.storeKind === '직영' || store.storeKind === '가맹' ? { storeKind: store.storeKind } : {}),
+      ...(text(store.code) ? { code: text(store.code) } : {}) })),
     store: {
       id: text(currentStore.id), name: text(currentStore.name), businessName: text(business.legalName, text(currentStore.name)),
       billingPolicy: text(currentStore.billingCycle) === 'per_delivery' ? '배송 건별' : text(currentStore.billingCycle) === 'monthly' ? '월 합산' : '확인 필요',
@@ -466,6 +468,9 @@ function getV2<T>(path: string): Promise<T> {
 const query = (params: Record<string, string | undefined>) =>
   Object.entries(params).filter(([, value]) => value).map(([key, value]) => `${key}=${encodeURIComponent(value!)}`).join('&');
 
+export function loadMonthlySettlementV2(month: string) {
+  return getV2<MonthlySettlementSummary>(`/settlements/monthly?${query({ month })}`);
+}
 export function loadPosReport(from: string, to: string, unit: PosReportUnit, stores: string[] = [], products: string[] = []) {
   return getV2<PosReportResult>(`/pos/report?${query({ from, to, unit, stores: stores.join(',') || undefined, products: products.join(',') || undefined })}`);
 }
@@ -490,7 +495,7 @@ export function createPosAliasV2(rawName: string, productId: string, idempotency
 export function createPosProductV2(input: { name: string; category: string; storeId: string | null; consumerPrice: number | null; rawName?: string }, idempotencyKey: string) {
   return mutateV2<{ product: PosProduct }>('/pos/products', input, { idempotencyKey });
 }
-export function createPosStoreV2(input: { name: string; code?: string; billingCycle: string; paymentMethod: string; notificationPhone?: string }, idempotencyKey: string) {
+export function createPosStoreV2(input: { name: string; code?: string; billingCycle: string; paymentMethod: string; notificationPhone?: string; storeKind?: string }, idempotencyKey: string) {
   return mutateV2<{ store: { id: string; code: string; name: string } }>('/pos/stores', input, { idempotencyKey });
 }
 export function createPosLinkV2(input: { storeId: string; merchantId: string; accessKey: string; secretKey: string }, idempotencyKey: string) {

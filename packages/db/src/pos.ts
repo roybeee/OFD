@@ -36,6 +36,8 @@ export interface PosStore {
   listUnmatched(from: string, to: string): Promise<PosUnmatched[]>;
   priceDeviations(from: string, to: string, thresholdPct: number): Promise<PosDeviation[]>;
   report(from: string, to: string, unit: PosReportUnit, filter?: PosReportFilter): Promise<PosReport>;
+  /** 기간 내 상품 매칭된 판매 수량 합계 (매장×상품) — 월별 정산 집계의 로스 계산용 */
+  productTotals(from: string, to: string): Promise<Array<{ storeId: string; productId: string; qty: number; amount: number }>>;
   wasteReport(storeId: string, date: string): Promise<PosWasteReport>;
   close(): Promise<void>;
 }
@@ -412,6 +414,13 @@ export class PostgresPosStore implements PosStore {
       qty: Number(r.qty), amount: Number(r.amount),
     })), unit, filter);
   }
+  async productTotals(from: string, to: string): Promise<Array<{ storeId: string; productId: string; qty: number; amount: number }>> {
+    const res = await this.pool.query(
+      `SELECT store_id, product_id, COALESCE(SUM(qty),0)::int AS qty, COALESCE(SUM(amount),0)::bigint AS amount
+       FROM pos_sales WHERE product_id IS NOT NULL AND sale_date BETWEEN $1 AND $2
+       GROUP BY store_id, product_id`, [from, to]);
+    return res.rows.map((r) => ({ storeId: r.store_id, productId: r.product_id, qty: Number(r.qty), amount: Number(r.amount) }));
+  }
   async wasteReport(storeId: string, date: string): Promise<PosWasteReport> {
     /* 입고: 검수 확정(confirmed) 건의 배송 라인 수량 · 일자는 KST 확정일 */
     const receipts = await this.pool.query(
@@ -592,6 +601,18 @@ export class MemoryPosStore implements PosStore {
         qty: row.qty, amount: row.amount });
     }
     return buildPosReport(rows, unit, filter);
+  }
+  async productTotals(from: string, to: string): Promise<Array<{ storeId: string; productId: string; qty: number; amount: number }>> {
+    const acc = new Map<string, { storeId: string; productId: string; qty: number; amount: number }>();
+    for (const [k, row] of this.sales) {
+      const productId = this.salesProduct.get(k);
+      if (!productId || row.date < from || row.date > to) continue;
+      const key = `${row.storeId}|${productId}`;
+      const cur = acc.get(key) ?? { storeId: row.storeId, productId, qty: 0, amount: 0 };
+      cur.qty += row.qty; cur.amount += row.amount;
+      acc.set(key, cur);
+    }
+    return [...acc.values()];
   }
   private receipts = new Map<string, PosReceiptLine[]>();
   /** 테스트/시드 전용: 실제 입고는 V2 검수 흐름이 만든다 */
