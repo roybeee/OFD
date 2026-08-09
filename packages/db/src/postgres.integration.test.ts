@@ -66,7 +66,7 @@ test("PostgreSQL repository applies and exercises the complete durable contract"
       observedAt: now.toISOString(), leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() });
     const readiness = await repository.checkReadiness(migrations, new Date());
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.migrations.applied, 7);
+    assert.equal(readiness.migrations.applied, migrations.length);
 
     const drifted = migrations.map((migration, index) => index === 0 ? { ...migration, checksumSha256: "0".repeat(64) } : migration);
     const driftClient = await migrationPool.connect();
