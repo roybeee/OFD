@@ -20,6 +20,7 @@ type NavItem = { path: string; label: string; icon: typeof LayoutGrid };
 
 const navByRole: Record<Role, NavItem[]> = {
   store: [
+    { path: '/store/home', label: '홈', icon: LayoutGrid },
     { path: '/store/orders', label: '발주·입고', icon: PackageCheck },
     { path: '/store/documents', label: '정산·증빙', icon: ReceiptText },
   ],
