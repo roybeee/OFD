@@ -90,7 +90,7 @@ describe('role-aware OFD workspace', () => {
     vi.unstubAllGlobals();
   });
 
-  it('signs a store owner in and lands on the store ordering workspace', async () => {
+  it('signs a store owner in and lands on the store owner home', async () => {
     let authenticated = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -118,8 +118,9 @@ describe('role-aware OFD workspace', () => {
     await enter('input[type="password"]', 'CorrectHorseBatteryStaple!');
     await act(async () => button('로그인').click());
 
-    await waitFor(() => hasHeading('발주·입고'));
-    expect(window.location.pathname).toBe('/store/orders');
+    await waitFor(() => hasHeading('지금 해야 할 일'));
+    expect(window.location.pathname).toBe('/store/home');
+    expect(container.querySelector('[data-testid="store-home-screen"]')).toBeTruthy();
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/auth/login'))).toBe(true);
   });
 

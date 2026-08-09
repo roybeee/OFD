@@ -27,7 +27,9 @@ describe('V2 deployment base path', () => {
   });
 
   it('lands store owners, drivers, and account masters on their first permitted route', () => {
-    expect(defaultPathFor(['store.orders.read'])).toBe('/store/orders');
+    expect(defaultPathFor(['store.orders.read'])).toBe('/store/home', '점주는 필수 기능만 모은 홈으로 들어온다');
+    expect(canAccessPath('/store/home', ['store.orders.read'])).toBe(true);
+    expect(canAccessPath('/store/home', ['hq.invoices.read'])).toBe(false, '본사 권한으로는 점주 홈이 열리지 않는다');
     expect(defaultPathFor(['driver.deliveries.read'])).toBe('/driver/today');
     expect(defaultPathFor(['hq.accounts.manage'])).toBe('/hq/accounts');
   });
