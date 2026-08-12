@@ -361,26 +361,28 @@ function RolePagesPanel({ access, notify, onSaved }: { access: AccessSettings; n
   return (
     <section className="panel account-create-panel access-panel" aria-labelledby="role-pages-title">
       <header><span className="panel-symbol"><ShieldCheck size={22} /></span><div><h2 id="role-pages-title">계정 유형별 노출 페이지</h2><p>계정 유형(역할)마다 보이는 메뉴·페이지를 지정합니다. 계정별로 다르게 하려면 위 목록에서 계정을 눌러 상세 설정하세요.</p></div></header>
-      <label htmlFor="role-pages-role">계정 유형
-        <select id="role-pages-role" value={role} onChange={(event) => setRole(event.target.value as ProvisionableActorRole)}>
-          {roles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-        </select>
-      </label>
-      <p className="access-status">{isDefault ? '기본값 사용 중' : '개별 지정됨'}</p>
-      <fieldset className="access-pages">
-        <legend>노출 페이지</legend>
-        <div className="access-page-grid">
-          {domainPages.map((page) => (
-            <label key={page.path} className="access-page-option">
-              <input type="checkbox" checked={selected.includes(page.path)} onChange={() => toggle(page.path)} disabled={busy} />
-              <span>{page.label}</span>
-            </label>
-          ))}
+      <div className="access-body">
+        <label htmlFor="role-pages-role">계정 유형
+          <select id="role-pages-role" value={role} onChange={(event) => setRole(event.target.value as ProvisionableActorRole)}>
+            {roles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>
+        </label>
+        <p className="access-status">{isDefault ? '기본값 사용 중' : '개별 지정됨'}</p>
+        <fieldset className="access-pages">
+          <legend>노출 페이지</legend>
+          <div className="access-page-grid">
+            {domainPages.map((page) => (
+              <label key={page.path} className="access-page-option">
+                <input type="checkbox" checked={selected.includes(page.path)} onChange={() => toggle(page.path)} disabled={busy} />
+                <span>{page.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="access-actions">
+          <Button type="button" onClick={() => void save(selected)} disabled={busy || !dirty}>{busy ? '저장 중…' : '저장'}</Button>
+          <Button type="button" variant="secondary" onClick={() => void save(null)} disabled={busy || isDefault}>기본값으로</Button>
         </div>
-      </fieldset>
-      <div className="access-actions">
-        <Button type="button" onClick={() => void save(selected)} disabled={busy || !dirty}>{busy ? '저장 중…' : '저장'}</Button>
-        <Button type="button" variant="secondary" onClick={() => void save(null)} disabled={busy || isDefault}>기본값으로</Button>
       </div>
     </section>
   );

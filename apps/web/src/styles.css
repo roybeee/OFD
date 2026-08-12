@@ -2035,7 +2035,10 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 /* 이름(식별) 영역만 클릭 버튼 — grid 레이아웃(4열)은 그대로 유지 */
 .account-open { min-height: 0; padding: 0; border: 0; background: none; cursor: pointer; }
 .account-open:hover strong { color: var(--orange-dark); text-decoration: underline; }
-.access-panel .access-status { margin: 4px 0 0; font-size: 12px; font-weight: 750; color: var(--muted); }
+.access-body { display: grid; gap: 12px; padding: 17px; }
+.access-body > label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 750; }
+.access-body > label select { width: 100%; min-height: 45px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 9px; background: white; }
+.access-panel .access-status { margin: -4px 0 0; font-size: 12px; font-weight: 750; color: var(--muted); }
 .access-pages { border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px; margin: 10px 0 0; }
 .access-pages[disabled] { opacity: .55; }
 .access-pages legend { padding: 0 6px; font-size: 12px; font-weight: 800; color: var(--muted); }
