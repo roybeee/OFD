@@ -14,8 +14,12 @@ import {
   assertShipmentTransition,
   assertStoreScope,
   assertVersion,
+  ACCESS_PAGES,
   buildInvoiceLineParts,
   calculateLineGross,
+  capabilitiesForPages,
+  defaultPagesForRole,
+  selectablePagesForRole,
   DomainError,
   invoiceIssueType,
   isPaymentMatchCandidate,
@@ -46,6 +50,16 @@ import {
 } from "@ofd/domain";
 import type { ObjectStorage } from "@ofd/integrations";
 import { audit, outbox } from "./events.ts";
+
+/** 계정 유형별·계정별 페이지 노출 정책(싱글턴 애그리게이트). */
+export interface AccessPolicyDocument {
+  id: "access-policy";
+  version: number;
+  rolePages: Partial<Record<Actor["role"], string[]>>;
+  actorPages: Record<string, string[]>;
+}
+export const ACCESS_POLICY_ID = "access-policy";
+const ACCESS_POLICY_SYSTEM_SCOPE = "__system__";
 
 interface CreateOrderInput {
   storeId: string;
@@ -189,7 +203,7 @@ export class ProcurementService {
       meta: { apiVersion: "v2", appMode: this.appMode, providerMode: this.providerMode,
         externalIssueEnabled: this.externalIssueEnabled, generatedAt: this.now().toISOString(),
         operationalDate: today, timeZone: "Asia/Seoul" },
-      capabilities: capabilitiesFor(actor),
+      capabilities: capabilitiesFor(actor, await this.loadAccessPolicy()),
       allowedDeliveryDates: allowedDeliveryDates(this.now()),
       currentActor: publicActorDto(actor),
       availableActors,
@@ -211,6 +225,60 @@ export class ProcurementService {
       auditEvents,
       metrics,
     };
+  }
+
+  /** 저장된 페이지 노출 정책을 읽는다(없으면 기본 정책). */
+  async loadAccessPolicy(): Promise<AccessPolicyDocument> {
+    const stored = await this.repository.get<AccessPolicyDocument>("access_policy", ACCESS_POLICY_ID);
+    return stored ?? { id: ACCESS_POLICY_ID, version: 0, rolePages: {}, actorPages: {} };
+  }
+
+  /** GET 계정 관리 > 접근 설정: 정책 + 각 역할의 기본 페이지 + 계정별 유효 페이지를 함께 내린다. */
+  async getAccessSettings(actor: Actor): Promise<Record<string, unknown>> {
+    assertRole(actor, ["hq_master"]);
+    assertRecentStepUp(actor);
+    const policy = await this.loadAccessPolicy();
+    const actors = (await this.repository.list<Actor>("actor")).filter((candidate) => candidate.role !== "system");
+    const roleDefaults = Object.fromEntries((["store_owner", "store_staff", "driver", "hq_ops", "hq_finance", "hq_master", "auditor"] as Actor["role"][])
+      .map((role) => [role, defaultPagesForRole(role, baseCapabilitiesFor(role))]));
+    return {
+      pages: ACCESS_PAGES.map(({ path, label, domain }) => ({ path, label, domain })),
+      roleDefaults,
+      rolePages: policy.rolePages,
+      actorPages: policy.actorPages,
+      actorEffectivePages: Object.fromEntries(actors.map((candidate) => [candidate.id, resolveVisiblePages(candidate, policy)])),
+    };
+  }
+
+  /** 역할 또는 계정의 노출 페이지를 저장한다. pages=null이면 기본값(역할)/역할 상속(계정)으로 되돌린다. */
+  async updateAccessPolicy(actor: Actor, target: { role?: Actor["role"]; actorId?: string }, pages: string[] | null): Promise<{ policy: AccessPolicyDocument }> {
+    assertRole(actor, ["hq_master"]);
+    assertRecentStepUp(actor);
+    const current = await this.loadAccessPolicy();
+    const nextRolePages: AccessPolicyDocument["rolePages"] = { ...current.rolePages };
+    const nextActorPages: AccessPolicyDocument["actorPages"] = { ...current.actorPages };
+
+    if (target.role !== undefined) {
+      invariant(target.role !== "system", "INVALID_ACCESS_TARGET", "시스템 계정 유형은 설정할 수 없습니다.", 422);
+      if (pages === null) delete nextRolePages[target.role];
+      else nextRolePages[target.role] = sanitizePages(target.role, pages);
+    } else if (target.actorId !== undefined) {
+      const targetActor = await this.repository.get<Actor>("actor", target.actorId);
+      invariant(targetActor && targetActor.role !== "system", "ACTOR_NOT_FOUND", "계정을 찾을 수 없습니다.", 404);
+      if (pages === null) delete nextActorPages[target.actorId];
+      else nextActorPages[target.actorId] = sanitizePages(targetActor!.role, pages);
+    } else {
+      throw new DomainError("INVALID_ACCESS_TARGET", "role 또는 actorId가 필요합니다.", 422);
+    }
+
+    const next: AccessPolicyDocument = { id: ACCESS_POLICY_ID, version: current.version + 1, rolePages: nextRolePages, actorPages: nextActorPages };
+    await this.repository.commit({
+      changes: [{ type: "access_policy", id: ACCESS_POLICY_ID, storeId: ACCESS_POLICY_SYSTEM_SCOPE,
+        expectedVersion: current.version === 0 ? null : current.version, value: next }],
+      audits: [audit(actor, "access_policy", ACCESS_POLICY_ID, "admin.access_policy_updated", undefined, undefined, undefined,
+        { target: target.role ? { role: target.role } : { actorId: target.actorId }, pages: pages ?? "reset" })],
+    });
+    return { policy: next };
   }
 
   async createOrder(actor: Actor, input: CreateOrderInput): Promise<{ order: PurchaseOrder }> {
@@ -1061,7 +1129,7 @@ function inAutomaticMatchWindow(request: PaymentRequest, transaction: BankTransa
   return Number.isFinite(occurred) && occurred >= earliest && occurred <= latest;
 }
 
-function capabilitiesFor(actor: Actor): string[] {
+export function baseCapabilitiesFor(role: Actor["role"]): string[] {
   const map: Record<Actor["role"], string[]> = {
     store_owner: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
     store_staff: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.documents.read"],
@@ -1075,7 +1143,27 @@ function capabilitiesFor(actor: Actor): string[] {
     driver: ["driver.deliveries.read", "driver.deliveries.complete"],
     system: [],
   };
-  return map[actor.role];
+  return map[role];
+}
+
+/** 계정 유형별·계정별 페이지 노출 정책. capability는 선택된 페이지 묶음으로부터 계산된다. */
+export function resolveVisiblePages(actor: Actor, policy?: AccessPolicyDocument): string[] {
+  const actorPages = policy?.actorPages?.[actor.id];
+  if (actorPages) return actorPages;
+  const rolePages = policy?.rolePages?.[actor.role];
+  if (rolePages) return rolePages;
+  return defaultPagesForRole(actor.role, baseCapabilitiesFor(actor.role));
+}
+
+function capabilitiesFor(actor: Actor, policy?: AccessPolicyDocument): string[] {
+  if (actor.role === "system") return [];
+  return capabilitiesForPages(actor.role, resolveVisiblePages(actor, policy));
+}
+
+/** 요청된 페이지 목록을 해당 역할의 영역 안 페이지로만 정제한다(중복·역할 밖 경로 제거). */
+function sanitizePages(role: Actor["role"], pages: string[]): string[] {
+  const allowed = new Set(selectablePagesForRole(role).map((page) => page.path));
+  return [...new Set(pages)].filter((path) => allowed.has(path));
 }
 
 function publicActorDto(actor: Actor): Pick<Actor, "id" | "name" | "role" | "storeIds"> {

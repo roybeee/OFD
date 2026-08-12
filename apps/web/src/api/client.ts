@@ -621,6 +621,30 @@ export function deactivateActorV2(actorId: string, expectedVersion: number, idem
   }, true);
 }
 
+export type AccessPageMeta = { path: string; label: string; domain: 'store' | 'hq' | 'driver' };
+export type AccessSettings = {
+  pages: AccessPageMeta[];
+  roleDefaults: Record<string, string[]>;
+  rolePages: Record<string, string[]>;
+  actorPages: Record<string, string[]>;
+  actorEffectivePages: Record<string, string[]>;
+};
+export function loadAccessSettingsV2() {
+  return apiRequest<AccessSettings>('/admin/access-policy', { method: 'GET', headers: { Accept: 'application/json' } }, true);
+}
+export function setRolePagesV2(role: string, pages: string[] | null, idempotencyKey: string) {
+  return apiRequest<{ policy: unknown }>('/admin/access-policy', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },
+    body: JSON.stringify({ role, pages }),
+  }, true);
+}
+export function setActorPagesV2(actorId: string, pages: string[] | null, idempotencyKey: string) {
+  return apiRequest<{ policy: unknown }>('/admin/access-policy', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },
+    body: JSON.stringify({ actorId, pages }),
+  }, true);
+}
+
 export function resetActorV2(actorId: string, expectedVersion: number, newPassword: string, idempotencyKey: string) {
   return apiRequest<{ actor: AdminActorSummary }>('/admin/actors', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },

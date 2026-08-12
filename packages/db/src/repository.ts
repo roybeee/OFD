@@ -16,7 +16,8 @@ export type AggregateType =
   | "document"
   | "upload_session"
   | "credential"
-  | "admin_invariant";
+  | "admin_invariant"
+  | "access_policy";
 
 export interface AggregateChange<T = unknown> {
   type: AggregateType;

@@ -315,6 +315,48 @@ describe("OFD v2 API", () => {
     expect(blocked.json().error.code).toBe("ACCOUNT_LOCKED");
   });
 
+  it("계정 유형별·계정별 페이지 노출을 설정하면 로그인 capability에 반영된다", async () => {
+    const app = await demoApp();
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+
+    // 기본: hq_ops는 매출현황 페이지를 본다(hq.pos.read)
+    const before = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.ops } });
+    expect(before.json().capabilities).toContain("hq.pos.read");
+
+    // 역할(hq_ops)에서 매출/상품/오픈 페이지를 빼면 hq.pos.read가 사라진다
+    const roleUpdate = await app.inject({ method: "PUT", url: "/api/v2/admin/access-policy", headers: { ...master, "Idempotency-Key": "ap-role-ops-001" },
+      payload: { role: "hq_ops", pages: ["/hq/orders", "/hq/delivery"] } });
+    expect(roleUpdate.statusCode).toBe(200);
+    const afterRole = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.ops } });
+    expect(afterRole.json().capabilities).not.toContain("hq.pos.read");
+    expect(afterRole.json().capabilities).toContain("hq.orders.read");
+
+    // 계정별 지정이 역할 설정을 덮어써 그 계정만 매출현황을 되살린다
+    const actorUpdate = await app.inject({ method: "PUT", url: "/api/v2/admin/access-policy", headers: { ...master, "Idempotency-Key": "ap-actor-ops-001" },
+      payload: { actorId: DEMO_IDS.ops, pages: ["/hq/orders", "/hq/sales"] } });
+    expect(actorUpdate.statusCode).toBe(200);
+    const afterActor = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.ops } });
+    expect(afterActor.json().capabilities).toContain("hq.pos.read");
+
+    // 영역 밖(store) 페이지는 hq 역할에 지정해도 무시된다
+    const cross = await app.inject({ method: "PUT", url: "/api/v2/admin/access-policy", headers: { ...master, "Idempotency-Key": "ap-role-fin-001" },
+      payload: { role: "hq_finance", pages: ["/store/orders", "/hq/reconciliation"] } });
+    expect(cross.statusCode).toBe(200);
+    const finance = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.finance } });
+    expect(finance.json().capabilities).toContain("hq.payments.reconcile");
+    expect(finance.json().capabilities).not.toContain("store.orders.read");
+
+    // 계정별 지정 해제(null)는 역할 설정으로 되돌린다
+    await app.inject({ method: "PUT", url: "/api/v2/admin/access-policy", headers: { ...master, "Idempotency-Key": "ap-actor-ops-reset" }, payload: { actorId: DEMO_IDS.ops, pages: null } });
+    const reverted = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.ops } });
+    expect(reverted.json().capabilities).not.toContain("hq.pos.read");
+
+    // 비마스터는 설정 조회·변경 불가
+    expect((await app.inject({ method: "GET", url: "/api/v2/admin/access-policy", headers: { "x-demo-actor-id": DEMO_IDS.ops } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "PUT", url: "/api/v2/admin/access-policy",
+      headers: { "x-demo-actor-id": DEMO_IDS.finance, "Idempotency-Key": "ap-forbidden-001" }, payload: { role: "hq_ops", pages: [] } })).statusCode).toBe(403);
+  });
+
   it("본인 비밀번호 변경은 현재 비밀번호를 확인하고 세션을 재발급하며 옛 비밀번호를 무효화한다", async () => {
     const app = await demoApp();
     const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",

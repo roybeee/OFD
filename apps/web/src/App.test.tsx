@@ -277,6 +277,7 @@ describe('role-aware OFD workspace', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/bootstrap')) return apiResponse(bootstrapPayload({ role: 'hq_master', capabilities: ['hq.accounts.manage'] }));
+      if (url.endsWith('/admin/access-policy')) return apiResponse({ pages: [], roleDefaults: {}, rolePages: {}, actorPages: {}, actorEffectivePages: {} });
       if (url.endsWith('/admin/actors') && (!init?.method || init.method === 'GET')) return apiResponse({ actors: [master] });
       if (url.endsWith('/admin/actors') && init?.method === 'PATCH') return apiResponse({ actor: { ...master, version: 2 } });
       return apiResponse({ error: { code: 'UNEXPECTED', message: 'unexpected' } }, 500);

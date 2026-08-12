@@ -7,10 +7,13 @@ import {
   provisionActorV2,
   resetActorV2,
 } from '../api/client';
+import { setActorPagesV2, setRolePagesV2, loadAccessSettingsV2, type AccessSettings } from '../api/client';
 import { LockKeyhole, RefreshCcw, ShieldCheck, UserRound, UserRoundPlus, X } from '../components/icons';
 import { useAccessibleDialog } from '../components/useAccessibleDialog';
 import { Button } from '../components/ui';
 import type { AdminActorSummary, BootstrapData, ProvisionableActorRole } from '../types';
+
+const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|');
 
 type Notify = (message: string, tone?: 'success' | 'info' | 'warning') => void;
 
@@ -50,18 +53,25 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [resetTarget, setResetTarget] = useState<AdminActorSummary | null>(null);
+  const [detailTarget, setDetailTarget] = useState<AdminActorSummary | null>(null);
+  const [access, setAccess] = useState<AccessSettings | null>(null);
 
   async function load() {
     setLoading(true);
     setLoadError('');
     try {
-      const result = await listActorAccountsV2();
+      const [result, accessResult] = await Promise.all([listActorAccountsV2(), loadAccessSettingsV2()]);
       setActors(result.actors);
+      setAccess(accessResult);
     } catch (error) {
       setLoadError(errorMessage(error, '계정 목록을 불러오지 못했습니다.'));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refreshAccess() {
+    try { setAccess(await loadAccessSettingsV2()); } catch { /* 목록만 유지 */ }
   }
 
   useEffect(() => { void load(); }, []);
@@ -179,21 +189,29 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
           {!loading && !loadError && actors.length === 0 && <p className="account-loading">등록된 계정이 없습니다.</p>}
           {!loading && actors.length > 0 && (
             <ul className="account-list">
-              {actors.map((actor) => (
+              {actors.map((actor) => {
+                const custom = Boolean(access?.actorPages?.[actor.id]);
+                return (
                 <li key={actor.id} className={!actor.active ? 'inactive' : ''}>
-                  <span className="account-avatar" aria-hidden="true">{actor.name.slice(0, 1)}</span>
-                  <div className="account-identity"><strong>{actor.name}</strong><span>{actor.email}</span><small>{actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</small></div>
-                  <div className="account-security"><span className={`account-status ${actor.active ? 'active' : 'inactive'}`}>{actor.active ? '활성' : '비활성'}</span><small>{roleLabel(actor.role)}</small>{actor.lockedUntil && <em>로그인 잠김</em>}</div>
+                  <button type="button" className="account-open" aria-label={`${actor.name} 상세 설정`} onClick={() => setDetailTarget(actor)}>
+                    <span className="account-avatar" aria-hidden="true">{actor.name.slice(0, 1)}</span>
+                    <div className="account-identity"><strong>{actor.name}</strong><span>{actor.email}</span><small>{actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</small></div>
+                    <div className="account-security"><span className={`account-status ${actor.active ? 'active' : 'inactive'}`}>{actor.active ? '활성' : '비활성'}</span><small>{roleLabel(actor.role)}{custom ? ' · 개별 페이지' : ''}</small>{actor.lockedUntil && <em>로그인 잠김</em>}</div>
+                  </button>
                   <div className="account-actions">
+                    <Button type="button" variant="secondary" aria-label={`${actor.name} 상세 설정 열기`} onClick={() => setDetailTarget(actor)}>상세 설정</Button>
                     <Button type="button" variant="secondary" aria-label={`${actor.name} 비밀번호 재설정`} onClick={() => setResetTarget(actor)}>비밀번호 재설정</Button>
                     <Button type="button" variant="danger" aria-label={`${actor.name} 계정 비활성화`} disabled={!actor.active || actor.id === data.actor.id} onClick={() => void deactivate(actor)}>비활성화</Button>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </section>
       </div>
+
+      {access && <RolePagesPanel access={access} notify={notify} onSaved={refreshAccess} />}
 
       <ChangeMyPasswordPanel notify={notify} onChanged={onCurrentSessionRevoked} />
 
@@ -204,6 +222,11 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
         if (updated.id === data.actor.id) onCurrentSessionRevoked?.();
         else notify(`${updated.name} 자격정보를 재설정했습니다.`, 'success');
       }} />}
+      {detailTarget && access && <AccountDetailDialog actor={detailTarget} access={access} data={data} notify={notify}
+        onClose={() => setDetailTarget(null)}
+        onReset={() => { setResetTarget(detailTarget); setDetailTarget(null); }}
+        onDeactivate={() => { void deactivate(detailTarget); setDetailTarget(null); }}
+        onAccessSaved={refreshAccess} />}
     </main>
   );
 }
@@ -299,5 +322,145 @@ function ChangeMyPasswordPanel({ notify, onChanged }: { notify: Notify; onChange
         <Button type="submit" disabled={!canSubmit || busy}>{busy ? '변경 중…' : '비밀번호 변경'}</Button>
       </form>
     </section>
+  );
+}
+
+/** 계정 유형(역할)별로 노출되는 페이지를 설정한다. */
+function RolePagesPanel({ access, notify, onSaved }: { access: AccessSettings; notify: Notify; onSaved: () => Promise<void> | void }) {
+  const [role, setRole] = useState<ProvisionableActorRole>('store_owner');
+  const [busy, setBusy] = useState(false);
+  const domain = role === 'driver' ? 'driver' : (role.startsWith('hq_') || role === 'auditor') ? 'hq' : 'store';
+  const domainPages = access.pages.filter((page) => page.domain === domain);
+  const effective = access.rolePages[role] ?? access.roleDefaults[role] ?? [];
+  const [selected, setSelected] = useState<string[]>(effective);
+
+  useEffect(() => {
+    setSelected(access.rolePages[role] ?? access.roleDefaults[role] ?? []);
+  }, [role, access]);
+
+  const isDefault = !access.rolePages[role];
+  const dirty = !sameSet(selected, access.rolePages[role] ?? access.roleDefaults[role] ?? []);
+
+  function toggle(path: string) {
+    setSelected((current) => current.includes(path) ? current.filter((item) => item !== path) : [...current, path]);
+  }
+
+  async function save(pages: string[] | null) {
+    setBusy(true);
+    try {
+      await setRolePagesV2(role, pages, newIdempotencyKey());
+      notify(`${roleLabel(role)} 노출 페이지를 저장했습니다.`, 'success');
+      await onSaved();
+    } catch (error) {
+      notify(errorMessage(error, '노출 페이지를 저장하지 못했습니다.'), 'warning');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel account-create-panel access-panel" aria-labelledby="role-pages-title">
+      <header><span className="panel-symbol"><ShieldCheck size={22} /></span><div><h2 id="role-pages-title">계정 유형별 노출 페이지</h2><p>계정 유형(역할)마다 보이는 메뉴·페이지를 지정합니다. 계정별로 다르게 하려면 위 목록에서 계정을 눌러 상세 설정하세요.</p></div></header>
+      <label htmlFor="role-pages-role">계정 유형
+        <select id="role-pages-role" value={role} onChange={(event) => setRole(event.target.value as ProvisionableActorRole)}>
+          {roles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+        </select>
+      </label>
+      <p className="access-status">{isDefault ? '기본값 사용 중' : '개별 지정됨'}</p>
+      <fieldset className="access-pages">
+        <legend>노출 페이지</legend>
+        <div className="access-page-grid">
+          {domainPages.map((page) => (
+            <label key={page.path} className="access-page-option">
+              <input type="checkbox" checked={selected.includes(page.path)} onChange={() => toggle(page.path)} disabled={busy} />
+              <span>{page.label}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div className="access-actions">
+        <Button type="button" onClick={() => void save(selected)} disabled={busy || !dirty}>{busy ? '저장 중…' : '저장'}</Button>
+        <Button type="button" variant="secondary" onClick={() => void save(null)} disabled={busy || isDefault}>기본값으로</Button>
+      </div>
+    </section>
+  );
+}
+
+/** 등록 계정을 눌렀을 때 열리는 상세 설정: 노출 페이지(계정별) + 비밀번호 재설정·비활성화. */
+function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, onDeactivate, onAccessSaved }: {
+  actor: AdminActorSummary;
+  access: AccessSettings;
+  data: BootstrapData;
+  notify: Notify;
+  onClose: () => void;
+  onReset: () => void;
+  onDeactivate: () => void;
+  onAccessSaved: () => Promise<void> | void;
+}) {
+  const dialogRef = useAccessibleDialog(() => { if (!busy) onClose(); });
+  const domain = actor.role === 'driver' ? 'driver' : (actor.role.startsWith('hq_') || actor.role === 'auditor') ? 'hq' : 'store';
+  const domainPages = access.pages.filter((page) => page.domain === domain);
+  const roleEffective = access.rolePages[actor.role] ?? access.roleDefaults[actor.role] ?? [];
+  const hasOverride = Boolean(access.actorPages[actor.id]);
+  const [custom, setCustom] = useState(hasOverride);
+  const [selected, setSelected] = useState<string[]>(access.actorPages[actor.id] ?? roleEffective);
+  const [busy, setBusy] = useState(false);
+
+  function toggle(path: string) {
+    setSelected((current) => current.includes(path) ? current.filter((item) => item !== path) : [...current, path]);
+  }
+
+  async function saveAccess() {
+    setBusy(true);
+    try {
+      await setActorPagesV2(actor.id, custom ? selected : null, newIdempotencyKey());
+      notify(custom ? `${actor.name} 노출 페이지를 개별 지정했습니다.` : `${actor.name}을(를) 역할 기본값으로 되돌렸습니다.`, 'success');
+      await onAccessSaved();
+      onClose();
+    } catch (error) {
+      notify(errorMessage(error, '노출 페이지를 저장하지 못했습니다.'), 'warning');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section ref={dialogRef} className="step-up-dialog account-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="account-detail-title" tabIndex={-1}>
+        <header><span className="auth-symbol"><UserRound size={24} /></span><div><p className="eyebrow"><span /> ACCOUNT</p><h2 id="account-detail-title">{actor.name} 상세 설정</h2></div><button type="button" className="icon-button" aria-label={`${actor.name} 상세 설정 닫기`} onClick={onClose} disabled={busy}><X size={20} /></button></header>
+        <p className="account-detail-meta">{actor.email} · {roleLabel(actor.role)} · {actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</p>
+
+        <div className="account-detail-section">
+          <h3>노출 페이지</h3>
+          <div className="access-page-grid access-mode">
+            <label className="access-page-option"><input type="radio" name="access-mode" checked={!custom} onChange={() => setCustom(false)} disabled={busy} /><span>역할 기본값 따르기</span></label>
+            <label className="access-page-option"><input type="radio" name="access-mode" checked={custom} onChange={() => { setCustom(true); setSelected(access.actorPages[actor.id] ?? roleEffective); }} disabled={busy} /><span>이 계정만 지정</span></label>
+          </div>
+          <fieldset className="access-pages" disabled={!custom || busy}>
+            <legend className="sr-only">이 계정의 노출 페이지</legend>
+            <div className="access-page-grid">
+              {domainPages.map((page) => {
+                const on = custom ? selected.includes(page.path) : roleEffective.includes(page.path);
+                return (
+                  <label key={page.path} className="access-page-option">
+                    <input type="checkbox" checked={on} onChange={() => toggle(page.path)} disabled={!custom || busy} />
+                    <span>{page.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+          <div className="access-actions"><Button type="button" onClick={() => void saveAccess()} disabled={busy}>{busy ? '저장 중…' : '노출 페이지 저장'}</Button></div>
+        </div>
+
+        <div className="account-detail-section">
+          <h3>계정 관리</h3>
+          <div className="account-actions">
+            <Button type="button" variant="secondary" onClick={onReset} disabled={busy}>비밀번호 재설정</Button>
+            <Button type="button" variant="danger" onClick={onDeactivate} disabled={busy || !actor.active || actor.id === data.actor.id}>비활성화</Button>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

@@ -1,4 +1,5 @@
 export * from "./errors.ts";
+export * from "./access-pages.ts";
 export * from "./credentials.ts";
 export * from "./invoice-lines.ts";
 export * from "./money.ts";

@@ -37,7 +37,8 @@ describe('HQ account administration', () => {
       id: 'driver-1', name: '김배송', role: 'driver', storeIds: [], active: true, version: 1,
       email: 'driver@example.com', passwordHash: 'must-not-render', mfaSecret: 'must-not-render',
     };
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/admin/access-policy')) return response({ pages: [], roleDefaults: {}, rolePages: {}, actorPages: {}, actorEffectivePages: {} });
       if (!init?.method || init.method === 'GET') return response({ actors: [existing] });
       return response({ actor: {
         id: 'owner-1', name: '새 점주', role: 'store_owner', storeIds: ['store-1'], active: true,
@@ -91,7 +92,8 @@ describe('HQ account administration', () => {
     };
     let resolveReset!: () => void;
     const resetGate = new Promise<void>((resolve) => { resolveReset = resolve; });
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/admin/access-policy')) return response({ pages: [], roleDefaults: {}, rolePages: {}, actorPages: {}, actorEffectivePages: {} });
       if (!init?.method || init.method === 'GET') return response({ actors: [master] });
       await resetGate;
       return response({ actor: { ...master, version: 2 } });

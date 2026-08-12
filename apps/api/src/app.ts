@@ -179,6 +179,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
   });
 
+  /* 계정 유형별·계정별 페이지 노출 설정 (hq_master + 최근 스텝업) */
+  app.get("/api/v2/admin/access-policy", async (request) => service.getAccessSettings(request.actor));
+  app.put("/api/v2/admin/access-policy", async (request, reply) => {
+    const body = z.union([
+      z.object({ role: provisionableRole, pages: z.array(z.string().min(1)).max(50).nullable() }),
+      z.object({ actorId: z.string().min(1), pages: z.array(z.string().min(1)).max(50).nullable() }),
+    ]).parse(request.body);
+    return idempotentMutation(request, reply, repository, request.actor, 200, (scoped) =>
+      service.withRepository(scoped).updateAccessPolicy(request.actor,
+        "role" in body ? { role: body.role } : { actorId: body.actorId }, body.pages));
+  });
+
   /** Active driver directory contract: { drivers: Array<{ id, name }> }; hq_ops/hq_master only. */
   app.get("/api/v2/directory/drivers", async (request) => authService.listActiveDrivers(request.actor));
 

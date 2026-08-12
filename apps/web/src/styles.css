@@ -2030,3 +2030,20 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 @media (max-width: 500px) {
   :root .page-head h1, :root .page-heading h1, :root .driver-greeting h1 { font-size: 30px; }
 }
+
+/* 계정 관리 — 접근(노출 페이지) 설정 */
+.account-open { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.account-open:hover .account-identity strong { color: var(--orange-dark); }
+.access-panel .access-status { margin: 4px 0 0; font-size: 12px; font-weight: 750; color: var(--muted); }
+.access-pages { border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px; margin: 10px 0 0; }
+.access-pages[disabled] { opacity: .55; }
+.access-pages legend { padding: 0 6px; font-size: 12px; font-weight: 800; color: var(--muted); }
+.access-page-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 14px; }
+.access-page-grid.access-mode { grid-template-columns: 1fr 1fr; margin-bottom: 10px; }
+.access-page-option { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; cursor: pointer; }
+.access-page-option input { width: 17px; height: 17px; min-height: 0; accent-color: var(--orange); cursor: pointer; }
+.access-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.account-detail-dialog { max-width: 560px; width: min(560px, calc(100vw - 40px)); }
+.account-detail-meta { color: var(--muted); font-size: 12.5px; }
+.account-detail-section { margin-top: 16px; }
+.account-detail-section h3 { font-size: 13.5px; font-weight: 800; margin-bottom: 8px; }
