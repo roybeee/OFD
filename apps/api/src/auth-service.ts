@@ -41,7 +41,7 @@ export class AuthService {
     private readonly encryptionKey?: string,
   ) {}
 
-  async login(email: string, password: string, ip: string): Promise<{ token?: string; mfaRequired: boolean; actor: PublicActor }> {
+  async login(email: string, password: string, ip: string): Promise<{ token?: string; mfaRequired: boolean; mustChangePassword: boolean; actor: PublicActor }> {
     this.checkRate(`${ip}:${email.toLowerCase()}`);
     const credential = (await this.repository.list<UserCredential>("credential"))
       .find((item) => item.email.toLowerCase() === email.trim().toLowerCase());
@@ -57,7 +57,7 @@ export class AuthService {
     }
     if (!actor.active) throw new DomainError("ACCOUNT_DISABLED", "비활성화된 계정입니다.", 403);
     const token = await this.finishLogin(credential, actor);
-    return { token, mfaRequired: false, actor: publicActor(actor) };
+    return { token, mfaRequired: false, mustChangePassword: Boolean(credential.mustChangePassword), actor: publicActor(actor) };
   }
 
   /** 중요 작업 본인 확인 — MFA 없이 비밀번호만 재확인해 최근 스텝업 세션을 발급한다. */
@@ -95,6 +95,7 @@ export class AuthService {
       ...credential, passwordHash: hashPassword(newPassword), failedAttempts: 0, version: credential.version + 1,
     };
     delete updatedCredential.lockedUntil;
+    delete updatedCredential.mustChangePassword;
     await this.repository.commit({
       changes: [
         { type: "actor", id: freshActor.id, expectedVersion: freshActor.authVersion, value: updatedActor },
@@ -151,7 +152,7 @@ export class AuthService {
     };
     const credential: UserCredential = {
       id: stableCredentialId(email), actorId: createdActor.id, email, passwordHash: hashPassword(input.password),
-      failedAttempts: 0, version: 1,
+      failedAttempts: 0, mustChangePassword: true, version: 1,
     };
     await this.repository.commit({
       changes: [
@@ -257,7 +258,8 @@ export class AuthService {
     const credential = await this.credentialForActor(target.id);
     const updatedActor: Actor = { ...target, authVersion: target.authVersion + 1 };
     const updatedCredential: UserCredential = {
-      ...credential, passwordHash: hashPassword(newPassword), failedAttempts: 0, version: credential.version + 1,
+      ...credential, passwordHash: hashPassword(newPassword), failedAttempts: 0,
+      mustChangePassword: true, version: credential.version + 1,
     };
     delete updatedCredential.lockedUntil;
     delete updatedCredential.mfaSecretEncrypted;

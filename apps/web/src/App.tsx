@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, loadBootstrap, logoutV2, registerStepUpRequester, stepUpV2 } from './api/client';
+import { ApiError, changePasswordV2, loadBootstrap, logoutV2, registerStepUpRequester, stepUpV2 } from './api/client';
 import { createStepUpCoordinator } from './api/step-up-coordinator';
-import { LoginScreen, StepUpDialog, UnauthorizedScreen } from './components/AuthGate';
+import { ForcePasswordChangeScreen, LoginScreen, StepUpDialog, UnauthorizedScreen } from './components/AuthGate';
 import { AppShell } from './components/AppShell';
 import { ApiConnectionError, Button, SkeletonScreen, ToastRegion } from './components/ui';
 import { DriverTodayPage } from './pages/DriverTodayPage';
@@ -44,6 +44,7 @@ export default function App() {
   const [retryKey, setRetryKey] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [stepUpOpen, setStepUpOpen] = useState(false);
+  const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const [logoutPending, setLogoutPending] = useState(false);
   const postLoginRedirect = useRef(false);
@@ -68,6 +69,7 @@ export default function App() {
     setConnectionError(false);
     setAuthenticationRequired(false);
     setAuthorizationDenied(false);
+    setPasswordChangeRequired(false);
     loadBootstrap()
       .then((result) => {
         if (!mounted) return;
@@ -100,6 +102,7 @@ export default function App() {
         if (!mounted) return;
         setData(null);
         if (error instanceof ApiError && error.status === 401) setAuthenticationRequired(true);
+        else if (error instanceof ApiError && error.code === 'PASSWORD_CHANGE_REQUIRED') setPasswordChangeRequired(true);
         else if (error instanceof ApiError && error.status === 403) setAuthorizationDenied(true);
         else setConnectionError(true);
       });
@@ -171,6 +174,14 @@ export default function App() {
 
   if (connectionError) return <ApiConnectionError onRetry={() => setRetryKey((value) => value + 1)} />;
   if (authenticationRequired) return <LoginScreen onAuthenticated={authenticated} />;
+  if (passwordChangeRequired) {
+    return <ForcePasswordChangeScreen onLogout={logout} onSubmit={async (currentPassword, newPassword) => {
+      await changePasswordV2(currentPassword, newPassword);
+      setPasswordChangeRequired(false);
+      postLoginRedirect.current = true;
+      setRetryKey((value) => value + 1);
+    }} />;
+  }
   if (authorizationDenied) return <UnauthorizedScreen onLogout={logout} logoutError={logoutError} logoutPending={logoutPending} />;
   if (!data) return <SkeletonScreen />;
   if (path === '/unauthorized') return <UnauthorizedScreen onLogout={logout} logoutError={logoutError} logoutPending={logoutPending} />;

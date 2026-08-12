@@ -53,6 +53,8 @@ export interface UserCredential {
   lockedUntil?: string;
   mfaSecretEncrypted?: string;
   lastLoginAt?: string;
+  /** 관리자가 발급·재설정한 비밀번호. 본인이 바꾸기 전까지 업무 화면 진입을 막는다. */
+  mustChangePassword?: boolean;
   version: number;
 }
 

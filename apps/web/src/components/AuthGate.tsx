@@ -65,6 +65,67 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
   );
 }
 
+/** 최초 로그인(또는 관리자 재설정) 직후 강제 비밀번호 변경 화면. 바꾸기 전에는 업무 화면에 들어갈 수 없다. */
+export function ForcePasswordChangeScreen({ onSubmit, onLogout }: {
+  onSubmit: (currentPassword: string, newPassword: string) => Promise<void>;
+  onLogout: () => void;
+}) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const currentRef = useRef<HTMLInputElement>(null);
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const canSubmit = current.length > 0 && next.length >= 10 && next === confirm;
+
+  useEffect(() => { currentRef.current?.focus(); }, []);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!canSubmit || busy) return;
+    setError('');
+    setBusy(true);
+    try {
+      await onSubmit(current, next);
+    } catch (caught) {
+      setError(messageFor(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="auth-screen" id="main-content">
+      <section className="auth-card" aria-labelledby="force-password-title" data-testid="force-password-screen">
+        <span className="auth-symbol" aria-hidden="true"><ShieldCheck size={28} /></span>
+        <p className="eyebrow"><span /> FIRST SIGN-IN</p>
+        <h1 id="force-password-title">비밀번호를 변경해 주세요</h1>
+        <p>관리자가 발급한 초기 비밀번호로 로그인했습니다. 안전을 위해 본인만 아는 비밀번호로 바꿔야 업무 화면을 사용할 수 있습니다.</p>
+        <form onSubmit={submit} noValidate>
+          <label htmlFor="force-current">현재 비밀번호
+            <input ref={currentRef} id="force-current" type="password" required autoComplete="current-password"
+              value={current} onChange={(event) => setCurrent(event.target.value)} />
+          </label>
+          <label htmlFor="force-next">새 비밀번호
+            <input id="force-next" type="password" required minLength={10} maxLength={200} autoComplete="new-password"
+              value={next} onChange={(event) => setNext(event.target.value)} aria-describedby="force-next-hint" />
+          </label>
+          <small id="force-next-hint" className="field-hint">10자 이상, 숫자·특수문자 포함.</small>
+          <label htmlFor="force-confirm">새 비밀번호 확인
+            <input id="force-confirm" type="password" required minLength={10} maxLength={200} autoComplete="new-password"
+              value={confirm} onChange={(event) => setConfirm(event.target.value)} aria-invalid={mismatch} />
+          </label>
+          {mismatch && <p className="form-alert" role="alert">새 비밀번호가 서로 일치하지 않습니다.</p>}
+          {error && <p className="form-alert" role="alert">{error}</p>}
+          <Button type="submit" disabled={!canSubmit || busy}>{busy ? '변경 중…' : '비밀번호 변경하고 시작'}</Button>
+          <Button type="button" variant="ghost" onClick={onLogout} disabled={busy}>다른 계정으로 로그인</Button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 export function StepUpDialog({ onSubmit, onCancel }: {
   onSubmit: (password: string) => Promise<void>;
   onCancel: () => void;

@@ -21,7 +21,7 @@ import { coolingGate, createFieldStore, createOpeningStore, createPosStore, kstT
 import { DomainError as PosDomainError } from "@ofd/domain";
 import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems, verifyTossWebhookSignature } from "@ofd/integrations";
 import { randomUUID as posRandomUUID } from "node:crypto";
-import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipment, Store as PosStoreRecord, TaxInvoice } from "@ofd/domain";
+import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipment, Store as PosStoreRecord, TaxInvoice, UserCredential } from "@ofd/domain";
 import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
 import { audit as posAudit } from "./events.ts";
 
@@ -86,6 +86,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login"
       || path === "/api/v2/webhooks/popbill" || path === "/api/v2/webhooks/tossplace" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
     request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
+
+    /* 최초 비밀번호(관리자 발급·재설정)는 본인이 바꾸기 전까지 업무 API를 막는다.
+     * 비밀번호 변경과 로그아웃만 허용해 잠금 상태에서 빠져나올 수 있게 한다. */
+    if (path === "/api/v2/auth/change-password" || path === "/api/v2/auth/logout") return;
+    const credential = (await repository.list<UserCredential>("credential"))
+      .find((item) => item.actorId === request.actor.id);
+    if (credential?.mustChangePassword) {
+      throw new DomainError("PASSWORD_CHANGE_REQUIRED", "최초 로그인입니다. 비밀번호를 변경해 주세요.", 403);
+    }
   });
 
   app.get("/api/v2/health", async () => ({ ok: true, mode: config.appMode, providerMode: config.providerMode,
@@ -128,7 +137,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const body = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(200) }).parse(request.body);
     const result = await authService.login(body.email, body.password, request.ip);
     if (result.token) setSessionCookie(reply, result.token, config.appMode);
-    return { authenticated: Boolean(result.token), mfaRequired: false, actor: result.actor };
+    return { authenticated: Boolean(result.token), mfaRequired: false, mustChangePassword: result.mustChangePassword, actor: result.actor };
   });
   app.post("/api/v2/auth/step-up", async (request, reply) => {
     const body = z.object({ password: z.string().min(1).max(200) }).parse(request.body);

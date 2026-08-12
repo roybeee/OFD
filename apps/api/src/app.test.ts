@@ -315,6 +315,48 @@ describe("OFD v2 API", () => {
     expect(blocked.json().error.code).toBe("ACCOUNT_LOCKED");
   });
 
+  it("관리자가 발급한 초기 비밀번호는 본인이 바꾸기 전까지 업무 API를 막는다", async () => {
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent",
+      TEST_AUTH_REQUIRED: "true", SESSION_SECRET: "test-session-secret-with-at-least-32-characters" }, logger: false });
+    openApps.push(app);
+
+    /* 마스터로 로그인해 새 계정을 만든다 */
+    const masterLogin = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "hq.master@ofd.local", password: "OFD-demo-2026!" } });
+    expect(masterLogin.json()).toMatchObject({ authenticated: true, mustChangePassword: false });
+    const masterCookie = String(masterLogin.headers["set-cookie"] ?? "").split(";")[0];
+    const stepUp = await app.inject({ method: "POST", url: "/api/v2/auth/step-up", headers: { cookie: masterCookie },
+      payload: { password: "OFD-demo-2026!" } });
+    const steppedCookie = String(stepUp.headers["set-cookie"] ?? "").split(";")[0];
+    const created = await app.inject({ method: "POST", url: "/api/v2/admin/actors",
+      headers: { cookie: steppedCookie, "Idempotency-Key": "provision-first-login" },
+      payload: { name: "신규 감사자", role: "auditor", storeIds: [], email: "auditor.new@ofd.local", password: "Initial-Pass-2026!" } });
+    expect(created.statusCode).toBe(201);
+
+    /* 새 계정 로그인 → 세션은 발급되지만 mustChangePassword가 참이고 업무 API는 403 */
+    const firstLogin = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "auditor.new@ofd.local", password: "Initial-Pass-2026!" } });
+    expect(firstLogin.statusCode).toBe(200);
+    expect(firstLogin.json()).toMatchObject({ authenticated: true, mustChangePassword: true });
+    const cookie = String(firstLogin.headers["set-cookie"] ?? "").split(";")[0];
+    const blocked = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { cookie } });
+    expect(blocked.statusCode).toBe(403);
+    expect(blocked.json().error.code).toBe("PASSWORD_CHANGE_REQUIRED");
+
+    /* 비밀번호 변경은 잠금 중에도 허용된다 → 이후 업무 API 정상 */
+    const changed = await app.inject({ method: "POST", url: "/api/v2/auth/change-password", headers: { cookie },
+      payload: { currentPassword: "Initial-Pass-2026!", newPassword: "Personal-Pass-2026!" } });
+    expect(changed.statusCode).toBe(200);
+    const newCookie = String(changed.headers["set-cookie"] ?? "").split(";")[0];
+    const allowed = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { cookie: newCookie } });
+    expect(allowed.statusCode).toBe(200);
+
+    /* 바뀐 비밀번호로 다시 로그인하면 더 이상 강제 변경이 아니다 */
+    const relogin = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "auditor.new@ofd.local", password: "Personal-Pass-2026!" } });
+    expect(relogin.json()).toMatchObject({ authenticated: true, mustChangePassword: false });
+  });
+
   it("계정 유형 변경은 권한·매장 배정을 갱신하고 세션을 폐기하며 안전장치를 지킨다", async () => {
     const app = await demoApp();
     const master = { "x-demo-actor-id": DEMO_IDS.master };
