@@ -3,6 +3,7 @@ import { ApiError, changePasswordV2, loadBootstrap, logoutV2, registerStepUpRequ
 import { createStepUpCoordinator } from './api/step-up-coordinator';
 import { ForcePasswordChangeScreen, LoginScreen, StepUpDialog, UnauthorizedScreen } from './components/AuthGate';
 import { AppShell } from './components/AppShell';
+import { InstallPrompt } from './components/InstallPrompt';
 import { ApiConnectionError, Button, SkeletonScreen, ToastRegion } from './components/ui';
 import { DriverTodayPage } from './pages/DriverTodayPage';
 import { HqDeliveryPage } from './pages/HqDeliveryPage';
@@ -173,7 +174,8 @@ export default function App() {
   }
 
   if (connectionError) return <ApiConnectionError onRetry={() => setRetryKey((value) => value + 1)} />;
-  if (authenticationRequired) return <LoginScreen onAuthenticated={authenticated} />;
+  /* 설치 안내는 로그인 화면부터 보여준다 — 폰으로 처음 접속하면 여기가 첫 화면이다 */
+  if (authenticationRequired) return <><LoginScreen onAuthenticated={authenticated} /><InstallPrompt /></>;
   if (passwordChangeRequired) {
     return <ForcePasswordChangeScreen onLogout={logout} onSubmit={async (currentPassword, newPassword) => {
       await changePasswordV2(currentPassword, newPassword);
@@ -204,6 +206,7 @@ export default function App() {
       {path === '/hq/audit' && <HqAuditPage data={data} notify={notify} />}
       {path === '/hq/accounts' && <HqAccountsPage data={data} notify={notify} onCurrentSessionRevoked={currentSessionRevoked} />}
       {path === '/driver/today' && <DriverTodayPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
+      <InstallPrompt />
       <ToastRegion toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
       {stepUpOpen && <StepUpDialog onSubmit={completeStepUp} onCancel={cancelStepUp} />}
     </AppShell>

@@ -3,13 +3,22 @@
   "short_name": "OFD",
   "description": "발주·배송·입금·정산·세금계산서 통합 운영",
   "lang": "ko-KR",
-  "start_url": "/store/orders",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f6f3ef",
   "theme_color": "#f56722",
   "icons": [
-    { "src": "/ofd-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/ofd-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "발주·입고", "url": "/store/orders" },
+    { "name": "매출현황", "url": "/hq/sales" },
+    { "name": "오늘 배송", "url": "/driver/today" }
   ]
 }

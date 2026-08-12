@@ -1,7 +1,9 @@
-const CACHE = 'ofd-workstation-v2-shell-3';
+const CACHE = 'ofd-workstation-v2-shell-4';
 const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, '');
-const FALLBACK = `${BASE}/store/orders`;
-const SHELL = [FALLBACK, `${BASE}/manifest.webmanifest`, `${BASE}/ofd-mark.svg`];
+/* 설치 앱의 시작 경로는 '/' — 역할에 맞는 첫 화면으로 앱이 알아서 보낸다 */
+const FALLBACK = `${BASE}/`;
+const SHELL = [FALLBACK, `${BASE}/manifest.webmanifest`, `${BASE}/ofd-mark.svg`,
+  `${BASE}/icon-192.png`, `${BASE}/apple-touch-icon.png`];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

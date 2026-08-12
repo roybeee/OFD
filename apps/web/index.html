@@ -7,7 +7,14 @@
     <meta name="description" content="OFD 발주부터 입고, 정산, 세금계산서까지 이어지는 통합 운영 워크스테이션" />
     <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <link rel="icon" href="%BASE_URL%ofd-mark.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="%BASE_URL%ofd-mark.svg" />
+    <link rel="icon" href="%BASE_URL%icon-192.png" sizes="192x192" type="image/png" />
+    <!-- iOS는 SVG 홈 화면 아이콘을 지원하지 않는다 — PNG 180x180이 필수 -->
+    <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" sizes="180x180" />
+    <!-- iOS 홈 화면에서 브라우저 UI 없이 앱처럼 실행 -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="OFD" />
     <title>OFD 워크스테이션</title>
   </head>
   <body>
