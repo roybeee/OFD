@@ -191,8 +191,14 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22.x
+      # RENDER_API_KEY 미설정 시 실패 대신 명시적으로 건너뛴다 — 실서비스 반영은
+      # Render autoDeploy(커밋 트리거)가 담당하므로 이 잡은 선택적 이중화 경로다.
       - name: Deploy API with predeploy migration, then worker, then Web
+        if: env.RENDER_API_KEY != ''
         run: node infra/scripts/deploy/trigger-render-deploy.mjs
+      - name: Skip notice (RENDER_API_KEY not configured)
+        if: env.RENDER_API_KEY == ''
+        run: echo 'RENDER_API_KEY secret이 없어 CI 주도 배포를 건너뜁니다. Render autoDeploy가 이 커밋을 이미 배포합니다.'
       - name: Upload Render deployment evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
