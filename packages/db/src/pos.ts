@@ -117,11 +117,13 @@ export type PosReportUnit = "day" | "week" | "month";
 export interface PosReportFilter { storeIds?: string[]; productIds?: string[] }
 export interface PosReportRawRow {
   storeId: string; date: string; rawName: string; productId: string | null; productName: string | null;
+  /** 상품 관리에 등록된 카테고리(도넛·음료 등). 미매칭 품목은 null. */
+  category?: string | null;
   qty: number; amount: number;
 }
 export interface PosReportMixStore { storeId: string; qty: number; amount: number }
 export interface PosReportMix {
-  key: string; name: string; productId: string | null;
+  key: string; name: string; productId: string | null; category: string | null;
   qty: number; amount: number; stores: PosReportMixStore[];
 }
 export interface PosReportRow {
@@ -174,6 +176,7 @@ export function buildPosReport(rows: PosReportRawRow[], unit: PosReportUnit, fil
     let mix = entry.mixMap.get(key);
     if (!mix) {
       mix = { key, name: row.productId ? (row.productName ?? key) : "미매칭(기타)", productId: row.productId,
+        category: row.productId ? (row.category ?? "기타") : null,
         qty: 0, amount: 0, stores: [], storeMap: new Map() };
       entry.mixMap.set(key, mix);
     }
@@ -440,12 +443,12 @@ export class PostgresPosStore implements PosStore {
   }
   async report(from: string, to: string, unit: PosReportUnit, filter?: PosReportFilter): Promise<PosReport> {
     const res = await this.pool.query(
-      `SELECT s.store_id, s.sale_date::text AS date, s.raw_name, s.product_id, p.name AS product_name, s.qty, s.amount
+      `SELECT s.store_id, s.sale_date::text AS date, s.raw_name, s.product_id, p.name AS product_name, p.category, s.qty, s.amount
        FROM pos_sales s LEFT JOIN products p ON p.id = s.product_id
        WHERE s.sale_date BETWEEN $1 AND $2`, [from, to]);
     return buildPosReport(res.rows.map((r) => ({
       storeId: r.store_id, date: r.date, rawName: r.raw_name,
-      productId: r.product_id ?? null, productName: r.product_name ?? null,
+      productId: r.product_id ?? null, productName: r.product_name ?? null, category: r.category ?? null,
       qty: Number(r.qty), amount: Number(r.amount),
     })), unit, filter);
   }
@@ -663,6 +666,7 @@ export class MemoryPosStore implements PosStore {
       const productId = this.salesProduct.get(k) ?? null;
       rows.push({ storeId: row.storeId, date: row.date, rawName: row.rawName, productId,
         productName: productId ? (this.products.get(productId)?.name ?? null) : null,
+        category: productId ? (this.products.get(productId)?.category ?? null) : null,
         qty: row.qty, amount: row.amount });
     }
     return buildPosReport(rows, unit, filter);

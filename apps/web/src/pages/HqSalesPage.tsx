@@ -9,6 +9,20 @@ import { buildSalesCsv, SALES_EXPORT_LABELS, type SalesExportOptions } from '../
 import type { BootstrapData, Toast } from '../types';
 
 const won = (value: number) => value.toLocaleString('ko-KR');
+
+/** 카테고리별 고정 색상 — 검증된 8슬롯 카테고리 팔레트를 카테고리 '이름'에 고정 배정한다.
+ *  순위(매출 순)로 배정하면 필터·기간에 따라 같은 카테고리 색이 바뀌므로 반드시 이름 기준. */
+const CATEGORY_COLORS: Record<string, string> = {
+  '도넛': '#2a78d6',
+  '링도넛': '#eb6834',
+  '음료': '#1baf7a',
+  '굿즈': '#eda100',
+  '서비스': '#e87ba4',
+  '세트': '#008300',
+  '기타': '#4a3aa7',
+  '미분류': '#e34948',
+};
+const categoryColor = (name: string) => CATEGORY_COLORS[name] ?? CATEGORY_COLORS['기타']!;
 const seoulToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 const shiftDays = (date: string, days: number) => {
   const base = new Date(`${date}T00:00:00Z`);
@@ -369,6 +383,15 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                     const scopeQty = focusStore ? (row.perStore[focusStore]?.qty ?? 0) : row.total.qty;
                     const scopeAmount = focusStore ? (row.perStore[focusStore]?.amount ?? 0) : row.total.amount;
                     const showStoreColumns = !focusStore && storeIds.length > 1;
+                    /* 카테고리별 매출 분포 — 상품 관리에 등록된 카테고리 기준, 미매칭은 '미분류' */
+                    const categoryTotals = [...mixRows.reduce((acc, mix) => {
+                      const name = mix.category ?? '미분류';
+                      const current = acc.get(name) ?? { name, qty: 0, amount: 0 };
+                      current.qty += mix.qty;
+                      current.amount += mix.amount;
+                      return acc.set(name, current);
+                    }, new Map<string, { name: string; qty: number; amount: number }>()).values()]
+                      .sort((a, b) => b.amount - a.amount);
                     return (
                     <tr key={`${row.bucket}-mix`} className="row-detail">
                       <td colSpan={storeIds.length + 2}>
@@ -377,6 +400,27 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                             {row.label}{focusStore ? ` · ${label(focusStore)}` : ''} 품목별 판매 — {mixRows.length}개 품목 · {won(scopeQty)}개 / {won(scopeAmount)}원
                             {focusStore && <button type="button" className="drilldown-scope" onClick={() => toggleRow(row.bucket, null)}>전체 보기</button>}
                           </p>
+                          {categoryTotals.length > 0 && (
+                            <div className="category-mix" aria-label="카테고리별 매출 분포">
+                              <div className="category-bar">
+                                {categoryTotals.map((category) => (
+                                  <span key={category.name} className="category-slice"
+                                    style={{ width: `${scopeAmount ? (category.amount / scopeAmount) * 100 : 0}%`, background: categoryColor(category.name) }}
+                                    title={`${category.name} ${won(category.amount)}원`} />
+                                ))}
+                              </div>
+                              <ul className="category-legend">
+                                {categoryTotals.map((category) => (
+                                  <li key={category.name}>
+                                    <span className="category-dot" style={{ background: categoryColor(category.name) }} aria-hidden="true" />
+                                    <strong>{category.name}</strong>
+                                    <span className="muted">{won(category.amount)}원 · {category.qty}개</span>
+                                    <em>{scopeAmount ? ((category.amount / scopeAmount) * 100).toFixed(1) : '0.0'}%</em>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           <table className="data-table compact">
                             <thead>
                               <tr>

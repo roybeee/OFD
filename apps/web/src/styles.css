@@ -2064,3 +2064,18 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 .drilldown-scope { margin-left: 8px; padding: 1px 8px; border: 1px solid var(--line-strong); border-radius: 999px;
   background: white; color: var(--muted); font-size: 10px; font-weight: 750; cursor: pointer; }
 .drilldown-scope:hover { border-color: var(--orange); color: var(--orange-dark); }
+
+/* 카테고리별 매출 분포 — 검증된 카테고리 팔레트(색은 카테고리 이름에 고정 배정).
+ * 마크 규격: 세그먼트 사이 2px 표면 간격, 데이터 양끝만 4px 라운드, 값은 잉크 토큰 */
+.category-mix { display: grid; gap: 9px; margin-bottom: 11px; }
+.category-bar { display: flex; gap: 2px; height: 10px; border-radius: 4px; overflow: hidden; background: transparent; }
+.category-slice { min-width: 2px; height: 100%; }
+.category-slice:first-child { border-radius: 4px 0 0 4px; }
+.category-slice:last-child { border-radius: 0 4px 4px 0; }
+.category-slice:only-child { border-radius: 4px; }
+.category-legend { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
+.category-legend li { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.category-legend strong { color: var(--ink); font-weight: 800; }
+.category-legend .muted { color: var(--muted-2); }
+.category-legend em { color: var(--ink); font-style: normal; font-weight: 750; font-variant-numeric: tabular-nums; }
+.category-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }

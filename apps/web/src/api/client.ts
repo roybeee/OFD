@@ -455,7 +455,7 @@ async function authPost<T>(path: string, body: Record<string, unknown>): Promise
 
 /* ── POS·현장 운영 (V1 이식) ── */
 export type PosReportUnit = 'day' | 'week' | 'month';
-export type PosReportMix = { key: string; name: string; productId: string | null; qty: number; amount: number; stores: Array<{ storeId: string; qty: number; amount: number }> };
+export type PosReportMix = { key: string; name: string; productId: string | null; category: string | null; qty: number; amount: number; stores: Array<{ storeId: string; qty: number; amount: number }> };
 export type PosReportRow = { bucket: string; label: string; perStore: Record<string, { qty: number; amount: number }>; total: { qty: number; amount: number }; mix: PosReportMix[] };
 export type PosReportResult = { unit: PosReportUnit; rows: PosReportRow[]; storeIds: string[] };
 export type PosProduct = { id: string; sku: string; name: string; category: string; storeId: string | null; consumerPrice: number | null };

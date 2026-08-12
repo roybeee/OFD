@@ -34,9 +34,9 @@ const REPORT = {
     perStore: { 'store-1': { qty: 6, amount: 24_000 }, 'store-2': { qty: 2, amount: 8_400 } },
     total: { qty: 8, amount: 32_400 },
     mix: [
-      { key: 'p1', name: '우유크림도넛', productId: 'p1', qty: 7, amount: 29_400,
+      { key: 'p1', name: '우유크림도넛', productId: 'p1', category: '도넛', qty: 7, amount: 29_400,
         stores: [{ storeId: 'store-1', qty: 5, amount: 21_000 }, { storeId: 'store-2', qty: 2, amount: 8_400 }] },
-      { key: '__unmatched', name: '미매칭(기타)', productId: null, qty: 1, amount: 3_000,
+      { key: '__unmatched', name: '미매칭(기타)', productId: null, category: null, qty: 1, amount: 3_000,
         stores: [{ storeId: 'store-1', qty: 1, amount: 3_000 }] },
     ],
   }],
@@ -99,6 +99,16 @@ describe('POS 현장 운영 화면', () => {
     expect(container.textContent).toContain('4,200원'); /* 품목 단가 = 29,400 ÷ 7 */
     const reopened = [...container.querySelectorAll('button.row-toggle')].find((node) => node.textContent?.includes('2026-08-03'))!;
     expect(reopened.getAttribute('aria-expanded')).toBe('true');
+
+    /* 품목 표 위에 카테고리별 매출 분포 — 색은 카테고리 이름에 고정 배정(순위 아님) */
+    const mix = container.querySelector('.category-mix')!;
+    expect(mix).toBeTruthy();
+    expect(mix.textContent).toContain('도넛');
+    expect(mix.textContent).toContain('90.7%');   /* 도넛 29,400 / 32,400 */
+    expect(mix.textContent).toContain('미분류');   /* 상품 미매칭 품목 */
+    expect(mix.textContent).toContain('9.3%');
+    const donutSlice = mix.querySelector<HTMLElement>('.category-slice')!;
+    expect(donutSlice.style.background).toBe('rgb(42, 120, 214)'); /* 도넛 = 슬롯1 blue */
   });
 
   it('POS 연동: 링크가 없으면 설정 패널이 자동으로 열리고, 매장 등록→토스 연동을 순서대로 보낸다', async () => {
