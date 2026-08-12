@@ -1,7 +1,95 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StepUpDialog } from './AuthGate';
+import { LoginScreen, StepUpDialog } from './AuthGate';
+
+describe('login intro video', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.append(container);
+  });
+
+  afterEach(async () => {
+    if (root) await act(async () => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  async function renderLogin() {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<LoginScreen onAuthenticated={vi.fn()} />);
+    });
+  }
+
+  function video() {
+    return container.querySelector<HTMLVideoElement>('video.auth-intro-video')!;
+  }
+
+  it('영상이 재생되는 동안 로그인 폼을 숨기고, 끝날 때쯤 어두워지며 폼을 보여준다', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    await renderLogin();
+
+    const intro = video();
+    expect(intro).not.toBeNull();
+    expect(intro.getAttribute('src')).toContain('login-intro.mp4');
+    expect(intro.muted).toBe(true);
+    expect(play).toHaveBeenCalledTimes(1);
+    // 영상 재생 중에는 폼이 없고 건너뛰기만 노출된다
+    expect(container.querySelector('#login-email')).toBeNull();
+    expect(container.querySelector('.auth-intro-skip')).not.toBeNull();
+    expect(container.querySelector('.auth-intro-dim')?.classList.contains('visible')).toBe(false);
+
+    // 끝나기 직전(잔여 1.5초 이내) 시점 도달 → 어두워지며 폼 등장
+    Object.defineProperty(intro, 'duration', { configurable: true, value: 8.064 });
+    Object.defineProperty(intro, 'currentTime', { configurable: true, value: 7 });
+    await act(async () => intro.dispatchEvent(new Event('timeupdate')));
+
+    expect(container.querySelector('.auth-intro-dim')?.classList.contains('visible')).toBe(true);
+    expect(container.querySelector('#login-email')).not.toBeNull();
+    expect(container.querySelector('#login-password')).not.toBeNull();
+    expect(container.querySelector('.auth-intro-skip')).toBeNull();
+  });
+
+  it('건너뛰기 버튼을 누르면 즉시 로그인 폼이 나타난다', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    await renderLogin();
+    await act(async () => container.querySelector<HTMLButtonElement>('.auth-intro-skip')!.click());
+    expect(container.querySelector('#login-email')).not.toBeNull();
+  });
+
+  it('영상이 끝까지 재생되면 폼이 나타난다', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    await renderLogin();
+    await act(async () => video().dispatchEvent(new Event('ended')));
+    expect(container.querySelector('#login-email')).not.toBeNull();
+  });
+
+  it('자동재생이 거부되면 인트로 없이 바로 폼을 보여준다', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockRejectedValue(new Error('NotAllowedError'));
+    await renderLogin();
+    expect(container.querySelector('#login-email')).not.toBeNull();
+  });
+
+  it('감속 모션 환경에서는 인트로를 건너뛴다', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const original = window.matchMedia;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      ...original(query),
+      matches: query.includes('prefers-reduced-motion'),
+    }));
+    try {
+      await renderLogin();
+      expect(container.querySelector('#login-email')).not.toBeNull();
+      expect(play).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe('step-up authentication dialog', () => {
   let container: HTMLDivElement;

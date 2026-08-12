@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type SyntheticEvent } from 'react';
 import { ApiError, loginV2 } from '../api/client';
 import type { PublicActor } from '../types';
 import { LockKeyhole, ShieldCheck } from './icons';
@@ -10,16 +10,48 @@ function messageFor(error: unknown) {
   return '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 }
 
+const INTRO_VIDEO_SRC = `${import.meta.env.BASE_URL}login-intro.mp4`;
+/** 영상 잔여 시간이 이 값 이하가 되면 어두워지며 로그인 카드를 띄운다. */
+const INTRO_DIM_LEAD_SECONDS = 1.5;
+/** 재생 이벤트가 전혀 오지 않는 환경(로딩 실패 등)에서도 로그인이 막히지 않게 하는 안전장치. */
+const INTRO_FAILSAFE_MS = 12_000;
+
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
 export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: PublicActor) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const emailRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [introDone, setIntroDone] = useState(prefersReducedMotion);
 
   useEffect(() => {
-    emailRef.current?.focus();
-  }, []);
+    if (introDone) emailRef.current?.focus();
+  }, [introDone]);
+
+  useEffect(() => {
+    if (introDone) return;
+    const playback = videoRef.current?.play();
+    // 자동재생이 불가능한 환경(브라우저 정책·테스트 등)에서는 인트로 없이 바로 폼을 보여준다
+    if (!playback || typeof playback.catch !== 'function') {
+      setIntroDone(true);
+      return;
+    }
+    playback.catch(() => setIntroDone(true));
+    const failSafe = window.setTimeout(() => setIntroDone(true), INTRO_FAILSAFE_MS);
+    return () => window.clearTimeout(failSafe);
+  }, [introDone]);
+
+  function handleIntroProgress(event: SyntheticEvent<HTMLVideoElement>) {
+    const video = event.currentTarget;
+    if (Number.isFinite(video.duration) && video.duration - video.currentTime <= INTRO_DIM_LEAD_SECONDS) {
+      setIntroDone(true);
+    }
+  }
 
   async function submitLogin(event: FormEvent) {
     event.preventDefault();
@@ -38,29 +70,38 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
   }
 
   return (
-    <main className="auth-screen" id="main-content">
-      <section className="auth-card" aria-labelledby="auth-title">
-        <span className="auth-symbol" aria-hidden="true"><LockKeyhole size={28} /></span>
-        <p className="eyebrow"><span /> SECURE OFD WORKSPACE</p>
-        <h1 id="auth-title">OFD 워크스테이션 로그인</h1>
-        <p>점주·매장 직원·배송기사·본사 담당자 계정으로 로그인해 주세요.</p>
+    <main className="auth-screen auth-screen-intro" id="main-content">
+      <video ref={videoRef} className="auth-intro-video" src={INTRO_VIDEO_SRC} muted playsInline preload="auto"
+        aria-hidden="true" tabIndex={-1}
+        onTimeUpdate={handleIntroProgress} onEnded={() => setIntroDone(true)} onError={() => setIntroDone(true)} />
+      <div className={`auth-intro-dim${introDone ? ' visible' : ''}`} aria-hidden="true" />
+      {!introDone && (
+        <button type="button" className="auth-intro-skip" onClick={() => setIntroDone(true)}>건너뛰고 로그인</button>
+      )}
+      {introDone && (
+        <section className="auth-card auth-card-reveal" aria-labelledby="auth-title">
+          <span className="auth-symbol" aria-hidden="true"><LockKeyhole size={28} /></span>
+          <p className="eyebrow"><span /> SECURE OFD WORKSPACE</p>
+          <h1 id="auth-title">OFD 워크스테이션 로그인</h1>
+          <p>점주·매장 직원·배송기사·본사 담당자 계정으로 로그인해 주세요.</p>
 
-        <form onSubmit={submitLogin} noValidate>
-          <label htmlFor="login-email">이메일
-            <input ref={emailRef} id="login-email" type="email" autoComplete="username" inputMode="email" required value={email}
-              aria-invalid={Boolean(error)} aria-describedby={error ? 'login-error' : undefined}
-              onChange={(event) => setEmail(event.target.value)} />
-          </label>
-          <label htmlFor="login-password">비밀번호
-            <input id="login-password" type="password" autoComplete="current-password" required value={password}
-              aria-invalid={Boolean(error)} aria-describedby={error ? 'login-error' : undefined}
-              onChange={(event) => setPassword(event.target.value)} />
-          </label>
-          {error && <p className="form-alert" id="login-error" role="alert">{error}</p>}
-          <Button type="submit" disabled={busy || !email.trim() || !password}>{busy ? '로그인 중…' : '로그인'}</Button>
-        </form>
-        <small>비밀번호는 OFD 운영 담당자도 확인할 수 없습니다.</small>
-      </section>
+          <form onSubmit={submitLogin} noValidate>
+            <label htmlFor="login-email">이메일
+              <input ref={emailRef} id="login-email" type="email" autoComplete="username" inputMode="email" required value={email}
+                aria-invalid={Boolean(error)} aria-describedby={error ? 'login-error' : undefined}
+                onChange={(event) => setEmail(event.target.value)} />
+            </label>
+            <label htmlFor="login-password">비밀번호
+              <input id="login-password" type="password" autoComplete="current-password" required value={password}
+                aria-invalid={Boolean(error)} aria-describedby={error ? 'login-error' : undefined}
+                onChange={(event) => setPassword(event.target.value)} />
+            </label>
+            {error && <p className="form-alert" id="login-error" role="alert">{error}</p>}
+            <Button type="submit" disabled={busy || !email.trim() || !password}>{busy ? '로그인 중…' : '로그인'}</Button>
+          </form>
+          <small>비밀번호는 OFD 운영 담당자도 확인할 수 없습니다.</small>
+        </section>
+      )}
     </main>
   );
 }
