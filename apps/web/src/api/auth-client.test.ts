@@ -30,7 +30,7 @@ describe('production authentication client', () => {
     await changePasswordV2('correct-password', 'new-strong-password');
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v2/auth/login');
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ email: 'master@example.com', password: 'correct-password' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ email: 'master@example.com', password: 'correct-password', rememberMe: false });
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v2/auth/change-password');
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ currentPassword: 'correct-password', newPassword: 'new-strong-password' });
   });

@@ -28,9 +28,38 @@ function introVideoSrc() {
   return portrait ? INTRO_VIDEO_PORTRAIT_SRC : INTRO_VIDEO_SRC;
 }
 
+const SAVED_EMAIL_KEY = 'ofd.login.saved-email';
+const AUTO_LOGIN_KEY = 'ofd.login.auto-login';
+
+/* localStorage는 프라이빗 모드 등에서 접근 자체가 던질 수 있어 항상 감싼다. 비밀번호는 절대 저장하지 않는다. */
+function readLoginPrefs() {
+  try {
+    return {
+      savedEmail: window.localStorage.getItem(SAVED_EMAIL_KEY) ?? '',
+      autoLogin: window.localStorage.getItem(AUTO_LOGIN_KEY) === 'true',
+    };
+  } catch {
+    return { savedEmail: '', autoLogin: false };
+  }
+}
+
+function persistLoginPrefs(saveEmail: boolean, email: string, autoLogin: boolean) {
+  try {
+    if (saveEmail) window.localStorage.setItem(SAVED_EMAIL_KEY, email);
+    else window.localStorage.removeItem(SAVED_EMAIL_KEY);
+    if (autoLogin) window.localStorage.setItem(AUTO_LOGIN_KEY, 'true');
+    else window.localStorage.removeItem(AUTO_LOGIN_KEY);
+  } catch {
+    /* 저장 불가 환경에서는 로그인 자체는 정상 진행 */
+  }
+}
+
 export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: PublicActor) => void }) {
-  const [email, setEmail] = useState('');
+  const [initialPrefs] = useState(readLoginPrefs);
+  const [email, setEmail] = useState(initialPrefs.savedEmail);
   const [password, setPassword] = useState('');
+  const [saveEmail, setSaveEmail] = useState(Boolean(initialPrefs.savedEmail));
+  const [autoLogin, setAutoLogin] = useState(initialPrefs.autoLogin);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const emailRef = useRef<HTMLInputElement>(null);
@@ -72,8 +101,9 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
     setError('');
     setBusy(true);
     try {
-      const result = await loginV2(email.trim(), password);
+      const result = await loginV2(email.trim(), password, autoLogin);
       if (!result.authenticated) throw new Error('로그인에 실패했습니다. 다시 시도해 주세요.');
+      persistLoginPrefs(saveEmail, email.trim(), autoLogin);
       onAuthenticated(result.actor);
     } catch (caught) {
       setError(messageFor(caught));
@@ -112,6 +142,18 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
             </label>
             {error && <p className="form-alert" id="login-error" role="alert">{error}</p>}
             <Button type="submit" disabled={busy || !email.trim() || !password}>{busy ? '로그인 중…' : '로그인'}</Button>
+            <div className="auth-options">
+              <label className="auth-check" htmlFor="save-email">
+                <input id="save-email" type="checkbox" checked={saveEmail}
+                  onChange={(event) => setSaveEmail(event.target.checked)} />
+                아이디 저장
+              </label>
+              <label className="auth-check" htmlFor="auto-login">
+                <input id="auto-login" type="checkbox" checked={autoLogin}
+                  onChange={(event) => setAutoLogin(event.target.checked)} />
+                자동 로그인
+              </label>
+            </div>
           </form>
           <small>비밀번호는 OFD 운영 담당자도 확인할 수 없습니다.</small>
         </section>

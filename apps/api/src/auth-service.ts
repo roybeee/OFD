@@ -31,6 +31,11 @@ export interface ProvisionActorInput {
 
 type ProvisionableActor = Actor & { role: ProvisionableActorRole };
 
+/** 기본 세션 수명 — 브라우저를 켜 둔 채 근무하는 하루 업무 시간 기준. */
+export const SESSION_TTL_SECONDS = 8 * 60 * 60;
+/** 자동 로그인(rememberMe) 세션 수명 — 개인 기기에서 재로그인 없이 쓰는 기간. */
+export const REMEMBER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
 export class AuthService {
   private readonly rate = new Map<string, { count: number; resetAt: number }>();
 
@@ -41,7 +46,8 @@ export class AuthService {
     private readonly encryptionKey?: string,
   ) {}
 
-  async login(email: string, password: string, ip: string): Promise<{ token?: string; mfaRequired: boolean; mustChangePassword: boolean; actor: PublicActor }> {
+  async login(email: string, password: string, ip: string, rememberMe = false):
+    Promise<{ token?: string; mfaRequired: boolean; mustChangePassword: boolean; actor: PublicActor }> {
     this.checkRate(`${ip}:${email.toLowerCase()}`);
     const credential = (await this.repository.list<UserCredential>("credential"))
       .find((item) => item.email.toLowerCase() === email.trim().toLowerCase());
@@ -56,7 +62,8 @@ export class AuthService {
       throw new DomainError("INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다.", 401);
     }
     if (!actor.active) throw new DomainError("ACCOUNT_DISABLED", "비활성화된 계정입니다.", 403);
-    const token = await this.finishLogin(credential, actor);
+    const token = await this.finishLogin(credential, actor, undefined,
+      rememberMe ? REMEMBER_SESSION_TTL_SECONDS : SESSION_TTL_SECONDS);
     return { token, mfaRequired: false, mustChangePassword: Boolean(credential.mustChangePassword), actor: publicActor(actor) };
   }
 
@@ -274,7 +281,8 @@ export class AuthService {
     return { actor: adminActorSummary(updatedActor, updatedCredential) };
   }
 
-  private async finishLogin(credential: UserCredential, actor: Actor, mfaAt?: string): Promise<string> {
+  private async finishLogin(credential: UserCredential, actor: Actor, mfaAt?: string,
+    expiresInSeconds = SESSION_TTL_SECONDS): Promise<string> {
     const now = new Date().toISOString();
     const updated: UserCredential = { ...credential, failedAttempts: 0, lastLoginAt: now, version: credential.version + 1 };
     delete updated.lockedUntil;
@@ -282,7 +290,7 @@ export class AuthService {
       changes: [{ type: "credential", id: credential.id, expectedVersion: credential.version, value: updated }],
       audits: [audit(actor, "credential", credential.id, "auth.login_succeeded", undefined, undefined, { actorId: actor.id })],
     });
-    return signSessionToken(this.payload(actor, "session", mfaAt), this.secret);
+    return signSessionToken(this.payload(actor, "session", mfaAt, expiresInSeconds), this.secret);
   }
 
   private async recordFailure(credential: UserCredential, actor: Actor, failureAction = "auth.login_failed"): Promise<void> {

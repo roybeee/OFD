@@ -13,7 +13,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { resolveActor } from "./auth.ts";
 import { SESSION_COOKIE } from "./auth.ts";
-import { AuthService } from "./auth-service.ts";
+import { AuthService, REMEMBER_SESSION_TTL_SECONDS } from "./auth-service.ts";
 import { idempotentMutation } from "./idempotency.ts";
 import { ProcurementService } from "./service.ts";
 import { coolingGate, createFieldStore, createOpeningStore, createPosStore, kstToday, LEAD_STAGES,
@@ -134,9 +134,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
   });
   app.post("/api/v2/auth/login", async (request, reply) => {
-    const body = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(200) }).parse(request.body);
-    const result = await authService.login(body.email, body.password, request.ip);
-    if (result.token) setSessionCookie(reply, result.token, config.appMode);
+    const body = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(200),
+      rememberMe: z.boolean().optional() }).parse(request.body);
+    const rememberMe = body.rememberMe === true;
+    const result = await authService.login(body.email, body.password, request.ip, rememberMe);
+    /* 자동 로그인 선택 시에만 30일 유지 쿠키를 굽는다. 미선택이면 maxAge 없는 브라우저 세션 쿠키 —
+       브라우저를 닫으면 로그아웃되고, 토큰 자체도 8시간 뒤 만료된다. */
+    if (result.token) setSessionCookie(reply, result.token, config.appMode, rememberMe ? REMEMBER_SESSION_TTL_SECONDS : undefined);
     return { authenticated: Boolean(result.token), mfaRequired: false, mustChangePassword: result.mustChangePassword, actor: result.actor };
   });
   app.post("/api/v2/auth/step-up", async (request, reply) => {
@@ -1043,8 +1047,10 @@ function invariantHeadquarters(value: { businessNumber: string } | undefined): a
   if (!value) throw new DomainError("HQ_BUSINESS_MISSING", "본사 사업자 정보가 없습니다.", 503);
 }
 
-function setSessionCookie(reply: import("fastify").FastifyReply, token: string, appMode: string): void {
-  reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure: appMode === "production", sameSite: "strict", path: "/", maxAge: 8 * 60 * 60 });
+/* maxAgeSeconds 미지정 시 브라우저 세션 쿠키(브라우저 종료로 만료). 만료 판정의 원천은 토큰 exp다. */
+function setSessionCookie(reply: import("fastify").FastifyReply, token: string, appMode: string, maxAgeSeconds?: number): void {
+  reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure: appMode === "production", sameSite: "strict", path: "/",
+    ...(maxAgeSeconds ? { maxAge: maxAgeSeconds } : {}) });
 }
 
 function normalizePopbillWebhookBodies(value: unknown): Array<Record<string, unknown>> {

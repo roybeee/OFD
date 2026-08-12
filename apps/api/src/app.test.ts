@@ -264,6 +264,19 @@ describe("OFD v2 API", () => {
     expect(gone.statusCode).toBe(404);
   });
 
+  it("자동 로그인(rememberMe) 선택 시 30일 유지 쿠키, 미선택 시 브라우저 종료로 만료되는 세션 쿠키를 발급한다", async () => {
+    const app = await demoApp();
+    const plain = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "store.owner@ofd.local", password: "OFD-demo-2026!" } });
+    expect(plain.statusCode).toBe(200);
+    expect(String(plain.headers["set-cookie"])).not.toContain("Max-Age");
+
+    const remembered = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "store.owner@ofd.local", password: "OFD-demo-2026!", rememberMe: true } });
+    expect(remembered.statusCode).toBe(200);
+    expect(String(remembered.headers["set-cookie"])).toContain(`Max-Age=${30 * 24 * 60 * 60}`);
+  });
+
   it("requires a signed session in the isolated test stack when TEST_AUTH_REQUIRED is enabled", async () => {
     const app = await buildApp({ env: {
       APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent", TEST_AUTH_REQUIRED: "true",

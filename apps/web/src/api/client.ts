@@ -590,7 +590,9 @@ export function toggleOpeningTaskV2(taskId: string, done: boolean, memo?: string
 export function logoutV2() { return authPost<Record<string, unknown>>('/auth/logout', {}); }
 
 export type LoginResult = { authenticated: boolean; mfaRequired: boolean; mustChangePassword?: boolean; actor: PublicActor };
-export function loginV2(email: string, password: string) { return authPost<LoginResult>('/auth/login', { email, password }); }
+export function loginV2(email: string, password: string, rememberMe = false) {
+  return authPost<LoginResult>('/auth/login', { email, password, rememberMe });
+}
 export function stepUpV2(password: string) {
   return authPost<{ authenticated: true; mfaVerifiedAt: string; actor: PublicActor }>('/auth/step-up', { password });
 }

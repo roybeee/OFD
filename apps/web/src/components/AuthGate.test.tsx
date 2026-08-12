@@ -1,7 +1,123 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loginV2 } from '../api/client';
 import { LoginScreen, StepUpDialog } from './AuthGate';
+
+vi.mock('../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/client')>()),
+  loginV2: vi.fn(),
+}));
+
+/* 실행 환경(Node 실험 localStorage)의 window.localStorage는 메서드가 빠진 스텁이라 인메모리 구현으로 대체한다 */
+function memoryStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, String(value)),
+    removeItem: (key: string) => void store.delete(key),
+    clear: () => store.clear(),
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    get length() { return store.size; },
+  };
+}
+
+describe('login options (아이디 저장 · 자동 로그인)', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  const onAuthenticated = vi.fn();
+
+  beforeEach(() => {
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: memoryStorage() });
+    vi.mocked(loginV2).mockResolvedValue({
+      authenticated: true,
+      actor: { id: 'a-1', name: '점주', role: 'store_owner' },
+    } as Awaited<ReturnType<typeof loginV2>>);
+    container = document.createElement('div');
+    document.body.append(container);
+  });
+
+  afterEach(async () => {
+    if (root) await act(async () => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  // 인트로는 jsdom에서 자동재생이 불가능해 즉시 폼이 뜬다
+  async function renderLogin() {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<LoginScreen onAuthenticated={onAuthenticated} />);
+    });
+  }
+
+  async function setInput(selector: string, value: string) {
+    await act(async () => {
+      const element = container.querySelector<HTMLInputElement>(selector)!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  async function submit() {
+    await act(async () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+  }
+
+  it('로그인 버튼 아래에 아이디 저장·자동 로그인 체크박스가 있다', async () => {
+    await renderLogin();
+    const options = container.querySelector('.auth-options')!;
+    expect(options).not.toBeNull();
+    expect(options.textContent).toContain('아이디 저장');
+    expect(options.textContent).toContain('자동 로그인');
+    // 기본값: 둘 다 해제
+    const boxes = options.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(boxes).toHaveLength(2);
+    expect(Array.from(boxes).every((box) => !box.checked)).toBe(true);
+  });
+
+  it('아이디 저장을 체크하고 로그인하면 이메일이 저장되고, 다음 렌더에서 미리 채워진다', async () => {
+    await renderLogin();
+    await setInput('#login-email', 'owner@ofd.local');
+    await setInput('#login-password', 'secret-password');
+    await act(async () => container.querySelector<HTMLInputElement>('#save-email')!.click());
+    await submit();
+    expect(window.localStorage.getItem('ofd.login.saved-email')).toBe('owner@ofd.local');
+
+    await act(async () => root.unmount());
+    await renderLogin();
+    expect(container.querySelector<HTMLInputElement>('#login-email')!.value).toBe('owner@ofd.local');
+    expect(container.querySelector<HTMLInputElement>('#save-email')!.checked).toBe(true);
+  });
+
+  it('아이디 저장을 해제하고 로그인하면 저장된 이메일이 삭제된다', async () => {
+    window.localStorage.setItem('ofd.login.saved-email', 'owner@ofd.local');
+    await renderLogin();
+    await setInput('#login-password', 'secret-password');
+    await act(async () => container.querySelector<HTMLInputElement>('#save-email')!.click()); // 체크 해제
+    await submit();
+    expect(window.localStorage.getItem('ofd.login.saved-email')).toBeNull();
+  });
+
+  it('자동 로그인 체크 시 rememberMe로 로그인하고 선택이 저장된다', async () => {
+    await renderLogin();
+    await setInput('#login-email', 'owner@ofd.local');
+    await setInput('#login-password', 'secret-password');
+    await act(async () => container.querySelector<HTMLInputElement>('#auto-login')!.click());
+    await submit();
+    expect(loginV2).toHaveBeenCalledWith('owner@ofd.local', 'secret-password', true);
+    expect(window.localStorage.getItem('ofd.login.auto-login')).toBe('true');
+    expect(onAuthenticated).toHaveBeenCalled();
+  });
+
+  it('자동 로그인 미체크 시 rememberMe 없이 로그인한다', async () => {
+    await renderLogin();
+    await setInput('#login-email', 'owner@ofd.local');
+    await setInput('#login-password', 'secret-password');
+    await submit();
+    expect(loginV2).toHaveBeenCalledWith('owner@ofd.local', 'secret-password', false);
+    expect(window.localStorage.getItem('ofd.login.auto-login')).toBeNull();
+  });
+});
 
 describe('login intro video', () => {
   let container: HTMLDivElement;
