@@ -214,6 +214,41 @@ export class AuthService {
     return { actor: adminActorSummary(updated, credential) };
   }
 
+  /** PATCH /api/v2/admin/actors action=role. 계정 유형(역할)과 매장 배정을 바꾸고 전 세션을 폐기한다. */
+  async changeActorRole(actor: Actor, actorId: string, expectedVersion: number, role: ProvisionableActorRole,
+    storeIds: string[]): Promise<{ actor: AdminActorSummary }> {
+    this.assertMasterStepUp(actor);
+    invariant(isProvisionableActorRole(role), "ACTOR_ROLE_NOT_PROVISIONABLE", "시스템 계정 유형으로는 바꿀 수 없습니다.");
+    invariant(actor.id !== actorId, "SELF_ROLE_CHANGE_DENIED", "현재 사용 중인 관리자 계정의 유형은 바꿀 수 없습니다.", 409);
+    const target = await this.requiredActorForAdmin(actorId);
+    invariant(target.authVersion === expectedVersion, "VERSION_CONFLICT", "계정이 변경되었습니다. 새로고침 후 다시 시도해 주세요.", 409);
+    invariant(target.role !== role || !sameStoreAssignment(target.storeIds, storeIds), "ROLE_UNCHANGED", "변경할 내용이 없습니다.", 409);
+    await this.assertStoreAssignment(role, storeIds);
+
+    /* 마지막 활성 최고관리자를 다른 유형으로 강등하면 관리 주체가 사라진다 */
+    if (target.role === "hq_master" && role !== "hq_master") {
+      const activeMasters = (await this.repository.list<Actor>("actor"))
+        .filter((candidate) => candidate.role === "hq_master" && candidate.active);
+      invariant(activeMasters.length > 1, "LAST_MASTER_REQUIRED", "마지막 활성 최고관리자의 계정 유형은 바꿀 수 없습니다.", 409);
+    }
+    /* 배송 중인 기사를 다른 유형으로 바꾸면 배정이 고아가 된다 */
+    if (target.role === "driver" && role !== "driver") {
+      const activeShipments = (await this.repository.list<{ driverId?: string; status: string }>("shipment"))
+        .filter((shipment) => shipment.driverId === target.id && (shipment.status === "preparing" || shipment.status === "out_for_delivery"));
+      invariant(activeShipments.length === 0, "DRIVER_HAS_ACTIVE_SHIPMENTS",
+        "준비 또는 배송 중인 배정이 있는 기사는 계정 유형을 바꿀 수 없습니다.", 409);
+    }
+
+    const credential = await this.credentialForActor(target.id);
+    const updated: Actor = { ...target, role, storeIds: [...new Set(storeIds)], authVersion: target.authVersion + 1 };
+    await this.repository.commit({
+      changes: [{ type: "actor", id: target.id, expectedVersion, value: updated }],
+      audits: [audit(actor, "actor", target.id, "admin.actor_role_changed", undefined,
+        publicActor(target), publicActor(updated), { from: target.role, to: role })],
+    });
+    return { actor: adminActorSummary(updated, credential) };
+  }
+
   /** PATCH /api/v2/admin/actors action=reset. 비밀번호를 재설정하고 남은 MFA 흔적을 제거하며 전 세션을 폐기한다. */
   async resetActor(actor: Actor, actorId: string, expectedVersion: number, newPassword: string): Promise<{ actor: AdminActorSummary }> {
     this.assertMasterStepUp(actor);
@@ -346,6 +381,12 @@ function adminActorSummary(actor: Actor, credential: UserCredential): AdminActor
     ...(credential.lastLoginAt ? { lastLoginAt: credential.lastLoginAt } : {}),
     ...(credential.lockedUntil ? { lockedUntil: credential.lockedUntil } : {}),
   };
+}
+
+function sameStoreAssignment(left: readonly string[], right: readonly string[]): boolean {
+  const a = [...new Set(left)].sort();
+  const b = [...new Set(right)].sort();
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function normalizeEmail(email: string): string {

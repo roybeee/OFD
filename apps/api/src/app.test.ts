@@ -315,6 +315,48 @@ describe("OFD v2 API", () => {
     expect(blocked.json().error.code).toBe("ACCOUNT_LOCKED");
   });
 
+  it("계정 유형 변경은 권한·매장 배정을 갱신하고 세션을 폐기하며 안전장치를 지킨다", async () => {
+    const app = await demoApp();
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+    const key = (value: string) => ({ ...master, "Idempotency-Key": value });
+
+    const before = await app.inject({ method: "GET", url: "/api/v2/admin/actors", headers: master });
+    const staff = (before.json() as { actors: Array<{ id: string; role: string; version: number }> }).actors
+      .find((candidate) => candidate.id === DEMO_IDS.staff)!;
+    expect(staff.role).toBe("store_staff");
+
+    /* 매장 직원 → 본사 운영: 매장 배정은 비워야 하고, 권한이 본사 것으로 바뀐다 */
+    const changed = await app.inject({ method: "PATCH", url: "/api/v2/admin/actors", headers: key("role-staff-ops"),
+      payload: { action: "role", actorId: DEMO_IDS.staff, expectedVersion: staff.version, role: "hq_ops", storeIds: [] } });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.json()).toMatchObject({ actor: { role: "hq_ops", storeIds: [], version: staff.version + 1 } });
+    const afterCaps = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.staff } });
+    expect(afterCaps.json().capabilities).toContain("hq.orders.read");
+    expect(afterCaps.json().capabilities).not.toContain("store.orders.read");
+
+    /* 낡은 버전으로는 실패(세션 폐기로 authVersion이 올랐다) */
+    expect((await app.inject({ method: "PATCH", url: "/api/v2/admin/actors", headers: key("role-stale"),
+      payload: { action: "role", actorId: DEMO_IDS.staff, expectedVersion: staff.version, role: "auditor", storeIds: [] } })).statusCode).toBe(409);
+
+    /* 매장 역할로 되돌릴 때는 매장 배정이 필수 */
+    const noStore = await app.inject({ method: "PATCH", url: "/api/v2/admin/actors", headers: key("role-nostore"),
+      payload: { action: "role", actorId: DEMO_IDS.staff, expectedVersion: staff.version + 1, role: "store_owner", storeIds: [] } });
+    expect(noStore.statusCode).toBe(400);
+    expect(noStore.json().error.code).toBe("STORE_ASSIGNMENT_REQUIRED");
+
+    /* 마지막 활성 최고관리자는 강등할 수 없다 */
+    const masterRow = (before.json() as { actors: Array<{ id: string; version: number }> }).actors
+      .find((candidate) => candidate.id === DEMO_IDS.master)!;
+    const lastMaster = await app.inject({ method: "PATCH", url: "/api/v2/admin/actors", headers: key("role-last-master"),
+      payload: { action: "role", actorId: DEMO_IDS.master, expectedVersion: masterRow.version, role: "hq_ops", storeIds: [] } });
+    expect([409]).toContain(lastMaster.statusCode);
+
+    /* 비마스터는 유형 변경 불가 */
+    expect((await app.inject({ method: "PATCH", url: "/api/v2/admin/actors",
+      headers: { "x-demo-actor-id": DEMO_IDS.finance, "Idempotency-Key": "role-forbidden" },
+      payload: { action: "role", actorId: DEMO_IDS.staff, expectedVersion: staff.version + 1, role: "auditor", storeIds: [] } })).statusCode).toBe(403);
+  });
+
   it("계정 유형별·계정별 페이지 노출을 설정하면 로그인 capability에 반영된다", async () => {
     const app = await demoApp();
     const master = { "x-demo-actor-id": DEMO_IDS.master };

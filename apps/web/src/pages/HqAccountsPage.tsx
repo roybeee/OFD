@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  changeActorRoleV2,
   changePasswordV2,
   deactivateActorV2,
   listActorAccountsV2,
+  loadAccessSettingsV2,
   newIdempotencyKey,
   provisionActorV2,
   resetActorV2,
+  setActorPagesV2,
+  setRolePagesV2,
+  type AccessSettings,
 } from '../api/client';
-import { setActorPagesV2, setRolePagesV2, loadAccessSettingsV2, type AccessSettings } from '../api/client';
 import { LockKeyhole, RefreshCcw, ShieldCheck, UserRound, UserRoundPlus, X } from '../components/icons';
 import { useAccessibleDialog } from '../components/useAccessibleDialog';
 import { Button } from '../components/ui';
@@ -226,7 +230,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
         onClose={() => setDetailTarget(null)}
         onReset={() => { setResetTarget(detailTarget); setDetailTarget(null); }}
         onDeactivate={() => { void deactivate(detailTarget); setDetailTarget(null); }}
-        onAccessSaved={refreshAccess} />}
+        onAccessSaved={refreshAccess} onActorChanged={replaceActor} />}
     </main>
   );
 }
@@ -388,8 +392,8 @@ function RolePagesPanel({ access, notify, onSaved }: { access: AccessSettings; n
   );
 }
 
-/** 등록 계정을 눌렀을 때 열리는 상세 설정: 노출 페이지(계정별) + 비밀번호 재설정·비활성화. */
-function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, onDeactivate, onAccessSaved }: {
+/** 등록 계정을 눌렀을 때 열리는 상세 설정: 계정 유형·노출 페이지(계정별) + 비밀번호 재설정·비활성화. */
+function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, onDeactivate, onAccessSaved, onActorChanged }: {
   actor: AdminActorSummary;
   access: AccessSettings;
   data: BootstrapData;
@@ -398,6 +402,7 @@ function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, on
   onReset: () => void;
   onDeactivate: () => void;
   onAccessSaved: () => Promise<void> | void;
+  onActorChanged: (actor: AdminActorSummary) => void;
 }) {
   const dialogRef = useAccessibleDialog(() => { if (!busy) onClose(); });
   const domain = actor.role === 'driver' ? 'driver' : (actor.role.startsWith('hq_') || actor.role === 'auditor') ? 'hq' : 'store';
@@ -407,9 +412,34 @@ function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, on
   const [custom, setCustom] = useState(hasOverride);
   const [selected, setSelected] = useState<string[]>(access.actorPages[actor.id] ?? roleEffective);
   const [busy, setBusy] = useState(false);
+  const [nextRole, setNextRole] = useState<ProvisionableActorRole>(actor.role as ProvisionableActorRole);
+  const [nextStoreIds, setNextStoreIds] = useState<string[]>(actor.storeIds);
+  const roleStoresRequired = storeRoles.has(nextRole);
+  const roleDirty = nextRole !== actor.role || !sameSet(nextStoreIds, actor.storeIds);
+  const roleSavable = roleDirty && (!roleStoresRequired || nextStoreIds.length > 0) && actor.id !== data.actor.id;
 
   function toggle(path: string) {
     setSelected((current) => current.includes(path) ? current.filter((item) => item !== path) : [...current, path]);
+  }
+
+  function toggleStore(storeId: string) {
+    setNextStoreIds((current) => current.includes(storeId) ? current.filter((id) => id !== storeId) : [...current, storeId]);
+  }
+
+  async function saveRole() {
+    if (!roleSavable) return;
+    setBusy(true);
+    try {
+      const result = await changeActorRoleV2(actor.id, actor.version, nextRole, roleStoresRequired ? nextStoreIds : [], newIdempotencyKey());
+      notify(`${actor.name} 계정 유형을 ${roleLabel(nextRole)}(으)로 변경했습니다. 이 계정의 기존 로그인은 종료됩니다.`, 'success');
+      onActorChanged(result.actor);
+      await onAccessSaved();
+      onClose();
+    } catch (error) {
+      notify(errorMessage(error, '계정 유형을 변경하지 못했습니다.'), 'warning');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveAccess() {
@@ -431,6 +461,37 @@ function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, on
       <section ref={dialogRef} className="step-up-dialog account-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="account-detail-title" tabIndex={-1}>
         <header><span className="auth-symbol"><UserRound size={24} /></span><div><p className="eyebrow"><span /> ACCOUNT</p><h2 id="account-detail-title">{actor.name} 상세 설정</h2></div><button type="button" className="icon-button" aria-label={`${actor.name} 상세 설정 닫기`} onClick={onClose} disabled={busy}><X size={20} /></button></header>
         <p className="account-detail-meta">{actor.email} · {roleLabel(actor.role)} · {actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</p>
+
+        <div className="account-detail-section">
+          <h3>계정 유형</h3>
+          <label className="detail-field" htmlFor="detail-role">유형
+            <select id="detail-role" value={nextRole} disabled={busy || actor.id === data.actor.id}
+              onChange={(event) => {
+                const value = event.target.value as ProvisionableActorRole;
+                setNextRole(value);
+                if (!storeRoles.has(value)) setNextStoreIds([]);
+              }}>
+              {roles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          </label>
+          {roleStoresRequired && (
+            <fieldset className="access-pages" disabled={busy}>
+              <legend>배정 매장 (필수)</legend>
+              <div className="access-page-grid">
+                {data.stores.map((store) => (
+                  <label key={store.id} className="access-page-option">
+                    <input type="checkbox" checked={nextStoreIds.includes(store.id)} onChange={() => toggleStore(store.id)} disabled={busy} />
+                    <span>{store.name}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {actor.id === data.actor.id
+            ? <p className="field-hint">현재 로그인 중인 본인 계정의 유형은 바꿀 수 없습니다.</p>
+            : <p className="field-hint">유형을 바꾸면 이 계정의 기존 로그인이 모두 종료되고, 노출 페이지는 새 유형의 기본값을 따릅니다.</p>}
+          <div className="access-actions"><Button type="button" onClick={() => void saveRole()} disabled={busy || !roleSavable}>{busy ? '변경 중…' : '계정 유형 변경'}</Button></div>
+        </div>
 
         <div className="account-detail-section">
           <h3>노출 페이지</h3>

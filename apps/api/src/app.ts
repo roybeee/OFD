@@ -170,12 +170,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       z.object({ action: z.literal("deactivate"), actorId: z.string().min(1), expectedVersion: z.number().int().positive() }),
       z.object({ action: z.literal("reset"), actorId: z.string().min(1), expectedVersion: z.number().int().positive(),
         newPassword: z.string().min(10).max(200) }),
+      z.object({ action: z.literal("role"), actorId: z.string().min(1), expectedVersion: z.number().int().positive(),
+        role: provisionableRole, storeIds: z.array(z.string().min(1)).max(100).default([]) }),
     ]).parse(request.body);
     return idempotentMutation(request, reply, repository, request.actor, 200, (scoped) => {
       const scopedAuth = new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY);
-      return body.action === "deactivate"
-        ? scopedAuth.deactivateActor(request.actor, body.actorId, body.expectedVersion)
-        : scopedAuth.resetActor(request.actor, body.actorId, body.expectedVersion, body.newPassword);
+      if (body.action === "deactivate") return scopedAuth.deactivateActor(request.actor, body.actorId, body.expectedVersion);
+      if (body.action === "role") return scopedAuth.changeActorRole(request.actor, body.actorId, body.expectedVersion, body.role, body.storeIds);
+      return scopedAuth.resetActor(request.actor, body.actorId, body.expectedVersion, body.newPassword);
     });
   });
 

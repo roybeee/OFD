@@ -645,6 +645,13 @@ export function setActorPagesV2(actorId: string, pages: string[] | null, idempot
   }, true);
 }
 
+export function changeActorRoleV2(actorId: string, expectedVersion: number, role: ProvisionableActorRole, storeIds: string[], idempotencyKey: string) {
+  return apiRequest<{ actor: AdminActorSummary }>('/admin/actors', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },
+    body: JSON.stringify({ action: 'role', actorId, expectedVersion, role, storeIds }),
+  }, true);
+}
+
 export function resetActorV2(actorId: string, expectedVersion: number, newPassword: string, idempotencyKey: string) {
   return apiRequest<{ actor: AdminActorSummary }>('/admin/actors', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },
