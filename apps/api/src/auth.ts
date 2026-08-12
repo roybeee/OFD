@@ -6,6 +6,8 @@ import type { FastifyRequest } from "fastify";
 declare module "fastify" {
   interface FastifyRequest {
     actor: Actor;
+    /** 현재 요청의 세션이 자동 로그인(rememberMe)으로 발급됐는지 — 세션 갱신 시 유지 기간 승계에 쓴다. */
+    sessionRemembered?: boolean;
   }
 }
 
@@ -18,6 +20,8 @@ export interface SessionPayload {
   ver: number;
   purpose: "session";
   mfaAt?: string;
+  /** 자동 로그인으로 발급된 세션 표시. 스텝업 등 갱신 시 30일 유지를 승계한다. */
+  rem?: true;
 }
 
 export const SESSION_COOKIE = "ofd_session";
@@ -38,6 +42,7 @@ export async function resolveActor(request: FastifyRequest, repository: StateRep
     const payload = verifySessionToken(token, secret, "session");
     actorId = payload.sub;
     mfaAtFromSession = payload.mfaAt;
+    request.sessionRemembered = payload.rem === true;
   }
   const actor = await repository.get<Actor>("actor", actorId);
   if (!actor) throw new DomainError("UNAUTHENTICATED", "사용자 계정을 찾을 수 없습니다.", 401);

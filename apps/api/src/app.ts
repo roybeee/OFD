@@ -143,16 +143,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (result.token) setSessionCookie(reply, result.token, config.appMode, rememberMe ? REMEMBER_SESSION_TTL_SECONDS : undefined);
     return { authenticated: Boolean(result.token), mfaRequired: false, mustChangePassword: result.mustChangePassword, actor: result.actor };
   });
+  /* 세션 갱신(스텝업·비밀번호 변경)은 원래 세션의 자동 로그인 여부를 그대로 승계한다 */
   app.post("/api/v2/auth/step-up", async (request, reply) => {
     const body = z.object({ password: z.string().min(1).max(200) }).parse(request.body);
-    const result = await authService.stepUp(request.actor, body.password, request.ip);
-    setSessionCookie(reply, result.token, config.appMode);
+    const remembered = request.sessionRemembered === true;
+    const result = await authService.stepUp(request.actor, body.password, request.ip, remembered);
+    setSessionCookie(reply, result.token, config.appMode, remembered ? REMEMBER_SESSION_TTL_SECONDS : undefined);
     return { authenticated: true, mfaVerifiedAt: new Date().toISOString(), actor: result.actor };
   });
   app.post("/api/v2/auth/change-password", async (request, reply) => {
     const body = z.object({ currentPassword: z.string().min(1).max(200), newPassword: z.string().min(10).max(200) }).parse(request.body);
-    const result = await authService.changeOwnPassword(request.actor, body.currentPassword, body.newPassword, request.ip);
-    setSessionCookie(reply, result.token, config.appMode);
+    const remembered = request.sessionRemembered === true;
+    const result = await authService.changeOwnPassword(request.actor, body.currentPassword, body.newPassword, request.ip, remembered);
+    setSessionCookie(reply, result.token, config.appMode, remembered ? REMEMBER_SESSION_TTL_SECONDS : undefined);
     return { changed: true, actor: result.actor };
   });
   app.post("/api/v2/auth/logout", async (_request, reply) => {

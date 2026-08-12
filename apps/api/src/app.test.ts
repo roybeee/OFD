@@ -264,6 +264,40 @@ describe("OFD v2 API", () => {
     expect(gone.statusCode).toBe(404);
   });
 
+  it("자동 로그인 세션은 스텝업·비밀번호 변경으로 갱신돼도 30일 유지가 승계된다", async () => {
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent",
+      TEST_AUTH_REQUIRED: "true", SESSION_SECRET: "test-session-secret-with-at-least-32-characters" }, logger: false });
+    openApps.push(app);
+    const thirtyDays = `Max-Age=${30 * 24 * 60 * 60}`;
+
+    /* 자동 로그인 세션 → 스텝업 후에도 30일 쿠키 유지 */
+    const remembered = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "hq.master@ofd.local", password: "OFD-demo-2026!", rememberMe: true } });
+    expect(String(remembered.headers["set-cookie"])).toContain(thirtyDays);
+    const rememberedCookie = String(remembered.headers["set-cookie"] ?? "").split(";")[0];
+    const steppedUp = await app.inject({ method: "POST", url: "/api/v2/auth/step-up",
+      headers: { cookie: rememberedCookie }, payload: { password: "OFD-demo-2026!" } });
+    expect(steppedUp.statusCode).toBe(200);
+    expect(String(steppedUp.headers["set-cookie"])).toContain(thirtyDays);
+
+    /* 자동 로그인 세션에서 비밀번호를 바꿔도 30일 쿠키 유지 */
+    const stepped = String(steppedUp.headers["set-cookie"] ?? "").split(";")[0];
+    const changed = await app.inject({ method: "POST", url: "/api/v2/auth/change-password",
+      headers: { cookie: stepped }, payload: { currentPassword: "OFD-demo-2026!", newPassword: "Rotated-Pass-2026!" } });
+    expect(changed.statusCode).toBe(200);
+    expect(String(changed.headers["set-cookie"])).toContain(thirtyDays);
+
+    /* 일반 세션은 스텝업 후에도 브라우저 세션 쿠키(Max-Age 없음) 그대로 */
+    const plain = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "hq.finance@ofd.local", password: "OFD-demo-2026!" } });
+    expect(String(plain.headers["set-cookie"])).not.toContain("Max-Age");
+    const plainCookie = String(plain.headers["set-cookie"] ?? "").split(";")[0];
+    const plainStepUp = await app.inject({ method: "POST", url: "/api/v2/auth/step-up",
+      headers: { cookie: plainCookie }, payload: { password: "OFD-demo-2026!" } });
+    expect(plainStepUp.statusCode).toBe(200);
+    expect(String(plainStepUp.headers["set-cookie"])).not.toContain("Max-Age");
+  });
+
   it("자동 로그인(rememberMe) 선택 시 30일 유지 쿠키, 미선택 시 브라우저 종료로 만료되는 세션 쿠키를 발급한다", async () => {
     const app = await demoApp();
     const plain = await app.inject({ method: "POST", url: "/api/v2/auth/login",

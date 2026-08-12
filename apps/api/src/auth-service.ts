@@ -62,13 +62,12 @@ export class AuthService {
       throw new DomainError("INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다.", 401);
     }
     if (!actor.active) throw new DomainError("ACCOUNT_DISABLED", "비활성화된 계정입니다.", 403);
-    const token = await this.finishLogin(credential, actor, undefined,
-      rememberMe ? REMEMBER_SESSION_TTL_SECONDS : SESSION_TTL_SECONDS);
+    const token = await this.finishLogin(credential, actor, undefined, rememberMe);
     return { token, mfaRequired: false, mustChangePassword: Boolean(credential.mustChangePassword), actor: publicActor(actor) };
   }
 
   /** 중요 작업 본인 확인 — MFA 없이 비밀번호만 재확인해 최근 스텝업 세션을 발급한다. */
-  async stepUp(actor: Actor, password: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
+  async stepUp(actor: Actor, password: string, ip: string, remember = false): Promise<{ token: string; actor: PublicActor }> {
     this.checkRate(`step-up:${actor.id}:${ip}`);
     const credential = await this.credentialForActor(actor.id);
     this.assertCredentialAvailable(credential, actor);
@@ -83,11 +82,12 @@ export class AuthService {
       changes: [{ type: "credential", id: credential.id, expectedVersion: credential.version, value: updated }],
       audits: [audit(actor, "credential", credential.id, "auth.step_up_succeeded", undefined, undefined, { actorId: actor.id })],
     });
-    return { token: signSessionToken(this.payload(actor, "session", stepUpAt), this.secret), actor: publicActor(actor) };
+    return { token: signSessionToken(this.payload(actor, "session", stepUpAt, remember), this.secret), actor: publicActor(actor) };
   }
 
   /** POST /api/v2/auth/change-password — 본인 비밀번호 변경. 현재 비밀번호 확인 후 전 세션 폐기. */
-  async changeOwnPassword(actor: Actor, currentPassword: string, newPassword: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
+  async changeOwnPassword(actor: Actor, currentPassword: string, newPassword: string, ip: string,
+    remember = false): Promise<{ token: string; actor: PublicActor }> {
     this.checkRate(`change-password:${actor.id}:${ip}`);
     const credential = await this.credentialForActor(actor.id);
     this.assertCredentialAvailable(credential, actor);
@@ -111,7 +111,7 @@ export class AuthService {
       audits: [audit(actor, "credential", credential.id, "auth.password_changed", undefined, undefined, { actorId: actor.id })],
     });
     // 새 authVersion으로 세션을 즉시 재발급해 현재 사용자는 로그인 상태를 유지한다(다른 기기 세션만 폐기).
-    return { token: signSessionToken(this.payload(updatedActor, "session"), this.secret), actor: publicActor(updatedActor) };
+    return { token: signSessionToken(this.payload(updatedActor, "session", undefined, remember), this.secret), actor: publicActor(updatedActor) };
   }
 
   /** GET /api/v2/admin/actors response. No credential secret or password material is returned. */
@@ -281,8 +281,7 @@ export class AuthService {
     return { actor: adminActorSummary(updatedActor, updatedCredential) };
   }
 
-  private async finishLogin(credential: UserCredential, actor: Actor, mfaAt?: string,
-    expiresInSeconds = SESSION_TTL_SECONDS): Promise<string> {
+  private async finishLogin(credential: UserCredential, actor: Actor, mfaAt?: string, remember = false): Promise<string> {
     const now = new Date().toISOString();
     const updated: UserCredential = { ...credential, failedAttempts: 0, lastLoginAt: now, version: credential.version + 1 };
     delete updated.lockedUntil;
@@ -290,7 +289,7 @@ export class AuthService {
       changes: [{ type: "credential", id: credential.id, expectedVersion: credential.version, value: updated }],
       audits: [audit(actor, "credential", credential.id, "auth.login_succeeded", undefined, undefined, { actorId: actor.id })],
     });
-    return signSessionToken(this.payload(actor, "session", mfaAt, expiresInSeconds), this.secret);
+    return signSessionToken(this.payload(actor, "session", mfaAt, remember), this.secret);
   }
 
   private async recordFailure(credential: UserCredential, actor: Actor, failureAction = "auth.login_failed"): Promise<void> {
@@ -315,9 +314,10 @@ export class AuthService {
     throw new DomainError("AUTH_FAILURE_COUNT_BUSY", "로그인 실패 기록이 혼잡합니다. 잠시 후 다시 시도해 주세요.", 503);
   }
 
-  private payload(actor: Actor, purpose: SessionPayload["purpose"], mfaAt?: string, expiresInSeconds = 8 * 60 * 60): SessionPayload {
+  private payload(actor: Actor, purpose: SessionPayload["purpose"], mfaAt?: string, remember = false): SessionPayload {
+    const expiresInSeconds = remember ? REMEMBER_SESSION_TTL_SECONDS : SESSION_TTL_SECONDS;
     return { sub: actor.id, exp: Math.floor(Date.now() / 1_000) + expiresInSeconds, iss: "ofd-api", aud: "ofd-web",
-      sid: randomUUID(), ver: actor.authVersion, purpose, ...(mfaAt ? { mfaAt } : {}) };
+      sid: randomUUID(), ver: actor.authVersion, purpose, ...(mfaAt ? { mfaAt } : {}), ...(remember ? { rem: true as const } : {}) };
   }
 
   private checkRate(key: string): void {
