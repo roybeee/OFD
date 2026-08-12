@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   createNoticeV2, deleteNoticeV2, loadNaverMapKeyV2, loadNoticesV2, newIdempotencyKey,
   saveNaverMapKeyV2, updatePosStoreV2, type NoticeRow,
@@ -9,11 +9,12 @@ import type { BootstrapData, Toast } from '../types';
 
 /* ── 네이버 지도 최소 타입 (전역 스크립트 주입) ── */
 type NaverLatLng = { lat(): number; lng(): number };
-type NaverMarker = { setMap(map: unknown): void };
+type NaverMarkerIcon = { content: string; anchor?: unknown };
+type NaverMarker = { setMap(map: unknown): void; setIcon(icon: NaverMarkerIcon): void; setZIndex(value: number): void };
 type NaverMaps = {
   Map: new (el: HTMLElement, options: { center: NaverLatLng; zoom: number }) => unknown;
   LatLng: new (lat: number, lng: number) => NaverLatLng;
-  Marker: new (options: { position: NaverLatLng; map: unknown; title?: string }) => NaverMarker;
+  Marker: new (options: { position: NaverLatLng; map: unknown; title?: string; icon?: NaverMarkerIcon; zIndex?: number }) => NaverMarker;
   Polyline: new (options: { map: unknown; path: NaverLatLng[]; strokeColor?: string; strokeWeight?: number }) => NaverMarker;
   Event: { addListener(target: unknown, name: string, handler: () => void): void };
   Service: {
@@ -22,6 +23,22 @@ type NaverMaps = {
   };
 };
 const getNaverMaps = () => (window as unknown as { naver?: { maps?: NaverMaps } }).naver?.maps;
+
+/** 지도 핀 — 기존 가맹점은 파랑, 예비 출점 후보는 빨강. 선택되면 커지고 흰 테두리·그림자로 강조된다. */
+function pinIcon(kind: 'store' | 'candidate', selected: boolean): NaverMarkerIcon {
+  const fill = kind === 'candidate' ? '#e34948' : '#2a78d6';
+  const size = selected ? 40 : 30;
+  const ring = selected ? '<circle cx="12" cy="12" r="11" fill="none" stroke="#ffffff" stroke-width="3"/>' : '';
+  return {
+    content: `<div style="width:${size}px;height:${size}px;transform:translate(-50%,-100%);
+      filter:drop-shadow(0 ${selected ? 4 : 2}px ${selected ? 6 : 3}px rgba(0,0,0,${selected ? 0.45 : 0.3}))">
+      <svg viewBox="0 0 24 34" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M12 33C12 33 23 20.5 23 12A11 11 0 1 0 1 12c0 8.5 11 21 11 21z" fill="${fill}" stroke="#ffffff" stroke-width="${selected ? 2.5 : 1.5}"/>
+        ${ring}
+        <circle cx="12" cy="12" r="4.5" fill="#ffffff"/>
+      </svg></div>`,
+  };
+}
 
 /** V1 fmtPhone 이식 — 자릿수 기준 하이픈 자동 삽입 */
 export function formatPhone(digits: string): string {
@@ -80,10 +97,17 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<unknown>(null);
   const markerPositions = useRef(new Map<string, { lat: number; lng: number }>());
+  const markerRefs = useRef(new Map<string, NaverMarker>());
   const distanceLine = useRef<NaverMarker | null>(null);
   const [mapStatus, setMapStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'auth-error'>('idle');
   const [geocodeMisses, setGeocodeMisses] = useState<string[]>([]);
   const [selectedForDistance, setSelectedForDistance] = useState<string[]>([]);
+  /* 가맹 상담용 예비 출점 후보 — 지도에 빨간 핀으로 얹고 기존 매장과 거리를 잰다(저장하지 않음) */
+  const [candidateAddress, setCandidateAddress] = useState('');
+  const [candidateLabel, setCandidateLabel] = useState('');
+  const [candidates, setCandidates] = useState<Array<{ id: string; name: string; address: string }>>([]);
+  const [candidateBusy, setCandidateBusy] = useState(false);
+  const [candidateError, setCandidateError] = useState('');
 
   const geocodable = useMemo(() => stores.filter((store) => (store.roadAddress ?? '').trim().length > 0), [stores]);
 
@@ -113,7 +137,9 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
           if (status === maps.Service.Status.OK && first) {
             const position = { lat: Number(first.y), lng: Number(first.x) };
             markerPositions.current.set(store.id, position);
-            const marker = new maps.Marker({ position: new maps.LatLng(position.lat, position.lng), map, title: store.name });
+            const marker = new maps.Marker({ position: new maps.LatLng(position.lat, position.lng), map, title: store.name,
+              icon: pinIcon('store', false) });
+            markerRefs.current.set(store.id, marker);
             maps.Event.addListener(marker, 'click', () => toggleDistanceTarget(store.id));
           } else {
             misses.push(store.name);
@@ -137,11 +163,83 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapKey, geocodable.length]);
 
-  function toggleDistanceTarget(storeId: string) {
+  function toggleDistanceTarget(pointId: string) {
     setSelectedForDistance((current) => {
-      const next = current.includes(storeId) ? current.filter((id) => id !== storeId)
-        : current.length >= 2 ? [current[1]!, storeId] : [...current, storeId];
+      const next = current.includes(pointId) ? current.filter((id) => id !== pointId)
+        : current.length >= 2 ? [current[1]!, pointId] : [...current, pointId];
       drawDistance(next);
+      paintSelection(next);
+      return next;
+    });
+  }
+
+  /** 선택 상태를 핀 모양에 반영한다 — 선택된 핀은 커지고 흰 테두리가 생긴다. */
+  function paintSelection(selectedIds: string[]) {
+    for (const [id, marker] of markerRefs.current) {
+      const kind = id.startsWith('candidate:') ? 'candidate' : 'store';
+      const selected = selectedIds.includes(id);
+      marker.setIcon(pinIcon(kind, selected));
+      marker.setZIndex(selected ? 200 : kind === 'candidate' ? 100 : 50);
+    }
+  }
+
+  /** 예비 출점 후보 주소를 지오코딩해 빨간 핀으로 올린다(대장에 저장하지 않는 상담용 임시 표시). */
+  function addCandidate(event: FormEvent) {
+    event.preventDefault();
+    const address = candidateAddress.trim();
+    if (!address || candidateBusy) return;
+    const maps = getNaverMaps();
+    if (!maps?.Service || !mapInstance.current) { setCandidateError('지도가 아직 준비되지 않았습니다.'); return; }
+    setCandidateBusy(true);
+    setCandidateError('');
+    maps.Service.geocode({ query: address }, (status, response) => {
+      const first = response?.v2?.addresses?.[0];
+      if (status !== maps.Service.Status.OK || !first) {
+        setCandidateError('주소를 찾지 못했습니다. 도로명주소로 다시 입력해 주세요.');
+        setCandidateBusy(false);
+        return;
+      }
+      const id = `candidate:${Date.now()}`;
+      const name = candidateLabel.trim() || `예비 ${candidates.length + 1}`;
+      const position = { lat: Number(first.y), lng: Number(first.x) };
+      markerPositions.current.set(id, position);
+      const marker = new maps.Marker({ position: new maps.LatLng(position.lat, position.lng),
+        map: mapInstance.current, title: `${name} (예비)`, icon: pinIcon('candidate', false), zIndex: 100 });
+      markerRefs.current.set(id, marker);
+      maps.Event.addListener(marker, 'click', () => toggleDistanceTarget(id));
+      setCandidates((current) => [...current, { id, name, address }]);
+      setCandidateAddress('');
+      setCandidateLabel('');
+      setCandidateBusy(false);
+      /* 후보를 넣자마자 가장 가까운 기존 매장과의 거리를 바로 보여준다 */
+      const nearest = nearestStoreTo(position);
+      toggleDistanceTarget(id);
+      if (nearest) setTimeout(() => toggleDistanceTarget(nearest), 0);
+    });
+  }
+
+  /** 후보 지점에서 가장 가까운 기존 매장 id */
+  function nearestStoreTo(position: { lat: number; lng: number }): string | null {
+    let bestId: string | null = null;
+    let bestKm = Number.POSITIVE_INFINITY;
+    for (const store of stores) {
+      const target = markerPositions.current.get(store.id);
+      if (!target) continue;
+      const km = Number(haversineKm(position, target));
+      if (km < bestKm) { bestKm = km; bestId = store.id; }
+    }
+    return bestId;
+  }
+
+  function removeCandidate(id: string) {
+    markerRefs.current.get(id)?.setMap(null);
+    markerRefs.current.delete(id);
+    markerPositions.current.delete(id);
+    setCandidates((current) => current.filter((item) => item.id !== id));
+    setSelectedForDistance((current) => {
+      const next = current.filter((item) => item !== id);
+      drawDistance(next);
+      paintSelection(next);
       return next;
     });
   }
@@ -158,15 +256,19 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
     });
   }
 
+  const pointName = (id: string) => candidates.find((item) => item.id === id)?.name
+    ?? stores.find((store) => store.id === id)?.name ?? id;
+
   const distanceText = useMemo(() => {
     if (selectedForDistance.length !== 2) return '';
     const [aId, bId] = selectedForDistance;
     const a = markerPositions.current.get(aId!);
     const b = markerPositions.current.get(bId!);
     if (!a || !b) return '';
-    const name = (id: string) => stores.find((store) => store.id === id)?.name ?? id;
-    return `${name(aId!)} ↔ ${name(bId!)} 직선거리 ${haversineKm(a, b)}km`;
-  }, [selectedForDistance, stores]);
+    const mark = (id: string) => `${pointName(id)}${id.startsWith('candidate:') ? ' (예비)' : ''}`;
+    return `${mark(aId!)} ↔ ${mark(bId!)} 직선거리 ${haversineKm(a, b)}km`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedForDistance, stores, candidates]);
 
   /* ── 인라인 수정 ── */
   function startEdit(store: LedgerStore) { setEditingId(store.id); setDraft(draftFrom(store)); }
@@ -286,15 +388,52 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
         )}
 
       <section className="panel" aria-labelledby="stores-map-heading">
-        <div className="panel-heading"><div><h2 id="stores-map-heading">매장 지도</h2><p>도로명주소를 지오코딩해 표시합니다 · 마커 두 개를 누르면 직선거리를 계산합니다</p></div></div>
+        <div className="panel-heading"><div><h2 id="stores-map-heading">매장 지도 · 출점 거리 검토</h2><p>기존 매장은 파란 핀, 예비 출점 후보는 빨간 핀입니다 · 핀 두 개를 누르면 직선거리를 계산합니다</p></div></div>
         {!mapKey && <p className="panel-empty-copy">네이버 지도 키가 아직 없습니다. {isMaster ? '아래에서 키를 저장하면 지도가 나타납니다.' : '마스터 계정에서 지도 키를 설정할 수 있습니다.'}</p>}
         {mapKey && geocodable.length === 0 && <p className="panel-empty-copy">도로명주소가 입력된 매장이 없습니다. 대장에서 주소를 채우면 지도에 표시됩니다.</p>}
         {mapKey && geocodable.length > 0 && (
           <>
             {mapStatus === 'error' && <p className="panel-empty-copy">지도 스크립트를 불러오지 못했습니다. 네트워크 상태를 확인하고 새로고침해 주세요.</p>}
             {mapStatus === 'auth-error' && <p className="panel-empty-copy">지도 키 인증에 실패했습니다. 네이버 클라우드 콘솔에서 Maps Application의 Client ID(ncpKeyId)가 맞는지, Web 서비스 URL에 https://ofd-web.onrender.com 이 등록됐는지 확인해 주세요.</p>}
+            <form className="candidate-form" onSubmit={addCandidate}>
+              <label htmlFor="candidate-address">예비 출점 주소
+                <input id="candidate-address" value={candidateAddress} onChange={(event) => setCandidateAddress(event.target.value)}
+                  placeholder="예: 서울 강남구 테헤란로 123" disabled={candidateBusy} />
+              </label>
+              <label htmlFor="candidate-label">표시 이름 (선택)
+                <input id="candidate-label" value={candidateLabel} onChange={(event) => setCandidateLabel(event.target.value)}
+                  placeholder="예: 역삼 상담건" disabled={candidateBusy} />
+              </label>
+              <Button type="submit" disabled={candidateBusy || !candidateAddress.trim()}>{candidateBusy ? '찾는 중…' : '후보 추가'}</Button>
+            </form>
+            {candidateError && <p className="form-alert" role="alert">{candidateError}</p>}
             <div ref={mapContainer} style={{ width: '100%', height: 360, borderRadius: 13, overflow: 'hidden' }} aria-label="매장 위치 지도" role="application" />
-            {distanceText && <p className="muted" role="status">{distanceText}</p>}
+            <div className="map-legend">
+              <span><i className="pin-swatch store" aria-hidden="true" />기존 매장</span>
+              <span><i className="pin-swatch candidate" aria-hidden="true" />예비 출점 후보</span>
+              <span className="muted">핀을 누르면 선택 표시(큰 핀)되고, 두 개를 고르면 직선거리가 나옵니다</span>
+            </div>
+            {distanceText && <p className="distance-readout" role="status">{distanceText}</p>}
+            {selectedForDistance.length === 1 && (
+              <p className="muted" role="status">{pointName(selectedForDistance[0]!)} 선택됨 — 비교할 다른 핀을 눌러 주세요.</p>
+            )}
+            {candidates.length > 0 && (
+              <ul className="candidate-list">
+                {candidates.map((candidate) => {
+                  const selected = selectedForDistance.includes(candidate.id);
+                  return (
+                    <li key={candidate.id} className={selected ? 'selected' : ''}>
+                      <button type="button" className="candidate-pick" onClick={() => toggleDistanceTarget(candidate.id)}
+                        aria-pressed={selected}>
+                        <i className="pin-swatch candidate" aria-hidden="true" />
+                        <strong>{candidate.name}</strong><span className="muted">{candidate.address}</span>
+                      </button>
+                      <Button type="button" variant="ghost" onClick={() => removeCandidate(candidate.id)}>삭제</Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
             {geocodeMisses.length > 0 && <p className="muted">주소를 찾지 못한 매장: {geocodeMisses.join(', ')}</p>}
           </>
         )}

@@ -2079,3 +2079,24 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 .category-legend .muted { color: var(--muted-2); }
 .category-legend em { color: var(--ink); font-style: normal; font-weight: 750; font-variant-numeric: tabular-nums; }
 .category-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+
+/* 매장 지도 — 출점 거리 검토(기존 매장 파란 핀 / 예비 후보 빨간 핀) */
+.candidate-form { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr) auto; gap: 10px; align-items: end; margin-bottom: 11px; }
+.candidate-form label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 750; }
+.map-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 9px; font-size: 11.5px; font-weight: 700; }
+.map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.map-legend .muted { font-weight: 650; }
+.pin-swatch { width: 11px; height: 11px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 1.5px solid #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3); flex: none; }
+.pin-swatch.store { background: #2a78d6; }
+.pin-swatch.candidate { background: #e34948; }
+.distance-readout { margin-top: 9px; padding: 9px 12px; border: 1px solid var(--orange); border-radius: 10px;
+  background: var(--orange-pale); color: var(--ink); font-size: 13px; font-weight: 800; }
+.candidate-list { display: grid; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
+.candidate-list li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+.candidate-list li.selected { border-color: var(--orange); background: var(--orange-pale); }
+.candidate-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; border: 0;
+  background: none; text-align: left; font-size: 12.5px; cursor: pointer; }
+.candidate-pick strong { font-weight: 800; }
+.candidate-pick .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+@media (max-width: 720px) { .candidate-form { grid-template-columns: 1fr; } }
