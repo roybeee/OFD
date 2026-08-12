@@ -26,6 +26,8 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
   const [storeNames, setStoreNames] = useState<Record<string, string>>({});
   const [storeFilter, setStoreFilter] = useState<string[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  /** 드릴다운 초점: null이면 전체, 매장 ID면 그 매장 기준 품목 내역 */
+  const [drillStore, setDrillStore] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -137,12 +139,21 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
     notify(`매출현황_${from}_${to}.csv 내보내기 완료 (엑셀에서 열립니다)`, 'success');
   }
 
-  function toggleRow(bucket: string) {
-    setOpen((current) => {
-      const next = new Set(current);
-      if (next.has(bucket)) next.delete(bucket); else next.add(bucket);
-      return next;
-    });
+  /** 기간 행 또는 매출 숫자 클릭 → 품목별 판매 펼침. storeId를 주면 그 매장 기준으로 좁혀 본다.
+   *  같은 대상을 다시 누르면 접고, 다른 매장을 누르면 펼친 채로 초점만 바꾼다. */
+  function toggleRow(bucket: string, storeId: string | null = null) {
+    const alreadyOpen = open.has(bucket);
+    const sameFocus = drillStore === storeId;
+    if (alreadyOpen && sameFocus) {
+      setOpen((current) => {
+        const next = new Set(current);
+        next.delete(bucket);
+        return next;
+      });
+      return;
+    }
+    setDrillStore(storeId);
+    setOpen((current) => new Set(current).add(bucket));
   }
 
   function toggleStore(storeId: string) {
@@ -325,19 +336,52 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                         <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {row.label}
                       </button>
                     </th>
-                    {storeIds.map((storeId) => <td key={storeId} className="num">{cell(row.perStore[storeId])}</td>)}
-                    <td className="num strong">{won(metric === 'amount' ? row.total.amount : row.total.qty)}</td>
+                    {/* 매출 숫자를 눌러도 품목별 판매가 펼쳐진다 — 매장 셀은 그 매장 기준으로 좁혀 보여준다 */}
+                    {storeIds.map((storeId) => (
+                      <td key={storeId} className="num">
+                        <button type="button" className="cell-toggle" aria-expanded={expanded && drillStore === storeId}
+                          aria-label={`${row.label} ${label(storeId)} 품목별 판매 보기`}
+                          onClick={() => toggleRow(row.bucket, storeId)}>
+                          {cell(row.perStore[storeId])}
+                        </button>
+                      </td>
+                    ))}
+                    <td className="num strong">
+                      <button type="button" className="cell-toggle" aria-expanded={expanded && drillStore === null}
+                        aria-label={`${row.label} 전체 품목별 판매 보기`}
+                        onClick={() => toggleRow(row.bucket, null)}>
+                        {won(metric === 'amount' ? row.total.amount : row.total.qty)}
+                      </button>
+                    </td>
                   </tr>,
-                  expanded && (
+                  expanded && (() => {
+                    /* 매장 셀을 눌렀으면 그 매장 판매만, 합계·기간을 눌렀으면 전체를 보여준다 */
+                    const focusStore = drillStore && storeIds.includes(drillStore) ? drillStore : null;
+                    const mixRows = (focusStore
+                      ? row.mix
+                        .map((mix) => {
+                          const store = mix.stores.find((item) => item.storeId === focusStore);
+                          return store ? { ...mix, qty: store.qty, amount: store.amount } : null;
+                        })
+                        .filter((mix): mix is NonNullable<typeof mix> => mix !== null)
+                        .sort((a, b) => b.amount - a.amount)
+                      : row.mix);
+                    const scopeQty = focusStore ? (row.perStore[focusStore]?.qty ?? 0) : row.total.qty;
+                    const scopeAmount = focusStore ? (row.perStore[focusStore]?.amount ?? 0) : row.total.amount;
+                    const showStoreColumns = !focusStore && storeIds.length > 1;
+                    return (
                     <tr key={`${row.bucket}-mix`} className="row-detail">
                       <td colSpan={storeIds.length + 2}>
                         <div className="drilldown">
-                          <p className="drilldown-head">{row.label} 품목별 판매 — {row.mix.length}개 품목 · {won(row.total.qty)}개 / {won(row.total.amount)}원</p>
+                          <p className="drilldown-head">
+                            {row.label}{focusStore ? ` · ${label(focusStore)}` : ''} 품목별 판매 — {mixRows.length}개 품목 · {won(scopeQty)}개 / {won(scopeAmount)}원
+                            {focusStore && <button type="button" className="drilldown-scope" onClick={() => toggleRow(row.bucket, null)}>전체 보기</button>}
+                          </p>
                           <table className="data-table compact">
                             <thead>
                               <tr>
                                 <th scope="col">품목</th>
-                                {storeIds.length > 1 && storeIds.map((storeId) => <th key={storeId} scope="col" className="num">{label(storeId)}</th>)}
+                                {showStoreColumns && storeIds.map((storeId) => <th key={storeId} scope="col" className="num">{label(storeId)}</th>)}
                                 <th scope="col" className="num">단가</th>
                                 <th scope="col" className="num">수량</th>
                                 <th scope="col" className="num">매출</th>
@@ -345,17 +389,17 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                               </tr>
                             </thead>
                             <tbody>
-                              {row.mix.map((mix) => (
+                              {mixRows.map((mix) => (
                                 <tr key={mix.key}>
                                   <th scope="row">{mix.name}</th>
-                                  {storeIds.length > 1 && storeIds.map((storeId) => {
+                                  {showStoreColumns && storeIds.map((storeId) => {
                                     const store = mix.stores.find((item) => item.storeId === storeId);
                                     return <td key={storeId} className="num muted">{store ? won(metric === 'amount' ? store.amount : store.qty) : '–'}</td>;
                                   })}
                                   <td className="num muted">{mix.qty > 0 ? `${won(Math.round(mix.amount / mix.qty))}원` : '–'}</td>
                                   <td className="num">{won(mix.qty)}</td>
                                   <td className="num strong">{won(mix.amount)}</td>
-                                  <td className="num muted">{row.total.amount ? ((mix.amount / row.total.amount) * 100).toFixed(1) : '0.0'}%</td>
+                                  <td className="num muted">{scopeAmount ? ((mix.amount / scopeAmount) * 100).toFixed(1) : '0.0'}%</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -363,7 +407,8 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                         </div>
                       </td>
                     </tr>
-                  ),
+                    );
+                  })(),
                 ];
               })}
             </tbody>

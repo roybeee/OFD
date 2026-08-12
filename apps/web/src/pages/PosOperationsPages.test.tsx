@@ -146,6 +146,39 @@ describe('POS 현장 운영 화면', () => {
     expect(captured[1]?.body).toMatchObject({ storeId: 'store-9', merchantId: '777', accessKey: 'AK', secretKey: 'SK' });
   });
 
+  it('매출현황: 매출 숫자를 클릭해도 품목별 판매가 열리고 매장 셀은 그 매장만 보여준다', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/pos/report')) return json(REPORT);
+      if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await render(<HqSalesPage data={data} notify={() => {}} />);
+    expect(container.textContent).not.toContain('우유크림도넛');
+
+    /* 합계(32,400) 셀 클릭 → 전체 품목 내역이 열린다 */
+    const totalCell = [...container.querySelectorAll('button.cell-toggle')].find((node) => node.textContent?.includes('32,400'))!;
+    await act(async () => { (totalCell as HTMLButtonElement).click(); });
+    expect(container.textContent).toContain('우유크림도넛');
+    expect(container.textContent).toContain('미매칭(기타)');
+
+    /* 독산점(store-2) 셀 클릭 → 그 매장 판매만: 미매칭(store-1 전용)은 사라진다 */
+    const storeCell = [...container.querySelectorAll('button.cell-toggle')].find((node) => node.textContent?.trim() === '8,400')!;
+    await act(async () => { (storeCell as HTMLButtonElement).click(); });
+    const drill = container.querySelector('.drilldown')!;
+    expect(drill.textContent).toContain('독산점');
+    expect(drill.textContent).toContain('우유크림도넛');
+    expect(drill.textContent).not.toContain('미매칭(기타)');
+    expect(drill.textContent).toContain('전체 보기');
+
+    /* 같은 셀을 다시 누르면 접힌다 */
+    const sameCell = [...container.querySelectorAll('button.cell-toggle')].find((node) => node.textContent?.trim() === '8,400')!;
+    await act(async () => { (sameCell as HTMLButtonElement).click(); });
+    expect(container.querySelector('.drilldown')).toBeNull();
+  });
+
   it('POS 연동: 웹훅으로 자동 수집된 merchantId 칩을 클릭하면 입력칸에 채워진다', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

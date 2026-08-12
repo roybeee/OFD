@@ -2055,3 +2055,12 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 .account-detail-section h3 { font-size: 13.5px; font-weight: 800; margin-bottom: 8px; }
 .account-detail-section .detail-field { display: grid; gap: 7px; margin-bottom: 10px; color: var(--muted); font-size: 11px; font-weight: 750; }
 .account-detail-section .field-hint { margin-top: 8px; }
+
+/* 매출현황 — 매출 숫자 클릭으로 품목별 판매 펼치기 */
+.cell-toggle { padding: 2px 4px; margin: -2px -4px; border: 0; border-radius: 6px; background: none;
+  color: inherit; font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.cell-toggle:hover { background: var(--orange-soft); color: var(--orange-dark); }
+.cell-toggle[aria-expanded='true'] { background: var(--orange-soft); color: var(--orange-dark); font-weight: 800; }
+.drilldown-scope { margin-left: 8px; padding: 1px 8px; border: 1px solid var(--line-strong); border-radius: 999px;
+  background: white; color: var(--muted); font-size: 10px; font-weight: 750; cursor: pointer; }
+.drilldown-scope:hover { border-color: var(--orange); color: var(--orange-dark); }
