@@ -84,6 +84,20 @@ describe("OFD v2 API", () => {
     expect((await app.inject({ method: "DELETE", url: `/api/v2/leads/${leadId}`, headers: master })).statusCode).toBe(404);
   });
 
+  it("매출현황 매장 등록은 마스터만 가능하고 store 스냅샷에 자기 스코프를 남긴다", async () => {
+    const app = await demoApp();
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+    /* aggregate_store_scope_required 회귀 — storeId 스코프 없이 commit하면 memory/postgres 모두 500이 난다 */
+    const created = await app.inject({ method: "POST", url: "/api/v2/pos/stores", headers: master,
+      payload: { name: "수성점", storeKind: "직영", billingCycle: "monthly", paymentMethod: "monthly_credit", notificationPhone: "010-7191-5280" } });
+    expect(created.statusCode).toBe(201);
+    const storeId = (created.json() as { store: { id: string } }).store.id;
+    const bootstrap = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: master });
+    expect((bootstrap.json() as { stores: Array<{ id: string }> }).stores.some((store) => store.id === storeId)).toBe(true);
+    expect((await app.inject({ method: "POST", url: "/api/v2/pos/stores",
+      headers: { "x-demo-actor-id": DEMO_IDS.owner }, payload: { name: "무단점" } })).statusCode).toBe(403);
+  });
+
   it("매장 대장 수정은 변경 항목만 감사에 남기고 버전 충돌을 막는다", async () => {
     const app = await demoApp();
     const master = { "x-demo-actor-id": DEMO_IDS.master };

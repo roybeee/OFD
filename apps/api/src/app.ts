@@ -403,7 +403,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       ...(body.storeKind === "직영" || body.storeKind === "가맹" ? { storeKind: body.storeKind } : {}),
     };
     await repository.commit({
-      changes: [{ type: "store", id: store.id, expectedVersion: null, value: store }],
+      /* store 스냅샷은 자기 자신을 스코프로 갖는다 — aggregate_store_scope_required가 store_id NULL을 거부 */
+      changes: [{ type: "store", id: store.id, storeId: store.id, expectedVersion: null, value: store }],
       audits: [posAudit(request.actor as PosActor, "system", store.id, "store.created", undefined, undefined, { code, name })],
     });
     reply.code(201);
@@ -744,7 +745,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (typeof body.active === "boolean" && body.active !== current.active) { next.active = body.active; changed.active = body.active; }
     if (Object.keys(changed).length === 0) return { store: current, changed: [] };
     await repository.commit({
-      changes: [{ type: "store", id, expectedVersion, value: next }],
+      changes: [{ type: "store", id, storeId: id, expectedVersion, value: next }],
       audits: [posAudit(request.actor as PosActor, "store", id, "store.updated", id, undefined, undefined,
         { changed: Object.keys(changed), values: changed })],
     });
@@ -844,7 +845,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       storeId = store.id;
       audits.push(posAudit(request.actor as PosActor, "store", store.id, "가맹점 오픈 등록", store.id, undefined, undefined,
         { leadId: id, code, name }));
-      await repository.commit({ changes: [{ type: "store", id: store.id, expectedVersion: null, value: store }], audits });
+      await repository.commit({ changes: [{ type: "store", id: store.id, storeId: store.id, expectedVersion: null, value: store }], audits });
       audits.length = 0;
     }
     const updated = await fieldStore.setLeadStage(id, stage, flag, storeId);

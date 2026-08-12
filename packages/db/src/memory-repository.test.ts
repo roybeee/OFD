@@ -44,7 +44,7 @@ test("도메인 저장 직후 장애가 나면 idempotency 예약과 도메인 �
   const repository = new MemoryRepository();
   await assert.rejects(repository.transaction(async (scoped) => {
     await scoped.reserveIdempotency("actor-1", "request-key", "hash-1", new Date(Date.now() + 60_000).toISOString());
-    await scoped.commit({ changes: [{ type: "order", id: "o-crash", expectedVersion: null, value: { id: "o-crash", version: 1 } }] });
+    await scoped.commit({ changes: [{ type: "order", id: "o-crash", storeId: "store-1", expectedVersion: null, value: { id: "o-crash", version: 1 } }] });
     throw new Error("simulated crash");
   }), /simulated crash/);
   assert.equal(await repository.get("order", "o-crash"), undefined);
@@ -53,7 +53,7 @@ test("도메인 저장 직후 장애가 나면 idempotency 예약과 도메인 �
   await repository.transaction(async (scoped) => {
     const existing = await scoped.reserveIdempotency("actor-1", "request-key", "hash-1", new Date(Date.now() + 60_000).toISOString());
     assert.equal(existing, undefined);
-    await scoped.commit({ changes: [{ type: "order", id: "o-crash", expectedVersion: null, value: { id: "o-crash", version: 1 } }] });
+    await scoped.commit({ changes: [{ type: "order", id: "o-crash", storeId: "store-1", expectedVersion: null, value: { id: "o-crash", version: 1 } }] });
     await scoped.saveIdempotency({ actorId: "actor-1", key: "request-key", requestHash: "hash-1", statusCode: 201,
       response: { id: "o-crash" }, expiresAt: new Date(Date.now() + 60_000).toISOString() });
   });
@@ -66,30 +66,30 @@ test("도메인 저장 직후 장애가 나면 idempotency 예약과 도메인 �
 test("order당 shipment, receipt당 settlement, invoice 생성 그룹·파트 business key를 경쟁 안전하게 선점한다", async () => {
   const repository = new MemoryRepository();
   await repository.commit({ changes: [
-    { type: "shipment", id: "sh-1", expectedVersion: null, value: { id: "sh-1", orderId: "order-1", version: 1 } },
-    { type: "settlement", id: "set-1", expectedVersion: null, value: { id: "set-1", storeId: "store-1", kind: "monthly", periodStart: "2026-07-01", periodEnd: "2026-07-31", receiptIds: ["receipt-1"], version: 1 } },
-    { type: "tax_invoice", id: "inv-1", expectedVersion: null, value: {
+    { type: "shipment", id: "sh-1", storeId: "store-1", expectedVersion: null, value: { id: "sh-1", orderId: "order-1", version: 1 } },
+    { type: "settlement", id: "set-1", storeId: "store-1", expectedVersion: null, value: { id: "set-1", storeId: "store-1", kind: "monthly", periodStart: "2026-07-01", periodEnd: "2026-07-31", receiptIds: ["receipt-1"], version: 1 } },
+    { type: "tax_invoice", id: "inv-1", storeId: "store-1", expectedVersion: null, value: {
       id: "inv-1", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 1, issueType: "normal", version: 1,
     } },
   ] });
   await assert.rejects(repository.commit({ changes: [
-    { type: "shipment", id: "sh-2", expectedVersion: null, value: { id: "sh-2", orderId: "order-1", version: 1 } },
+    { type: "shipment", id: "sh-2", storeId: "store-1", expectedVersion: null, value: { id: "sh-2", orderId: "order-1", version: 1 } },
   ] }), /중복 생성/);
   await assert.rejects(repository.commit({ changes: [
-    { type: "settlement", id: "set-2", expectedVersion: null, value: { id: "set-2", storeId: "store-1", kind: "monthly", periodStart: "2026-08-01", periodEnd: "2026-08-31", receiptIds: ["receipt-1"], version: 1 } },
+    { type: "settlement", id: "set-2", storeId: "store-1", expectedVersion: null, value: { id: "set-2", storeId: "store-1", kind: "monthly", periodStart: "2026-08-01", periodEnd: "2026-08-31", receiptIds: ["receipt-1"], version: 1 } },
   ] }), /중복 생성/);
   await assert.rejects(repository.commit({ changes: [
-    { type: "tax_invoice", id: "inv-2", expectedVersion: null, value: {
+    { type: "tax_invoice", id: "inv-2", storeId: "store-1", expectedVersion: null, value: {
       id: "inv-2", settlementId: "set-1", invoiceGroupId: "group-2", partNumber: 1, issueType: "normal", version: 1,
     } },
   ] }), /중복 생성/);
   await repository.commit({ changes: [
-    { type: "tax_invoice", id: "inv-3", expectedVersion: null, value: {
+    { type: "tax_invoice", id: "inv-3", storeId: "store-1", expectedVersion: null, value: {
       id: "inv-3", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 2, issueType: "normal", version: 1,
     } },
   ] });
   await assert.rejects(repository.commit({ changes: [
-    { type: "tax_invoice", id: "inv-4", expectedVersion: null, value: {
+    { type: "tax_invoice", id: "inv-4", storeId: "store-1", expectedVersion: null, value: {
       id: "inv-4", settlementId: "set-1", invoiceGroupId: "group-1", partNumber: 2, issueType: "normal", version: 1,
     } },
   ] }), /중복 생성/);
@@ -101,7 +101,7 @@ test("exclusiveTransaction은 동시 호출을 직렬화하고 잠금 획득 후
   const increment = () => repository.exclusiveTransaction("counter", async (scoped) => {
     const current = (await scoped.get<{ id: string; count: number; version: number }>("admin_invariant", "counter"))!;
     await new Promise((resolve) => setTimeout(resolve, 5));
-    await scoped.commit({ changes: [{ type: "admin_invariant", id: current.id, expectedVersion: current.version,
+    await scoped.commit({ changes: [{ type: "admin_invariant", id: current.id, storeId: "__system__", expectedVersion: current.version,
       value: { ...current, count: current.count + 1, version: current.version + 1 } }] });
   });
   await Promise.all([increment(), increment()]);
@@ -172,7 +172,7 @@ test("감사 검색은 키워드·KST 일자·시스템 제외·페이지네이�
   const repository = new MemoryRepository();
   const push = async (action: string, actorRole: string, occurredAt: string, storeId?: string) => {
     await repository.commit({
-      changes: [{ type: "store", id: `s-${action}-${occurredAt}`, expectedVersion: null, value: { id: "x", version: 1 } }],
+      changes: [{ type: "store", id: `s-${action}-${occurredAt}`, storeId: `s-${action}-${occurredAt}`, expectedVersion: null, value: { id: "x", version: 1 } }],
       audits: [{ id: `a-${action}-${occurredAt}`, aggregateType: "store", aggregateId: "x", action,
         actorId: actorRole === "system" ? "scheduler" : "master-1", actorRole: actorRole as "hq_master",
         ...(storeId ? { storeId } : {}), metadata: { note: action }, occurredAt }],

@@ -11,6 +11,9 @@ interface Entry {
   value: unknown;
 }
 
+/* 001_v2_core.sql aggregate_store_scope_required의 예외 목록과 반드시 일치해야 한다 */
+const STORE_SCOPE_EXEMPT = new Set<AggregateType>(["actor", "credential", "legal_entity", "product", "bank_transaction"]);
+
 const keyOf = (type: AggregateType, id: string): string => `${type}:${id}`;
 const clone = <T>(value: T): T => structuredClone(value);
 const entryOf = (version: number, value: unknown, storeId?: string): Entry => ({
@@ -88,6 +91,7 @@ export class MemoryRepository implements StateRepository {
     if (change.expectedVersion === null) {
       if (existing) throw new DomainError("AGGREGATE_EXISTS", "이미 생성된 데이터입니다.", 409);
       const version = this.valueVersion(change.value, 1);
+      this.assertStoreScope(change.type, change.storeId);
       target.set(key, entryOf(version, change.value, change.storeId));
       return;
     }
@@ -98,7 +102,15 @@ export class MemoryRepository implements StateRepository {
     if (nextVersion !== change.expectedVersion + 1) {
       throw new DomainError("INVALID_NEXT_VERSION", "저장할 버전이 예상 버전보다 정확히 1 커야 합니다.", 500);
     }
-    target.set(key, entryOf(nextVersion, change.value, change.storeId ?? existing.storeId));
+    const nextStoreId = change.storeId ?? existing.storeId;
+    this.assertStoreScope(change.type, nextStoreId);
+    target.set(key, entryOf(nextVersion, change.value, nextStoreId));
+  }
+
+  /* postgres의 aggregate_store_scope_required CHECK와 동일 계약 — 메모리 모드 테스트가 프로덕션 제약 위반을 미리 잡는다 */
+  private assertStoreScope(type: AggregateType, storeId: string | undefined): void {
+    if (STORE_SCOPE_EXEMPT.has(type) || storeId) return;
+    throw new DomainError("STORE_SCOPE_REQUIRED", `${type} 저장에는 storeId 스코프가 필요합니다(aggregate_store_scope_required).`, 500);
   }
 
   private valueVersion(value: unknown, fallback: number): number {

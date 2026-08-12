@@ -1953,3 +1953,68 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
   border-radius: 12px; background: rgba(232,89,12,.06); font-size: 12.5px; }
 .notice-banner strong { font-weight: 800; }
 .notice-banner .muted { font-size: 11.5px; }
+
+/* ═══════════ 전역 UI 통일 레이어 ═══════════
+ * 페이지·컴포넌트마다 제각각이던 입력 칸 크기와 글씨 크기를 단일 토큰으로 강제한다.
+ * :root 접두로 특이성(0-2-1)을 확보해 앞선 개별 규칙(.form-grid input 등)을 이기고,
+ * 크기는 전부 변수로 흘려 모바일에서는 토큰 교체만으로 확대된다.
+ * 예외(래퍼가 테두리를 그리는 복합 필드, 표 안 인라인 편집기)는 블록 하단에서 재선언한다. */
+:root {
+  --control-h: 44px;
+  --control-font: 13px;
+  --control-pad-x: 12px;
+  --control-radius: 9px;
+  --label-font: 12.5px;
+}
+
+:root input[type='text'], :root input[type='password'], :root input[type='email'],
+:root input[type='number'], :root input[type='tel'], :root input[type='search'],
+:root input[type='url'], :root input[type='date'], :root input[type='time'],
+:root input[type='month'], :root select, :root textarea {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--control-radius);
+  background: white;
+  color: var(--ink);
+  font: 500 var(--control-font)/1.45 var(--font-sans);
+}
+:root textarea { min-height: 92px; padding: 10px var(--control-pad-x); resize: vertical; }
+
+/* 폼 라벨·페이지 제목 타이포 통일 */
+:root .form-grid label, :root .filter-date, :root .compact-select,
+:root .account-create-panel label, :root .note-field, :root .settlement-draft-form label {
+  font-size: var(--label-font); font-weight: 750;
+}
+:root .page-head h1, :root .page-heading h1, :root .driver-greeting h1 {
+  font-size: clamp(24px, 2.2vw, 31px); line-height: 1.2; font-weight: 800;
+}
+:root .page-head p, :root .page-heading > div:first-child > p:last-child { font-size: 13px; }
+:root .page-head h2, :root .panel > h2 { font-size: 15px; font-weight: 800; }
+:root .button { font-size: 13px; }
+
+/* 예외 ① 래퍼가 테두리·높이를 그리는 복합 필드 — 내부 입력은 민무늬 유지 */
+:root .search-field input, :root .date-picker input {
+  width: 190px; min-height: 40px; padding: 0; border: 0; border-radius: 0; background: transparent;
+  font-size: var(--control-font);
+}
+/* 예외 ② 커스텀 화살표 셀렉트 — svg 오버레이 자리 확보 */
+:root .driver-select select { padding-right: 28px; }
+/* 예외 ③ 인라인·내용 폭 셀렉트 — 전체 폭으로 늘리지 않는다 */
+:root .compact-select select, :root .compact-select input, :root .inline-actions select { width: auto; }
+:root .inline-actions select { max-width: 260px; }
+/* 예외 ④ 표 안 인라인 편집기 — 행 높이를 지키되 서체는 동일 토큰 사용 */
+:root .data-table input, :root .data-table select {
+  width: auto; max-width: 190px; min-height: 38px; padding: 0 9px; border-radius: 8px;
+}
+
+/* 모바일: 토큰만 키워 iOS 자동 확대(16px 미만) 방지 */
+@media (max-width: 720px) {
+  :root {
+    --control-h: 48px;
+    --control-font: 16px;
+    --control-pad-x: 13px;
+    --label-font: 13.5px;
+  }
+}
