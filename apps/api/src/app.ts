@@ -541,10 +541,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const query = request.query as { from?: string; to?: string };
     const to = dateOnly.test(query.to ?? "") ? query.to! : seoulToday();
     const from = dateOnly.test(query.from ?? "") ? query.from! : to;
-    const [products, deviations] = await Promise.all([
-      posStore.listProducts(), posStore.priceDeviations(from, to, 3),
+    const [products, deviations, totals] = await Promise.all([
+      posStore.listProducts(), posStore.priceDeviations(from, to, 3), posStore.productTotals(from, to),
     ]);
-    return { products, deviations, from, to };
+    /* 상품×매장 실판매가 — 기간 내 매출÷수량(가중 평균). 상품 상세에서 매장별 현재 판매가로 쓴다. */
+    const storePrices = totals.map(({ productId, storeId, qty, amount }) => ({
+      productId, storeId, qty, amount, avgPrice: qty > 0 ? Math.round(amount / qty) : null,
+    }));
+    return { products, deviations, storePrices, from, to };
   });
 
   app.post("/api/v2/pos/products", async (request, reply) => {

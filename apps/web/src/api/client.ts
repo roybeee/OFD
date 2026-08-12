@@ -480,8 +480,9 @@ export function loadMonthlySettlementV2(month: string) {
 export function loadPosReport(from: string, to: string, unit: PosReportUnit, stores: string[] = [], products: string[] = []) {
   return getV2<PosReportResult>(`/pos/report?${query({ from, to, unit, stores: stores.join(',') || undefined, products: products.join(',') || undefined })}`);
 }
+export type PosStorePrice = { productId: string; storeId: string; qty: number; amount: number; avgPrice: number | null };
 export function loadPosProducts(from: string, to: string) {
-  return getV2<{ products: PosProduct[]; deviations: PosDeviation[] }>(`/pos/products?${query({ from, to })}`);
+  return getV2<{ products: PosProduct[]; deviations: PosDeviation[]; storePrices?: PosStorePrice[] }>(`/pos/products?${query({ from, to })}`);
 }
 export function loadPosUnmatched(from: string, to: string) {
   return getV2<{ items: PosUnmatched[] }>(`/pos/unmatched?${query({ from, to })}`);

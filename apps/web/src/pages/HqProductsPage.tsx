@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   createPosAliasV2, createPosProductV2, loadPosLinks, loadPosProducts, loadPosUnmatched, loadPosWaste,
-  newIdempotencyKey, updatePosProductV2, type PosDeviation, type PosProduct, type PosUnmatched, type PosWasteResult,
+  newIdempotencyKey, updatePosProductV2, type PosDeviation, type PosProduct, type PosStorePrice, type PosUnmatched, type PosWasteResult,
 } from '../api/client';
 import { V1_CATALOG } from '../data/v1-catalog';
 import { Button, EmptyState, MetricCard } from '../components/ui';
@@ -23,6 +23,9 @@ export function HqProductsPage({ data, notify }: { data: BootstrapData; notify: 
   const [from, setFrom] = useState(() => shiftDays(seoulToday(), -29));
   const [products, setProducts] = useState<PosProduct[]>([]);
   const [deviations, setDeviations] = useState<PosDeviation[]>([]);
+  const [storePrices, setStorePrices] = useState<PosStorePrice[]>([]);
+  /* 상품 상세(매장별 현재 판매가) 펼침 대상 */
+  const [openProduct, setOpenProduct] = useState<string | null>(null);
   const [unmatched, setUnmatched] = useState<PosUnmatched[]>([]);
   const [storeNames, setStoreNames] = useState<Record<string, string>>({});
   const [waste, setWaste] = useState<PosWasteResult | null>(null);
@@ -42,6 +45,7 @@ export function HqProductsPage({ data, notify }: { data: BootstrapData; notify: 
       ]);
       setProducts(productResult.products);
       setDeviations(productResult.deviations);
+      setStorePrices(productResult.storePrices ?? []);
       setUnmatched(unmatchedResult.items);
       setStoreNames(Object.fromEntries(links.links.map((link) => [link.storeId, link.merchantId])));
       if (!wasteStore && links.links[0]) setWasteStore(links.links[0].storeId);
@@ -309,9 +313,18 @@ export function HqProductsPage({ data, notify }: { data: BootstrapData; notify: 
                 </tr>
               </thead>
               <tbody>
-                {shown.map((product) => (
-                  <tr key={product.id}>
-                    <th scope="row">{product.name}</th>
+                {shown.flatMap((product) => {
+                  const expanded = openProduct === product.id;
+                  const rows = storePrices.filter((price) => price.productId === product.id)
+                    .sort((a, b) => (b.avgPrice ?? 0) - (a.avgPrice ?? 0));
+                  return [
+                  <tr key={product.id} className={expanded ? 'row-clickable row-open' : 'row-clickable'}>
+                    <th scope="row">
+                      <button type="button" className="row-toggle" aria-expanded={expanded}
+                        onClick={() => setOpenProduct(expanded ? null : product.id)}>
+                        <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {product.name}
+                      </button>
+                    </th>
                     <td>
                       <select aria-label={`${product.name} 카테고리`} value={product.category} disabled={pending === product.id}
                         onChange={(event) => void patchProduct(product, { category: event.target.value })}>
@@ -336,8 +349,52 @@ export function HqProductsPage({ data, notify }: { data: BootstrapData; notify: 
                           void patchProduct(product, { consumerPrice: next });
                         }} />
                     </td>
-                  </tr>
-                ))}
+                  </tr>,
+                  expanded && (
+                    <tr key={`${product.id}-stores`} className="row-detail">
+                      <td colSpan={4}>
+                        <div className="drilldown">
+                          <p className="drilldown-head">{product.name} — 매장별 현재 판매가 ({from} ~ {to} 실판매 평균)</p>
+                          {rows.length === 0 ? (
+                            <p className="muted">이 기간에 판매 기록이 없습니다. POS 동기화 후 다시 확인해 주세요.</p>
+                          ) : (
+                            <table className="data-table compact">
+                              <thead>
+                                <tr>
+                                  <th scope="col">매장</th>
+                                  <th scope="col" className="num">현재 판매가</th>
+                                  <th scope="col" className="num">등록 소비자가</th>
+                                  <th scope="col" className="num">차이</th>
+                                  <th scope="col" className="num">수량</th>
+                                  <th scope="col" className="num">매출</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rows.map((price) => {
+                                  const registered = product.consumerPrice;
+                                  const gap = registered && price.avgPrice ? Math.round(((price.avgPrice - registered) / registered) * 1000) / 10 : null;
+                                  return (
+                                    <tr key={price.storeId}>
+                                      <th scope="row">{label(price.storeId)}</th>
+                                      <td className="num strong">{price.avgPrice === null ? '–' : `${won(price.avgPrice)}원`}</td>
+                                      <td className="num muted">{registered ? `${won(registered)}원` : '미등록'}</td>
+                                      <td className={gap === null ? 'num muted' : gap > 0 ? 'num strong tone-red' : gap < 0 ? 'num strong tone-green' : 'num muted'}>
+                                        {gap === null ? '–' : `${gap > 0 ? '+' : ''}${gap}%`}
+                                      </td>
+                                      <td className="num">{won(price.qty)}</td>
+                                      <td className="num muted">{won(price.amount)}원</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ),
+                  ];
+                })}
               </tbody>
             </table>
           </div>

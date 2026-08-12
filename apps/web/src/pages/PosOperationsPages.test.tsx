@@ -345,6 +345,51 @@ describe('POS 현장 운영 화면', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('V1 품목 40종 등록 완료'), 'success');
   });
 
+  it('상품 관리: 상품을 클릭하면 매장별 현재 판매가가 펼쳐진다', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/pos/products')) {
+        return json({
+          products: [{ id: 'p1', sku: 'S1', name: '우유크림도넛', category: '도넛', storeId: null, consumerPrice: 4_200 }],
+          deviations: [],
+          storePrices: [
+            { productId: 'p1', storeId: 'store-1', qty: 10, amount: 42_000, avgPrice: 4_200 },
+            { productId: 'p1', storeId: 'store-2', qty: 5, amount: 23_500, avgPrice: 4_700 },
+          ],
+        });
+      }
+      if (url.includes('/pos/unmatched')) return json({ items: [] });
+      if (url.includes('/pos/waste')) return json({ storeId: 'store-1', date: '2026-08-04', hasReceipt: false, hasPos: false,
+        items: [], totals: { received: null, sold: 0, waste: null, wasteRatePct: null, lossAmount: null } });
+      if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await render(<HqProductsPage data={data} notify={() => {}} />);
+    for (let attempt = 0; attempt < 20 && !container.textContent?.includes('우유크림도넛'); attempt += 1) {
+      await act(async () => { await Promise.resolve(); });
+    }
+    /* 펼치기 전에는 매장별 판매가가 보이지 않는다 */
+    expect(container.querySelector('.row-detail')).toBeNull();
+
+    const toggle = [...container.querySelectorAll('button.row-toggle')].find((node) => node.textContent?.includes('우유크림도넛'))!;
+    await act(async () => { (toggle as HTMLButtonElement).click(); });
+
+    const detail = container.querySelector('.row-detail')!;
+    expect(detail.textContent).toContain('매장별 현재 판매가');
+    expect(detail.textContent).toContain('맵달서울점');
+    expect(detail.textContent).toContain('4,200원');
+    expect(detail.textContent).toContain('독산점');
+    expect(detail.textContent).toContain('4,700원');
+    expect(detail.textContent).toContain('+11.9%'); /* 4,700 vs 등록 4,200 */
+
+    /* 다시 누르면 접힌다 */
+    const reopened = [...container.querySelectorAll('button.row-toggle')].find((node) => node.textContent?.includes('우유크림도넛'))!;
+    await act(async () => { (reopened as HTMLButtonElement).click(); });
+    expect(container.querySelector('.row-detail')).toBeNull();
+  });
+
   it('상품 관리: 입고가 있으면 폐기율과 로스를 보여준다', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
