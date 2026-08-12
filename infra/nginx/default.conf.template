@@ -10,7 +10,7 @@ server {
   add_header Permissions-Policy "camera=(self), geolocation=(), microphone=()" always;
   # 네이버 지도(매장 대장)는 외부 스크립트·타일·지오코딩 호출이 필요하다 — SDK(maps.js)가 실제 참조하는
   # 호스트(map/nrb/nrbe.map.naver.net, *.pstatic.net, nelo 텔레메트리)를 분석해 그 도메인만 정확히 허용
-  add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https://*.pstatic.net https://*.map.naver.net https://static.naver.net https://oapi.map.naver.com https://openapi.map.naver.com; connect-src 'self' https://*.pstatic.net https://*.map.naver.net https://oapi.map.naver.com https://openapi.map.naver.com https://naveropenapi.apigw.ntruss.com https://maps.apigw.ntruss.com https://kr-col-ext.nelo.navercorp.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://oapi.map.naver.com https://openapi.map.naver.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
+  add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https://*.pstatic.net https://*.map.naver.net https://static.naver.net https://oapi.map.naver.com https://openapi.map.naver.com; connect-src 'self' https://*.pstatic.net https://*.map.naver.net https://oapi.map.naver.com https://openapi.map.naver.com https://naveropenapi.apigw.ntruss.com https://maps.apigw.ntruss.com https://kr-col-ext.nelo.navercorp.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://oapi.map.naver.com https://openapi.map.naver.com https://*.pstatic.net; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
 
   location /api/v2/ {
     proxy_pass http://${API_UPSTREAM_HOSTPORT};

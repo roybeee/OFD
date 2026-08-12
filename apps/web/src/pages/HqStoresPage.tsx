@@ -91,10 +91,14 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
     if (!mapKey || geocodable.length === 0 || !mapContainer.current || mapInstance.current) return;
     setMapStatus('loading');
     const scriptId = 'naver-maps-sdk';
+    let initRetries = 0;
     const init = () => {
       const maps = getNaverMaps();
       const container = mapContainer.current;
       if (!maps || !container) { setMapStatus('error'); return; }
+      /* geocoder 서브모듈은 본체 onload 뒤에 비동기로 붙는다 — 준비될 때까지 짧게 재시도 */
+      if (!maps.Service && initRetries < 40) { initRetries += 1; setTimeout(init, 125); return; }
+      if (!maps.Service) { setMapStatus('error'); return; }
       const map = new maps.Map(container, { center: new maps.LatLng(37.5665, 126.978), zoom: 10 });
       mapInstance.current = map;
       setMapStatus('ready');
