@@ -103,8 +103,11 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 
 /* 첫 로그인 인트로: 도넛 영상이 재생되고, 끝날 때쯤 어두워지며 로그인 카드가 나타난다 */
 /* 모바일 주소창 때문에 100vh가 넘치지 않도록 dvh를 우선 적용 */
-.auth-screen-intro { position: relative; overflow: hidden; min-height: 100vh; min-height: 100dvh; }
-.auth-intro-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* 배경은 영상 첫 프레임과 같은 베이지 톤 — 재생 전 숨김 구간이 이질감 없이 이어진다 */
+.auth-screen-intro { position: relative; overflow: hidden; min-height: 100vh; min-height: 100dvh; background: #e6d8c6; }
+/* 재생 시작 전에는 투명 처리 — 인앱 브라우저의 기본 재생 버튼 오버레이 노출 방지 */
+.auth-intro-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.4s ease; }
+.auth-intro-video.playing { opacity: 1; }
 .auth-intro-dim { position: absolute; inset: 0; background: rgba(24, 14, 5, 0); transition: background 1.3s ease; pointer-events: none; }
 .auth-intro-dim.visible { background: rgba(24, 14, 5, 0.66); }
 .auth-intro-skip { position: absolute; right: max(20px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); z-index: 1; min-height: 34px; padding: 0 14px; border: 1px solid rgba(255, 255, 255, 0.45); border-radius: 999px; color: #fff; background: rgba(24, 14, 5, 0.35); font-size: 11px; font-weight: 700; }
@@ -117,6 +120,7 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 @keyframes auth-card-reveal { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .auth-intro-dim { transition: none; }
+  .auth-intro-video { transition: none; }
   .auth-card-reveal { animation: none; }
 }
 .logout-recovery { width: min(100% - 40px,1480px); display: flex; align-items: center; gap: 10px; margin: 16px auto 0; padding: 12px 14px; border: 1px solid #f2c6c2; border-radius: 12px; background: var(--red-soft); color: #8c2d27; }

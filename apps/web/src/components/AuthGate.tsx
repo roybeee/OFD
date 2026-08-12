@@ -37,6 +37,9 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
   const videoRef = useRef<HTMLVideoElement>(null);
   const [introDone, setIntroDone] = useState(prefersReducedMotion);
   const [introSrc] = useState(introVideoSrc);
+  /* 재생이 실제로 시작되기 전에는 영상을 숨긴다 — 인앱 브라우저(카카오톡 등)가
+     일시정지 상태에서 그리는 기본 재생 버튼 오버레이가 잠깐 노출되는 것을 막는다. */
+  const [introPlaying, setIntroPlaying] = useState(false);
 
   useEffect(() => {
     if (introDone) emailRef.current?.focus();
@@ -57,6 +60,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
 
   function handleIntroProgress(event: SyntheticEvent<HTMLVideoElement>) {
     const video = event.currentTarget;
+    if (video.currentTime > 0) setIntroPlaying(true);
     if (Number.isFinite(video.duration) && video.duration - video.currentTime <= INTRO_DIM_LEAD_SECONDS) {
       setIntroDone(true);
     }
@@ -80,9 +84,10 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
 
   return (
     <main className="auth-screen auth-screen-intro" id="main-content">
-      <video ref={videoRef} className="auth-intro-video" src={introSrc} muted playsInline preload="auto"
-        aria-hidden="true" tabIndex={-1}
-        onTimeUpdate={handleIntroProgress} onEnded={() => setIntroDone(true)} onError={() => setIntroDone(true)} />
+      <video ref={videoRef} className={`auth-intro-video${introPlaying ? ' playing' : ''}`} src={introSrc}
+        muted playsInline autoPlay preload="auto" aria-hidden="true" tabIndex={-1}
+        onPlaying={() => setIntroPlaying(true)} onTimeUpdate={handleIntroProgress}
+        onEnded={() => setIntroDone(true)} onError={() => setIntroDone(true)} />
       <div className={`auth-intro-dim${introDone ? ' visible' : ''}`} aria-hidden="true" />
       {!introDone && (
         <button type="button" className="auth-intro-skip" onClick={() => setIntroDone(true)}>건너뛰고 로그인</button>
