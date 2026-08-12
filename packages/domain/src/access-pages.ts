@@ -19,7 +19,7 @@ export const ACCESS_PAGES: readonly AccessPage[] = [
   { path: "/hq/orders", label: "주문 운영", domain: "hq", capabilities: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request"] },
   { path: "/hq/delivery", label: "배송", domain: "hq", capabilities: ["hq.shipments.manage", "hq.shipments.dispatch", "hq.drivers.read"] },
   { path: "/hq/reconciliation", label: "입금 대사", domain: "hq", capabilities: ["hq.payments.reconcile"] },
-  { path: "/hq/invoices", label: "정산·세금계산서", domain: "hq", capabilities: ["hq.settlements.manage", "hq.settlements.draft", "hq.settlements.approve", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read", "hq.outbox.requeue"] },
+  { path: "/hq/invoices", label: "정산·세금계산서", domain: "hq", capabilities: ["hq.invoices.read", "hq.settlements.manage", "hq.settlements.draft", "hq.settlements.approve", "hq.invoices.prepare", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read", "hq.outbox.requeue"] },
   { path: "/hq/sales", label: "매출현황", domain: "hq", capabilities: ["hq.pos.read"] },
   { path: "/hq/products", label: "상품 관리", domain: "hq", capabilities: ["hq.pos.read"] },
   { path: "/hq/openings", label: "오픈", domain: "hq", capabilities: ["hq.pos.read"] },
@@ -46,7 +46,8 @@ export function selectablePagesForRole(role: ActorRole): AccessPage[] {
   return domain ? ACCESS_PAGES.filter((page) => page.domain === domain) : [];
 }
 
-/** 역할의 기본 노출 페이지 = 대표 capability가 역할 기본 권한에 포함된 페이지. */
+/** 역할의 기본 노출 페이지 = 대표(메뉴) capability가 역할 기본 권한에 포함된 페이지.
+ *  기존 메뉴 노출 규칙(pathCapability 보유)과 동일하다 — capabilities[0]가 곧 메뉴 권한이어야 한다. */
 export function defaultPagesForRole(role: ActorRole, roleBaseCapabilities: readonly string[]): string[] {
   const base = new Set(roleBaseCapabilities);
   return selectablePagesForRole(role)

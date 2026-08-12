@@ -71,15 +71,17 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .profile-copy strong { font-size: 12px; }
 .profile-copy small { margin-top: 1px; color: var(--muted); font-size: 10px; }
 .logout-button { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: white; font-size: 10px; font-weight: 700; }
-.context-bar { min-height: 54px; gap: 24px; }
-.context-title { display: flex; align-items: center; min-width: 170px; gap: 8px; font-size: 12px; }
+.context-bar { min-height: 54px; gap: 14px; }
+.context-title { flex: none; display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
 .online-dot { width: 8px; height: 8px; border-radius: 50%; background: #25a46f; box-shadow: 0 0 0 4px #e7f7ef; }
-.primary-nav { align-self: stretch; display: flex; align-items: stretch; gap: 2px; min-width: 0; }
-.primary-nav button { position: relative; display: flex; align-items: center; gap: 7px; padding: 0 17px; background: transparent; color: #77756e; font-size: 13px; font-weight: 700; white-space: nowrap; }
-.primary-nav button::after { content: ''; position: absolute; left: 17px; right: 17px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: transparent; }
+/* 항목이 많아도 우측 API 상태 배지와 겹치지 않도록 남는 폭 안에서 가로 스크롤(스크롤바 숨김) */
+.primary-nav { align-self: stretch; flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.primary-nav::-webkit-scrollbar { display: none; }
+.primary-nav button { position: relative; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 12px; background: transparent; color: #77756e; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.primary-nav button::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0; background: transparent; }
 .primary-nav button.active { color: var(--ink); }
 .primary-nav button.active::after { background: var(--orange); }
-.source-pill { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.source-pill { flex: none; margin-left: 8px; display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .source-pill span { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .app-footer { width: min(100% - 40px, 1480px); margin: 28px auto 0; padding: 22px 0 30px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; }
 
