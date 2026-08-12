@@ -74,6 +74,28 @@ describe('login intro video', () => {
     expect(container.querySelector('#login-email')).not.toBeNull();
   });
 
+  it('세로(모바일) 화면에서는 세로 버전 영상을 사용한다', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const original = window.matchMedia;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      ...original(query),
+      matches: query.includes('orientation: portrait'),
+    }));
+    try {
+      await renderLogin();
+      expect(video().getAttribute('src')).toContain('login-intro-portrait.mp4');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('가로 화면에서는 기본(가로) 영상을 사용한다', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    await renderLogin();
+    expect(video().getAttribute('src')).toContain('login-intro.mp4');
+    expect(video().getAttribute('src')).not.toContain('portrait');
+  });
+
   it('감속 모션 환경에서는 인트로를 건너뛴다', async () => {
     const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
     const original = window.matchMedia;

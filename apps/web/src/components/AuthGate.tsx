@@ -11,6 +11,8 @@ function messageFor(error: unknown) {
 }
 
 const INTRO_VIDEO_SRC = `${import.meta.env.BASE_URL}login-intro.mp4`;
+/** 세로 화면(모바일)용 9:16 버전 — 가로 원본을 크롭 없이 보여주기 위해 별도 파일을 쓴다. */
+const INTRO_VIDEO_PORTRAIT_SRC = `${import.meta.env.BASE_URL}login-intro-portrait.mp4`;
 /** 영상 잔여 시간이 이 값 이하가 되면 어두워지며 로그인 카드를 띄운다. */
 const INTRO_DIM_LEAD_SECONDS = 1.5;
 /** 재생 이벤트가 전혀 오지 않는 환경(로딩 실패 등)에서도 로그인이 막히지 않게 하는 안전장치. */
@@ -18,6 +20,12 @@ const INTRO_FAILSAFE_MS = 12_000;
 
 function prefersReducedMotion() {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+/** 마운트 시점 화면 방향에 맞는 인트로 영상. 재생 중 회전해도 소스는 바꾸지 않는다(재생이 끊기므로). */
+function introVideoSrc() {
+  const portrait = window.matchMedia?.('(orientation: portrait)').matches ?? false;
+  return portrait ? INTRO_VIDEO_PORTRAIT_SRC : INTRO_VIDEO_SRC;
 }
 
 export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: PublicActor) => void }) {
@@ -28,6 +36,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
   const emailRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [introDone, setIntroDone] = useState(prefersReducedMotion);
+  const [introSrc] = useState(introVideoSrc);
 
   useEffect(() => {
     if (introDone) emailRef.current?.focus();
@@ -71,7 +80,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
 
   return (
     <main className="auth-screen auth-screen-intro" id="main-content">
-      <video ref={videoRef} className="auth-intro-video" src={INTRO_VIDEO_SRC} muted playsInline preload="auto"
+      <video ref={videoRef} className="auth-intro-video" src={introSrc} muted playsInline preload="auto"
         aria-hidden="true" tabIndex={-1}
         onTimeUpdate={handleIntroProgress} onEnded={() => setIntroDone(true)} onError={() => setIntroDone(true)} />
       <div className={`auth-intro-dim${introDone ? ' visible' : ''}`} aria-hidden="true" />
