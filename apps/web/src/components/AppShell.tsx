@@ -66,7 +66,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
       <header className="app-header">
         <div className="header-main">
           <button className="brand" type="button" onClick={() => onNavigate(nav[0]?.path ?? path)} aria-label="통합 발주·정산 첫 화면">
-            <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
+            <span className="brand-mark" aria-hidden="true"><img src={`${import.meta.env.BASE_URL}ofd-logo.png`} alt="" /></span>
             <span className="brand-copy"><strong>OFD 워크스테이션 · 통합 발주·정산</strong><small>ORDER · DELIVERY · FINANCE</small></span>
           </button>
 
@@ -99,7 +99,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
       </header>
       {children}
       <footer className="app-footer">
-        <span>OFD Franchise Operations</span><span>업무 문의는 계정 관리자에게 요청해 주세요.</span>
+        <span>OLD FERRY DONUT · DONUT WORRY, BE HAPPY</span><span>업무 문의는 계정 관리자에게 요청해 주세요.</span>
       </footer>
     </div>
   );
