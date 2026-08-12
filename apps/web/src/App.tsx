@@ -9,6 +9,7 @@ import { DriverTodayPage } from './pages/DriverTodayPage';
 import { HqDeliveryPage } from './pages/HqDeliveryPage';
 import { HqInvoicesPage } from './pages/HqInvoicesPage';
 import { HqAccountsPage } from './pages/HqAccountsPage';
+import { HqSettingsPage } from './pages/HqSettingsPage';
 import { HqOrdersPage } from './pages/HqOrdersPage';
 import { HqReconciliationPage } from './pages/HqReconciliationPage';
 import { HqSalesPage } from './pages/HqSalesPage';
@@ -23,7 +24,7 @@ import { StoreOrdersPage } from './pages/StoreOrdersPage';
 import type { BootstrapData, PublicActor, Toast } from './types';
 import { browserPathFor, canAccessPath, defaultPathFor, logicalPathFromLocation, roleForPath } from './lib/access';
 
-const knownPaths = new Set(['/store/home', '/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/sales', '/hq/products', '/hq/openings', '/hq/stores', '/hq/leads', '/hq/audit', '/hq/accounts', '/driver/today', '/unauthorized']);
+const knownPaths = new Set(['/store/home', '/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/sales', '/hq/products', '/hq/openings', '/hq/stores', '/hq/leads', '/hq/audit', '/hq/accounts', '/hq/settings', '/driver/today', '/unauthorized']);
 
 function initialPath() {
   const logicalPath = logicalPathFromLocation(window.location.pathname, import.meta.env.BASE_URL);
@@ -189,7 +190,7 @@ export default function App() {
   if (path === '/unauthorized') return <UnauthorizedScreen onLogout={logout} logoutError={logoutError} logoutPending={logoutPending} />;
 
   return (
-    <AppShell role={role} path={path} actorName={actorName} actorRole={data.actor.role} storeName={data.store.name} deliveryCount={data.deliveries.length} capabilities={data.capabilities} onNavigate={navigate} onLogout={logout} logoutPending={logoutPending}>
+    <AppShell role={role} path={path} actorName={actorName} actorRole={data.actor.role} storeName={data.store.name} deliveryCount={data.deliveries.length} capabilities={data.capabilities} menuOrder={data.menuOrder} onNavigate={navigate} onLogout={logout} logoutPending={logoutPending}>
       {logoutError && <div className="logout-recovery" role="alert"><div><strong>로그아웃을 완료하지 못했습니다</strong><p>{logoutError} 현재 로그인 상태는 유지됩니다.</p></div><Button type="button" variant="secondary" onClick={logout} disabled={logoutPending}>로그아웃 다시 시도</Button><Button type="button" variant="ghost" onClick={() => setLogoutError('')}>계속 사용</Button></div>}
       {path === '/store/home' && <StoreHomePage data={data} notify={notify} onNavigate={navigate} />}
       {path === '/store/orders' && <StoreOrdersPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
@@ -205,6 +206,7 @@ export default function App() {
       {path === '/hq/leads' && <HqLeadsPage data={data} notify={notify} />}
       {path === '/hq/audit' && <HqAuditPage data={data} notify={notify} />}
       {path === '/hq/accounts' && <HqAccountsPage data={data} notify={notify} onCurrentSessionRevoked={currentSessionRevoked} />}
+      {path === '/hq/settings' && <HqSettingsPage data={data} notify={notify} />}
       {path === '/driver/today' && <DriverTodayPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
       <InstallPrompt />
       <ToastRegion toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />

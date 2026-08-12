@@ -14,7 +14,7 @@ import {
   UserRound,
 } from './icons';
 import type { Role } from '../types';
-import { pathCapability } from '../lib/access';
+import { applyMenuOrder, pathCapability } from '../lib/access';
 
 type NavItem = { path: string; label: string; icon: typeof LayoutGrid };
 
@@ -36,11 +36,12 @@ const navByRole: Record<Role, NavItem[]> = {
     { path: '/hq/leads', label: '가맹 영업', icon: Handshake },
     { path: '/hq/audit', label: '감사 로그', icon: ScrollText },
     { path: '/hq/accounts', label: '계정 관리', icon: UserRound },
+    { path: '/hq/settings', label: '기타 관리', icon: ScrollText },
   ],
   driver: [{ path: '/driver/today', label: '오늘 배송', icon: Bike }],
 };
 
-export function AppShell({ role, path, actorName, actorRole, storeName, deliveryCount, capabilities, onNavigate, onLogout, logoutPending = false, children }: {
+export function AppShell({ role, path, actorName, actorRole, storeName, deliveryCount, capabilities, menuOrder, onNavigate, onLogout, logoutPending = false, children }: {
   role: Role;
   path: string;
   actorName: string;
@@ -48,12 +49,14 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
   storeName: string;
   deliveryCount: number;
   capabilities: string[];
+  menuOrder?: string[];
   onNavigate: (path: string) => void;
   onLogout: () => void;
   logoutPending?: boolean;
   children: ReactNode;
 }) {
-  const nav = navByRole[role].filter((item) => capabilities.includes(pathCapability[item.path]));
+  /* 마스터가 지정한 순서를 적용한다 — 저장된 순서에 없는 페이지는 원래 자리 뒤에 남는다 */
+  const nav = applyMenuOrder(navByRole[role].filter((item) => capabilities.includes(pathCapability[item.path])), menuOrder);
   const contextName = role === 'store' ? storeName : role === 'driver' ? `오늘 배송 ${deliveryCount}곳` : '본사 운영센터';
   const actorRoleLabel = role === 'hq' ? actorRole === 'auditor' ? '감사 · 읽기 전용' : actorRole === 'hq_master' || actorRole === 'master' ? '마스터' : actorRole === 'hq_finance' ? '재무' : '운영' : role === 'driver' ? '배송기사' : actorRole === 'store_staff' ? '매장 직원' : '점주';
 

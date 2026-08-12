@@ -202,6 +202,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         "role" in body ? { role: body.role } : { actorId: body.actorId }, body.pages));
   });
 
+  app.put("/api/v2/admin/menu-order", async (request, reply) => {
+    const body = z.object({ order: z.array(z.string().min(1)).max(50) }).parse(request.body);
+    return idempotentMutation(request, reply, repository, request.actor, 200, (scoped) =>
+      service.withRepository(scoped).updateMenuOrder(request.actor, body.order));
+  });
+
   /** Active driver directory contract: { drivers: Array<{ id, name }> }; hq_ops/hq_master only. */
   app.get("/api/v2/directory/drivers", async (request) => authService.listActiveDrivers(request.actor));
 

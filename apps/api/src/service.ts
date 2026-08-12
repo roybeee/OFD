@@ -57,6 +57,8 @@ export interface AccessPolicyDocument {
   version: number;
   rolePages: Partial<Record<Actor["role"], string[]>>;
   actorPages: Record<string, string[]>;
+  /** 메뉴 노출 순서(경로 배열). 비어 있으면 카탈로그 기본 순서를 쓴다. */
+  menuOrder?: string[];
 }
 export const ACCESS_POLICY_ID = "access-policy";
 const ACCESS_POLICY_SYSTEM_SCOPE = "__system__";
@@ -99,6 +101,7 @@ export class ProcurementService {
   }
 
   async bootstrap(actor: Actor): Promise<Record<string, unknown>> {
+    const accessPolicy = await this.loadAccessPolicy();
     const isStoreActor = actor.role === "store_owner" || actor.role === "store_staff";
     const isDriver = actor.role === "driver";
     const storeScope = isStoreActor ? actor.storeIds : undefined;
@@ -203,7 +206,8 @@ export class ProcurementService {
       meta: { apiVersion: "v2", appMode: this.appMode, providerMode: this.providerMode,
         externalIssueEnabled: this.externalIssueEnabled, generatedAt: this.now().toISOString(),
         operationalDate: today, timeZone: "Asia/Seoul" },
-      capabilities: capabilitiesFor(actor, await this.loadAccessPolicy()),
+      capabilities: capabilitiesFor(actor, accessPolicy),
+      menuOrder: accessPolicy.menuOrder ?? [],
       allowedDeliveryDates: allowedDeliveryDates(this.now()),
       currentActor: publicActorDto(actor),
       availableActors,
@@ -230,7 +234,7 @@ export class ProcurementService {
   /** 저장된 페이지 노출 정책을 읽는다(없으면 기본 정책). */
   async loadAccessPolicy(): Promise<AccessPolicyDocument> {
     const stored = await this.repository.get<AccessPolicyDocument>("access_policy", ACCESS_POLICY_ID);
-    return stored ?? { id: ACCESS_POLICY_ID, version: 0, rolePages: {}, actorPages: {} };
+    return stored ?? { id: ACCESS_POLICY_ID, version: 0, rolePages: {}, actorPages: {}, menuOrder: [] };
   }
 
   /** GET 계정 관리 > 접근 설정: 정책 + 각 역할의 기본 페이지 + 계정별 유효 페이지를 함께 내린다. */
@@ -247,6 +251,7 @@ export class ProcurementService {
       rolePages: policy.rolePages,
       actorPages: policy.actorPages,
       actorEffectivePages: Object.fromEntries(actors.map((candidate) => [candidate.id, resolveVisiblePages(candidate, policy)])),
+      menuOrder: policy.menuOrder ?? [],
     };
   }
 
@@ -271,7 +276,8 @@ export class ProcurementService {
       throw new DomainError("INVALID_ACCESS_TARGET", "role 또는 actorId가 필요합니다.", 422);
     }
 
-    const next: AccessPolicyDocument = { id: ACCESS_POLICY_ID, version: current.version + 1, rolePages: nextRolePages, actorPages: nextActorPages };
+    const next: AccessPolicyDocument = { id: ACCESS_POLICY_ID, version: current.version + 1,
+      rolePages: nextRolePages, actorPages: nextActorPages, menuOrder: current.menuOrder ?? [] };
     await this.repository.commit({
       changes: [{ type: "access_policy", id: ACCESS_POLICY_ID, storeId: ACCESS_POLICY_SYSTEM_SCOPE,
         expectedVersion: current.version === 0 ? null : current.version, value: next }],
@@ -279,6 +285,23 @@ export class ProcurementService {
         { target: target.role ? { role: target.role } : { actorId: target.actorId }, pages: pages ?? "reset" })],
     });
     return { policy: next };
+  }
+
+  /** 메뉴 노출 순서를 저장한다(마스터 전용). 카탈로그에 없는 경로는 버린다. */
+  async updateMenuOrder(actor: Actor, order: string[]): Promise<{ menuOrder: string[] }> {
+    assertRole(actor, ["hq_master"]);
+    assertRecentStepUp(actor);
+    const known = new Set(ACCESS_PAGES.map((page) => page.path));
+    const menuOrder = [...new Set(order)].filter((path) => known.has(path));
+    const current = await this.loadAccessPolicy();
+    const next: AccessPolicyDocument = { ...current, id: ACCESS_POLICY_ID, version: current.version + 1, menuOrder };
+    await this.repository.commit({
+      changes: [{ type: "access_policy", id: ACCESS_POLICY_ID, storeId: ACCESS_POLICY_SYSTEM_SCOPE,
+        expectedVersion: current.version === 0 ? null : current.version, value: next }],
+      audits: [audit(actor, "access_policy", ACCESS_POLICY_ID, "admin.menu_order_updated", undefined, undefined, undefined,
+        { count: menuOrder.length })],
+    });
+    return { menuOrder };
   }
 
   async createOrder(actor: Actor, input: CreateOrderInput): Promise<{ order: PurchaseOrder }> {
@@ -1137,7 +1160,7 @@ export function baseCapabilitiesFor(role: Actor["role"]): string[] {
       "hq.stores.manage", "hq.leads.manage", "hq.notices.manage"],
     hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read", "hq.audit.read"],
     hq_master: ["hq.settlements.approve", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
-      "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.drivers.read", "hq.pos.read",
+      "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.settings.manage", "hq.drivers.read", "hq.pos.read",
       "hq.stores.manage", "hq.leads.manage", "hq.notices.manage", "hq.audit.read"],
     auditor: ["hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
     driver: ["driver.deliveries.read", "driver.deliveries.complete"],

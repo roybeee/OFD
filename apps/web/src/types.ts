@@ -187,6 +187,8 @@ export type BootstrapData = {
   stores: Array<{ id: string; name: string; storeKind?: '직영' | '가맹'; code?: string;
     region?: string; roadAddress?: string; notificationPhone?: string; openDate?: string | null; active?: boolean; version?: number }>;
   capabilities: string[];
+  /** 마스터가 지정한 메뉴 노출 순서(경로). 비어 있으면 기본 순서 */
+  menuOrder?: string[];
   allowedDeliveryDates: string[];
   routeDates: string[];
   meta: ProviderMeta;

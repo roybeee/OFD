@@ -27,6 +27,7 @@ export const ACCESS_PAGES: readonly AccessPage[] = [
   { path: "/hq/leads", label: "가맹 영업", domain: "hq", capabilities: ["hq.leads.manage"] },
   { path: "/hq/audit", label: "감사 로그", domain: "hq", capabilities: ["hq.audit.read", "hq.finance.read"] },
   { path: "/hq/accounts", label: "계정 관리", domain: "hq", capabilities: ["hq.accounts.manage", "hq.actors.manage"] },
+  { path: "/hq/settings", label: "기타 관리", domain: "hq", capabilities: ["hq.settings.manage"] },
   { path: "/driver/today", label: "오늘 배송", domain: "driver", capabilities: ["driver.deliveries.read", "driver.deliveries.complete"] },
 ];
 

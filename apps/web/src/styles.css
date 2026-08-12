@@ -2129,3 +2129,15 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 .install-copy b { color: var(--ink); font-weight: 800; }
 .install-prompt .button { flex: none; min-height: 40px; padding: 0 14px; }
 @media (min-width: 721px) { .install-prompt { left: auto; right: 20px; width: 420px; } }
+
+/* 기타 관리 — 메뉴 순서 조정 */
+.menu-order-list { margin: 0; padding: 4px 17px 13px; list-style: none; display: grid; gap: 6px; counter-reset: menu-order; }
+.menu-order-list li { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--line);
+  border-radius: 11px; background: white; }
+.menu-order-rank { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 8px;
+  background: var(--orange-soft); color: var(--orange-dark); font-size: 11px; font-weight: 800; }
+.menu-order-list strong { font-size: 13px; font-weight: 800; }
+.menu-order-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.menu-order-actions { display: flex; gap: 5px; flex: none; margin-left: auto; }
+.menu-order-actions .button { min-height: 36px; min-width: 40px; padding: 0 10px; font-size: 14px; }
+@media (max-width: 500px) { .menu-order-path { display: none; } }

@@ -362,6 +362,7 @@ export function normalizeBootstrap(input: unknown): BootstrapData {
     },
     products, orders, deliveries, bankMatches, paymentRequests, bankTransactions, manualMatchCandidates, settlements, invoices, documents,
     capabilities,
+    menuOrder: Array.isArray(raw.menuOrder) ? raw.menuOrder.filter((item): item is string => typeof item === 'string') : [],
     allowedDeliveryDates,
     routeDates,
     meta: {
@@ -629,9 +630,16 @@ export type AccessSettings = {
   rolePages: Record<string, string[]>;
   actorPages: Record<string, string[]>;
   actorEffectivePages: Record<string, string[]>;
+  menuOrder?: string[];
 };
 export function loadAccessSettingsV2() {
   return apiRequest<AccessSettings>('/admin/access-policy', { method: 'GET', headers: { Accept: 'application/json' } }, true);
+}
+export function setMenuOrderV2(order: string[], idempotencyKey: string) {
+  return apiRequest<{ menuOrder: string[] }>('/admin/menu-order', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },
+    body: JSON.stringify({ order }),
+  }, true);
 }
 export function setRolePagesV2(role: string, pages: string[] | null, idempotencyKey: string) {
   return apiRequest<{ policy: unknown }>('/admin/access-policy', {

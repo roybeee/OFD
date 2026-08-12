@@ -399,6 +399,40 @@ describe("OFD v2 API", () => {
       payload: { action: "role", actorId: DEMO_IDS.staff, expectedVersion: staff.version + 1, role: "auditor", storeIds: [] } })).statusCode).toBe(403);
   });
 
+  it("기타 관리는 마스터만 보이고, 메뉴 순서는 저장 후 모든 사용자 bootstrap에 실린다", async () => {
+    const app = await demoApp();
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+
+    /* 마스터만 기타 관리(hq.settings.manage) 권한을 갖는다 */
+    const masterBoot = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: master });
+    expect(masterBoot.json().capabilities).toContain("hq.settings.manage");
+    for (const actorId of [DEMO_IDS.ops, DEMO_IDS.finance, DEMO_IDS.auditor]) {
+      const boot = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": actorId } });
+      expect(boot.json().capabilities).not.toContain("hq.settings.manage");
+    }
+
+    /* 순서 저장 → bootstrap의 menuOrder에 반영(마스터가 아닌 사용자도 같은 순서를 받는다) */
+    const saved = await app.inject({ method: "PUT", url: "/api/v2/admin/menu-order",
+      headers: { ...master, "Idempotency-Key": "menu-order-1" },
+      payload: { order: ["/hq/sales", "/hq/orders", "/nope/unknown"] } });
+    expect(saved.statusCode).toBe(200);
+    /* 카탈로그에 없는 경로는 버려진다 */
+    expect(saved.json()).toMatchObject({ menuOrder: ["/hq/sales", "/hq/orders"] });
+    const opsBoot = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: { "x-demo-actor-id": DEMO_IDS.ops } });
+    expect(opsBoot.json().menuOrder).toEqual(["/hq/sales", "/hq/orders"]);
+
+    /* 페이지 노출 정책을 바꿔도 메뉴 순서는 보존된다 */
+    await app.inject({ method: "PUT", url: "/api/v2/admin/access-policy",
+      headers: { ...master, "Idempotency-Key": "ap-keep-order" }, payload: { role: "hq_ops", pages: ["/hq/orders"] } });
+    const afterPolicy = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: master });
+    expect(afterPolicy.json().menuOrder).toEqual(["/hq/sales", "/hq/orders"]);
+
+    /* 비마스터는 순서를 바꿀 수 없다 */
+    expect((await app.inject({ method: "PUT", url: "/api/v2/admin/menu-order",
+      headers: { "x-demo-actor-id": DEMO_IDS.ops, "Idempotency-Key": "menu-order-forbidden" },
+      payload: { order: ["/hq/orders"] } })).statusCode).toBe(403);
+  });
+
   it("계정 유형별·계정별 페이지 노출을 설정하면 로그인 capability에 반영된다", async () => {
     const app = await demoApp();
     const master = { "x-demo-actor-id": DEMO_IDS.master };
