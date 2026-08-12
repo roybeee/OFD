@@ -39,8 +39,9 @@ export async function login(page: Page, account: keyof typeof accounts, throughU
     `${account} login`,
   );
   if (!started.authenticated) throw new Error(`${account} login did not authenticate`);
-  // MFA 제거 후 중요 작업 본인 확인은 비밀번호만으로 스텝업한다 — 마스터의 승인 동작에 필요하다.
-  if (account === 'master') {
+  // MFA 제거 후 중요 작업 본인 확인은 비밀번호만으로 스텝업한다 — 본사 계정의 정산 초안·승인 등에 필요.
+  // (이전에는 본사 계정의 MFA 로그인이 최근 스텝업을 세워줬다)
+  if (account === 'ops' || account === 'finance' || account === 'master') {
     await requireOk(await page.request.post('/api/v2/auth/step-up', { data: { password: TEST_PASSWORD } }), `${account} step-up`);
   }
 }
