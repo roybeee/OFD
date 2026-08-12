@@ -1,4 +1,4 @@
-const CACHE = 'ofd-workstation-v2-shell-4';
+const CACHE = 'ofd-workstation-v2-shell-5';
 const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, '');
 /* 설치 앱의 시작 경로는 '/' — 역할에 맞는 첫 화면으로 앱이 알아서 보낸다 */
 const FALLBACK = `${BASE}/`;

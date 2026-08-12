@@ -10,9 +10,11 @@ function messageFor(error: unknown) {
   return '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 }
 
-const INTRO_VIDEO_SRC = `${import.meta.env.BASE_URL}login-intro.mp4`;
+/* 영상 내용을 바꿀 때마다 버전을 올린다 — 브라우저·서비스워커에 캐시된 옛 영상을 확실히 밀어낸다 */
+const INTRO_VIDEO_VERSION = 'logo1';
+const INTRO_VIDEO_SRC = `${import.meta.env.BASE_URL}login-intro.mp4?v=${INTRO_VIDEO_VERSION}`;
 /** 세로 화면(모바일)용 9:16 버전 — 가로 원본을 크롭 없이 보여주기 위해 별도 파일을 쓴다. */
-const INTRO_VIDEO_PORTRAIT_SRC = `${import.meta.env.BASE_URL}login-intro-portrait.mp4`;
+const INTRO_VIDEO_PORTRAIT_SRC = `${import.meta.env.BASE_URL}login-intro-portrait.mp4?v=${INTRO_VIDEO_VERSION}`;
 /** 영상 잔여 시간이 이 값 이하가 되면 어두워지며 로그인 카드를 띄운다. */
 const INTRO_DIM_LEAD_SECONDS = 1.5;
 /** 재생 이벤트가 전혀 오지 않는 환경(로딩 실패 등)에서도 로그인이 막히지 않게 하는 안전장치. */
