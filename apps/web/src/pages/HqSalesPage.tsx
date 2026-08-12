@@ -5,6 +5,7 @@ import {
 } from '../api/client';
 import { Button, EmptyState, MetricCard } from '../components/ui';
 import { LayoutGrid } from '../components/icons';
+import { buildSalesCsv, SALES_EXPORT_LABELS, type SalesExportOptions } from '../lib/sales-export';
 import type { BootstrapData, Toast } from '../types';
 
 const won = (value: number) => value.toLocaleString('ko-KR');
@@ -32,6 +33,10 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
   const [discovered, setDiscovered] = useState<Array<{ merchantId: string; lastSeenAt: string }>>([]);
   const [localStores, setLocalStores] = useState<Array<{ id: string; name: string }>>(() => data.stores.map((store) => ({ id: store.id, name: store.name })));
   const [setupOpen, setSetupOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportOpts, setExportOpts] = useState<SalesExportOptions>({
+    summary: true, pivotAmount: true, pivotQty: false, items: true, itemsByStore: false,
+  });
   const [storeForm, setStoreForm] = useState({ name: '', storeKind: '직영', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
   const [linkForm, setLinkForm] = useState({ storeId: '', merchantId: '', accessKey: '', secretKey: '' });
   const [setupBusy, setSetupBusy] = useState(false);
@@ -119,6 +124,19 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
     }
   }
 
+  function exportCsv() {
+    if (!report || report.rows.length === 0) { notify('내보낼 매출 데이터가 없습니다.', 'warning'); return; }
+    if (!Object.values(exportOpts).some(Boolean)) { notify('내보낼 항목을 하나 이상 선택해 주세요.', 'warning'); return; }
+    const csv = buildSalesCsv(report, label, { from, to }, exportOpts);
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `매출현황_${from}_${to}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify(`매출현황_${from}_${to}.csv 내보내기 완료 (엑셀에서 열립니다)`, 'success');
+  }
+
   function toggleRow(bucket: string) {
     setOpen((current) => {
       const next = new Set(current);
@@ -145,9 +163,30 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
         </div>
         <div className="page-actions">
           <Button type="button" variant="ghost" onClick={() => setSetupOpen((value) => !value)} aria-expanded={setupOpen}>POS 연동 관리</Button>
+          <Button type="button" variant="ghost" onClick={() => setExportOpen((value) => !value)} aria-expanded={exportOpen}>엑셀 내보내기</Button>
           <Button type="button" variant="secondary" onClick={runSync} disabled={syncing}>{syncing ? '수집 중…' : 'POS 동기화'}</Button>
         </div>
       </header>
+
+      {exportOpen && (
+        <section className="panel" aria-labelledby="export-heading" data-testid="sales-export-panel">
+          <h2 id="export-heading">엑셀 내보내기</h2>
+          <p className="muted">체크한 항목만 CSV(엑셀 호환)로 추출합니다 — 현재 조회 기간·매장 필터 기준.</p>
+          <div className="export-options" role="group" aria-label="내보낼 데이터 선택">
+            {(Object.keys(SALES_EXPORT_LABELS) as Array<keyof SalesExportOptions>).map((key) => (
+              <label key={key} className="export-option">
+                <input type="checkbox" checked={exportOpts[key]}
+                  onChange={(event) => setExportOpts((current) => ({ ...current, [key]: event.target.checked }))} />
+                {SALES_EXPORT_LABELS[key]}
+              </label>
+            ))}
+          </div>
+          <Button type="button" variant="secondary" onClick={exportCsv}
+            disabled={!Object.values(exportOpts).some(Boolean) || (report?.rows.length ?? 0) === 0}>
+            CSV 다운로드
+          </Button>
+        </section>
+      )}
 
       {(setupOpen || links.length === 0) && (
         <section className="panel" aria-labelledby="pos-setup-heading">

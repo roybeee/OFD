@@ -169,6 +169,44 @@ describe('POS 현장 운영 화면', () => {
     expect(merchantInput.value).toBe('905533');
   });
 
+  it('매출현황: 엑셀 내보내기는 체크한 섹션만 CSV로 담는다', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/pos/report')) return json(REPORT);
+      if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    let captured = '';
+    vi.stubGlobal('URL', Object.assign(Object.create(URL), {
+      createObjectURL: (blob: Blob) => { void blob.text().then((text) => { captured = text; }); return 'blob:mock'; },
+      revokeObjectURL: () => {},
+    }));
+    const notify = vi.fn();
+    await render(<HqSalesPage data={data} notify={notify} />);
+
+    const openButton = [...container.querySelectorAll('button')].find((node) => node.textContent === '엑셀 내보내기') as HTMLButtonElement;
+    await act(async () => { openButton.click(); });
+    const panel = container.querySelector('[data-testid="sales-export-panel"]')!;
+    expect(panel.textContent).toContain('품목×매장 분해');
+
+    /* 기본 체크(요약·매출 피벗·품목 상세)에서 요약을 끄고 내보낸다 */
+    const summaryBox = [...panel.querySelectorAll('label')].find((node) => node.textContent?.includes('요약 지표'))!
+      .querySelector('input') as HTMLInputElement;
+    await act(async () => { summaryBox.click(); });
+    const download = [...panel.querySelectorAll('button')].find((node) => node.textContent === 'CSV 다운로드') as HTMLButtonElement;
+    await act(async () => { download.click(); });
+    await act(async () => {}); /* blob.text() 비동기 캡처 대기 */
+
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('내보내기 완료'), 'success');
+    expect(captured).toContain('기간별 매장 매출(원)');
+    expect(captured).toContain('맵달서울점');       /* 매장 이름 열 */
+    expect(captured).toContain('품목별 판매 상세');
+    expect(captured).not.toContain('기간 합계(원)');  /* 요약은 껐다 */
+    expect(captured).not.toContain('품목×매장 분해'); /* 기본 미선택 */
+  });
+
   it('매출현황: 집계 단위를 바꾸면 해당 unit으로 다시 조회한다', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

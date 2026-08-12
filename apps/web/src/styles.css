@@ -1931,6 +1931,10 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 .discovered-strip { display: grid; gap: 8px; margin: 13px 17px 0; padding: 11px 13px;
   border: 1px solid var(--orange); border-radius: 11px; background: var(--orange-pale); font-size: 12.5px; }
 .discovered-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.export-options { display: flex; gap: 14px; flex-wrap: wrap; padding: 4px 17px 13px; }
+.export-option { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.export-option input[type='checkbox'] { width: 17px; height: 17px; min-height: 0; accent-color: var(--orange); cursor: pointer; }
+.panel > .export-options + .button { margin: 0 17px 15px; }
 
 /* ── 현장 운영 (매장 대장 · 가맹 영업 · 감사 로그) ── */
 .kanban.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
