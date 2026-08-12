@@ -193,11 +193,11 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
                 const custom = Boolean(access?.actorPages?.[actor.id]);
                 return (
                 <li key={actor.id} className={!actor.active ? 'inactive' : ''}>
-                  <button type="button" className="account-open" aria-label={`${actor.name} 상세 설정`} onClick={() => setDetailTarget(actor)}>
-                    <span className="account-avatar" aria-hidden="true">{actor.name.slice(0, 1)}</span>
-                    <div className="account-identity"><strong>{actor.name}</strong><span>{actor.email}</span><small>{actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</small></div>
-                    <div className="account-security"><span className={`account-status ${actor.active ? 'active' : 'inactive'}`}>{actor.active ? '활성' : '비활성'}</span><small>{roleLabel(actor.role)}{custom ? ' · 개별 페이지' : ''}</small>{actor.lockedUntil && <em>로그인 잠김</em>}</div>
+                  <span className="account-avatar" aria-hidden="true">{actor.name.slice(0, 1)}</span>
+                  <button type="button" className="account-identity account-open" aria-label={`${actor.name} 상세 설정`} onClick={() => setDetailTarget(actor)}>
+                    <strong>{actor.name}</strong><span>{actor.email}</span><small>{actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</small>
                   </button>
+                  <div className="account-security"><span className={`account-status ${actor.active ? 'active' : 'inactive'}`}>{actor.active ? '활성' : '비활성'}</span><small>{roleLabel(actor.role)}{custom ? ' · 개별 페이지' : ''}</small>{actor.lockedUntil && <em>로그인 잠김</em>}</div>
                   <div className="account-actions">
                     <Button type="button" variant="secondary" aria-label={`${actor.name} 상세 설정 열기`} onClick={() => setDetailTarget(actor)}>상세 설정</Button>
                     <Button type="button" variant="secondary" aria-label={`${actor.name} 비밀번호 재설정`} onClick={() => setResetTarget(actor)}>비밀번호 재설정</Button>
