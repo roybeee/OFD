@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 /** V1 server.js tossFetchRange를 V2 규약으로 이식. 집계 단위: date×품목명(시간대는 2단계). */
 const TP_BASE = "https://open-api.tossplace.com/api-public/openapi/v1/merchants/";
@@ -88,6 +88,21 @@ export async function fetchTossDailyItems(input: TossFetchInput): Promise<TossDa
     await sleepImpl(PAGE_DELAY_MS);
   }
   return [...agg.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.rawName.localeCompare(b.rawName)));
+}
+
+/* ── 토스플레이스 웹훅 서명 검증 ──
+ * 규칙(공식 문서): HMAC-SHA256, Key = 앱 웹훅 서명 secret,
+ * Message = "<x-toss-timestamp>.<rawRequestBody>" (UTF-8), hex 인코딩 후 "v1=" 접두. */
+export function verifyTossWebhookSignature(
+  rawBody: string, timestampMs: string, signature: string, secret: string,
+  nowMs = Date.now(), toleranceMs = 5 * 60_000,
+): boolean {
+  if (!secret || !/^\d{10,}$/.test(timestampMs)) return false;
+  if (Math.abs(nowMs - Number(timestampMs)) > toleranceMs) return false;
+  const expected = `v1=${createHmac("sha256", secret).update(`${timestampMs}.${rawBody}`, "utf8").digest("hex")}`;
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(signature, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /* ── POS 자격증명 암호화 (AES-256-GCM, 키 = sha256(ENCRYPTION_KEY)) ── */

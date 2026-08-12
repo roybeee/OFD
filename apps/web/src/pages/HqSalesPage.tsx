@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  createPosLinkV2, createPosStoreV2, loadPosReport, loadPosLinks, newIdempotencyKey, syncPosV2,
+  createPosLinkV2, createPosStoreV2, loadPosReport, loadPosDiscovered, loadPosLinks, newIdempotencyKey, syncPosV2,
   type PosReportResult, type PosReportUnit,
 } from '../api/client';
 import { Button, EmptyState, MetricCard } from '../components/ui';
@@ -29,6 +29,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
   const [links, setLinks] = useState<Array<{ id: string; storeId: string; merchantId: string; lastSyncAt: string | null }>>([]);
+  const [discovered, setDiscovered] = useState<Array<{ merchantId: string; lastSeenAt: string }>>([]);
   const [localStores, setLocalStores] = useState<Array<{ id: string; name: string }>>(() => data.stores.map((store) => ({ id: store.id, name: store.name })));
   const [setupOpen, setSetupOpen] = useState(false);
   const [storeForm, setStoreForm] = useState({ name: '', storeKind: '직영', billingCycle: 'monthly', paymentMethod: 'monthly_credit', notificationPhone: '' });
@@ -39,10 +40,13 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
     setLoading(true);
     setError('');
     try {
-      const [result, linkResult] = await Promise.all([loadPosReport(from, to, unit, storeFilter), loadPosLinks()]);
+      const [result, linkResult, discoveredResult] = await Promise.all([
+        loadPosReport(from, to, unit, storeFilter), loadPosLinks(), loadPosDiscovered(),
+      ]);
       setReport(result);
       setLinks(linkResult.links.map(({ id, storeId, merchantId, lastSyncAt }) => ({ id, storeId, merchantId, lastSyncAt })));
       setStoreNames(Object.fromEntries(linkResult.links.map((link) => [link.storeId, link.merchantId])));
+      setDiscovered(discoveredResult.merchants.map(({ merchantId, lastSeenAt }) => ({ merchantId, lastSeenAt })));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '매출을 불러오지 못했습니다.');
     } finally {
@@ -187,6 +191,19 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
           <Button type="button" variant="secondary" onClick={submitStore} disabled={setupBusy}>매장 등록</Button>
 
           <h3 className="setup-sub">② 토스플레이스 연동</h3>
+          {discovered.length > 0 && (
+            <div className="discovered-strip" data-testid="discovered-merchants" role="group" aria-label="자동 수집된 매장 ID">
+              <p className="muted">매장 POS에서 앱 설치가 감지됐습니다 — 매장 ID를 클릭하면 아래 입력칸에 채워집니다.</p>
+              <div className="discovered-chips">
+                {discovered.map((item) => (
+                  <button key={item.merchantId} type="button" className="chip"
+                    onClick={() => setLinkForm((current) => ({ ...current, merchantId: item.merchantId }))}>
+                    {item.merchantId} <span className="muted">({item.lastSeenAt.slice(0, 16).replace('T', ' ')})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="form-grid">
             <label>매장
               <select value={linkForm.storeId} onChange={(event) => setLinkForm({ ...linkForm, storeId: event.target.value })}>

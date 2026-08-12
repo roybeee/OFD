@@ -14,6 +14,10 @@ export interface PosSyncRun {
   storeId: string; from: string; to: string;
   rows: number; status: "ok" | "error"; error?: string;
 }
+export interface PosDiscoveredMerchant {
+  merchantId: string; eventType: string; status: "pending" | "linked" | "dismissed";
+  firstSeenAt: string; lastSeenAt: string;
+}
 
 export interface PosStore {
   upsertLink(link: Omit<PosLink, "id" | "lastSyncAt"> & { id?: string }): Promise<PosLink>;
@@ -24,7 +28,12 @@ export interface PosStore {
   itemRows(storeId: string, from: string, to: string): Promise<PosSaleRow[]>;
   touchLinkSynced(id: string, at: Date): Promise<void>;
   recordRun(run: PosSyncRun): Promise<void>;
-  recordWebhookInbox(provider: string, payload: unknown): Promise<void>;
+  /** eventId(x-toss-webhook-id)를 멱등 키로 저장한다. 이미 받은 이벤트면 false. */
+  recordWebhookInbox(provider: string, payload: unknown, eventId?: string): Promise<boolean>;
+  /* ── 앱 설치 웹훅으로 발견된 매장 ID 자동 수집 ── */
+  recordDiscoveredMerchant(merchantId: string, eventType: string): Promise<void>;
+  listDiscoveredMerchants(): Promise<PosDiscoveredMerchant[]>;
+  markDiscoveredLinked(merchantId: string): Promise<void>;
   /* ── 2단계: 상품·별칭 ── */
   createProduct(input: PosProductInput): Promise<PosProduct>;
   listProducts(): Promise<PosProduct[]>;
@@ -289,12 +298,38 @@ export class PostgresPosStore implements PosStore {
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [randomUUID(), run.storeId, run.from, run.to, run.rows, run.status, run.error ?? null]);
   }
-  async recordWebhookInbox(provider: string, payload: unknown): Promise<void> {
+  async recordWebhookInbox(provider: string, payload: unknown, eventId?: string): Promise<boolean> {
+    // webhook_inbox PK는 (provider, event_id) — 토스가 재전송해도 event_id로 멱등 처리된다.
+    const key = eventId?.trim() || `no-event-id:${randomUUID()}`;
+    const res = await this.pool.query(
+      `INSERT INTO webhook_inbox (provider, event_id, payload)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (provider, event_id) DO NOTHING`,
+      [provider, key, JSON.stringify(payload ?? {})]);
+    return (res.rowCount ?? 0) > 0;
+  }
+  async recordDiscoveredMerchant(merchantId: string, eventType: string): Promise<void> {
     await this.pool.query(
-      `INSERT INTO webhook_inbox (id, provider, dedupe_key, payload, received_at)
-       VALUES ($1,$2,$3,$4,now())
-       ON CONFLICT DO NOTHING`,
-      [randomUUID(), provider, `tossplace:${randomUUID()}`, JSON.stringify(payload ?? {})]);
+      `INSERT INTO pos_discovered_merchants (merchant_id, event_type)
+       VALUES ($1,$2)
+       ON CONFLICT (merchant_id) DO UPDATE SET
+         last_seen_at = now(), event_type = EXCLUDED.event_type,
+         status = CASE WHEN pos_discovered_merchants.status = 'linked' THEN 'linked' ELSE 'pending' END`,
+      [merchantId, eventType]);
+  }
+  async listDiscoveredMerchants(): Promise<PosDiscoveredMerchant[]> {
+    const res = await this.pool.query(
+      `SELECT merchant_id, event_type, status, first_seen_at, last_seen_at
+       FROM pos_discovered_merchants WHERE status = 'pending' ORDER BY last_seen_at DESC`);
+    return res.rows.map((r) => ({
+      merchantId: r.merchant_id, eventType: r.event_type, status: r.status,
+      firstSeenAt: new Date(r.first_seen_at).toISOString(), lastSeenAt: new Date(r.last_seen_at).toISOString(),
+    }));
+  }
+  async markDiscoveredLinked(merchantId: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE pos_discovered_merchants SET status = 'linked', last_seen_at = now() WHERE merchant_id = $1",
+      [merchantId]);
   }
   async createProduct(input: PosProductInput): Promise<PosProduct> {
     const sku = input.sku ?? `POS-${randomUUID().slice(0, 8)}`;
@@ -489,7 +524,37 @@ export class MemoryPosStore implements PosStore {
     if (link) link.lastSyncAt = at.toISOString();
   }
   async recordRun(run: PosSyncRun): Promise<void> { this.runs.push({ ...run }); }
-  async recordWebhookInbox(_provider: string, payload: unknown): Promise<void> { this.inbox.push(payload); }
+  private inboxEventIds = new Set<string>();
+  private discovered = new Map<string, PosDiscoveredMerchant>();
+  async recordWebhookInbox(provider: string, payload: unknown, eventId?: string): Promise<boolean> {
+    const key = eventId?.trim();
+    if (key) {
+      const dedupe = `${provider}:${key}`;
+      if (this.inboxEventIds.has(dedupe)) return false;
+      this.inboxEventIds.add(dedupe);
+    }
+    this.inbox.push(payload);
+    return true;
+  }
+  async recordDiscoveredMerchant(merchantId: string, eventType: string): Promise<void> {
+    const now = new Date().toISOString();
+    const existing = this.discovered.get(merchantId);
+    if (existing) {
+      existing.eventType = eventType;
+      existing.lastSeenAt = now;
+      if (existing.status !== "linked") existing.status = "pending";
+      return;
+    }
+    this.discovered.set(merchantId, { merchantId, eventType, status: "pending", firstSeenAt: now, lastSeenAt: now });
+  }
+  async listDiscoveredMerchants(): Promise<PosDiscoveredMerchant[]> {
+    return [...this.discovered.values()].filter((m) => m.status === "pending")
+      .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)).map((m) => ({ ...m }));
+  }
+  async markDiscoveredLinked(merchantId: string): Promise<void> {
+    const found = this.discovered.get(merchantId);
+    if (found) { found.status = "linked"; found.lastSeenAt = new Date().toISOString(); }
+  }
   private products = new Map<string, PosProduct>();
   private aliases = new Map<string, { alias: string; storeId: string | null; productId: string }>();
   async createProduct(input: PosProductInput): Promise<PosProduct> {

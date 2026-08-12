@@ -19,7 +19,7 @@ import { ProcurementService } from "./service.ts";
 import { coolingGate, createFieldStore, createOpeningStore, createPosStore, kstToday, LEAD_STAGES,
   OPENING_PHASES, type OpeningPhase, type OpeningStage } from "@ofd/db";
 import { DomainError as PosDomainError } from "@ofd/domain";
-import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems } from "@ofd/integrations";
+import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems, verifyTossWebhookSignature } from "@ofd/integrations";
 import { randomUUID as posRandomUUID } from "node:crypto";
 import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipment, Store as PosStoreRecord, TaxInvoice } from "@ofd/domain";
 import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
@@ -59,6 +59,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const sessionSecret = env.SESSION_SECRET ?? processSessionSecret;
   const authService = new AuthService(repository, sessionSecret, config.appMode, env.ENCRYPTION_KEY);
   const app = Fastify({ logger: options.logger ?? env.LOG_LEVEL !== "silent", bodyLimit: config.uploadMaxBytes, trustProxy: true });
+
+  /* 웹훅 서명(HMAC)은 파싱 전 원문 바이트가 필요하다 — 기본 JSON 파서를 원문 보존형으로 교체 */
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+    (request as { rawBody?: string }).rawBody = body as string;
+    if (!body) { done(null, null); return; }
+    try { done(null, JSON.parse(body as string)); }
+    catch { done(new DomainError("INVALID_JSON", "요청 본문 JSON을 해석할 수 없습니다.", 400)); }
+  });
 
   await app.register(cookie);
   await app.register(cors, {
@@ -461,6 +469,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       accessKeyEnc: encryptPosSecret(body.accessKey, encryptionKey),
       secretKeyEnc: encryptPosSecret(body.secretKey, encryptionKey),
     });
+    await posStore.markDiscoveredLinked(body.merchantId);
     reply.code(201);
     return { id: link.id, storeId: link.storeId, merchantId: link.merchantId, status: link.status };
   });
@@ -908,12 +917,47 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { ok: true };
   });
 
+  /* 토스플레이스 웹훅 — 매장 POS에 OFD 앱이 설치되면 app.installation.created.v1이 오고,
+   * merchantId를 자동 수집해 매출현황 연동 화면에 노출한다.
+   * 서명 secret이 설정되면 검증 실패는 401, production에서 secret 미설정이면 수집만 하고 처리하지 않는다(위조 방지). */
+  const tossWebhookSecret = (env.TOSSPLACE_WEBHOOK_SECRET ?? "").trim();
   app.post("/api/v2/webhooks/tossplace", async (request) => {
-    const payload = request.body as { merchantId?: unknown } | null;
-    await posStore.recordWebhookInbox("tossplace", payload);
-    const merchantId = payload && typeof payload.merchantId !== "undefined" ? String(payload.merchantId) : null;
+    if (tossWebhookSecret) {
+      const rawBody = (request as { rawBody?: string }).rawBody ?? "";
+      const signature = String(request.headers["x-toss-signature"] ?? "");
+      const timestamp = String(request.headers["x-toss-timestamp"] ?? "");
+      if (!verifyTossWebhookSignature(rawBody, timestamp, signature, tossWebhookSecret)) {
+        throw new PosDomainError("WEBHOOK_SIGNATURE_INVALID", "웹훅 서명이 올바르지 않습니다.", 401);
+      }
+    }
+    const payload = request.body as { id?: unknown; type?: unknown; merchantId?: unknown } | null;
+    const eventId = String(request.headers["x-toss-webhook-id"] ?? "").trim()
+      || (typeof payload?.id === "string" ? payload.id : "");
+    const fresh = await posStore.recordWebhookInbox("tossplace", payload, eventId || undefined);
+    const merchantId = payload && payload.merchantId !== undefined && payload.merchantId !== null ? String(payload.merchantId) : null;
+    const eventType = typeof payload?.type === "string" ? payload.type : "";
+    const mayProcess = Boolean(tossWebhookSecret) || config.appMode !== "production";
+    let discovered = false;
+    if (fresh && mayProcess && merchantId && eventType.startsWith("app.installation.created")) {
+      await posStore.recordDiscoveredMerchant(merchantId, eventType);
+      if (await posStore.findLinkByMerchant(merchantId)) {
+        await posStore.markDiscoveredLinked(merchantId);
+      } else {
+        discovered = true;
+        await repository.commit({ changes: [], audits: [posAudit(
+          { id: "tossplace-webhook", name: "토스플레이스 웹훅", role: "system" } as PosActor,
+          "system", merchantId, "pos.merchant_discovered", undefined, undefined, undefined,
+          { merchantId, eventType, eventId })] });
+      }
+    }
     const known = merchantId ? await posStore.findLinkByMerchant(merchantId) : null;
-    return { ok: true, merchantId, known: Boolean(known) };
+    return { ok: true, merchantId, known: Boolean(known), discovered };
+  });
+
+  /* 웹훅으로 발견됐지만 아직 매장과 연결되지 않은 merchantId 목록 */
+  app.get("/api/v2/pos/discovered", async (request) => {
+    assertPosRole(request.actor);
+    return { merchants: await posStore.listDiscoveredMerchants() };
   });
 
   app.post("/api/v2/webhooks/popbill", async (request, reply) => {

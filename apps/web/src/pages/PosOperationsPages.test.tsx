@@ -75,6 +75,7 @@ describe('POS 현장 운영 화면', () => {
       const url = String(input);
       if (url.includes('/pos/report')) return json(REPORT);
       if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
       throw new Error(`unexpected ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -109,6 +110,7 @@ describe('POS 현장 운영 화면', () => {
       }
       if (url.includes('/pos/report')) return json({ unit: 'day', storeIds: [], rows: [] });
       if (url.includes('/pos/links')) return json({ links: [] });
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
       throw new Error(`unexpected ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -139,11 +141,35 @@ describe('POS 현장 운영 화면', () => {
     expect(captured[1]?.body).toMatchObject({ storeId: 'store-9', merchantId: '777', accessKey: 'AK', secretKey: 'SK' });
   });
 
+  it('POS 연동: 웹훅으로 자동 수집된 merchantId 칩을 클릭하면 입력칸에 채워진다', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/pos/report')) return json({ unit: 'day', storeIds: [], rows: [] });
+      if (url.includes('/pos/discovered')) {
+        return json({ merchants: [{ merchantId: '905533', eventType: 'app.installation.created.v1', lastSeenAt: '2026-08-12T04:00:00.000Z' }] });
+      }
+      if (url.includes('/pos/links')) return json({ links: [] });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await render(<HqSalesPage data={data} notify={() => {}} />);
+
+    const strip = container.querySelector('[data-testid="discovered-merchants"]');
+    expect(strip).toBeTruthy();
+    expect(strip!.textContent).toContain('앱 설치가 감지');
+    const chip = [...strip!.querySelectorAll('button')].find((node) => node.textContent?.includes('905533')) as HTMLButtonElement;
+    await act(async () => { chip.click(); });
+    const merchantInput = [...container.querySelectorAll('input[type="text"]')]
+      .find((node) => (node as HTMLInputElement).placeholder.includes('매장 ID')) as HTMLInputElement;
+    expect(merchantInput.value).toBe('905533');
+  });
+
   it('매출현황: 집계 단위를 바꾸면 해당 unit으로 다시 조회한다', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/pos/report')) return json({ ...REPORT, unit: url.includes('unit=week') ? 'week' : 'day' });
       if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
       throw new Error(`unexpected ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -173,6 +199,7 @@ describe('POS 현장 운영 화면', () => {
       if (url.includes('/pos/waste')) return json({ storeId: 'store-1', date: '2026-08-04', hasReceipt: false, hasPos: true,
         items: [], totals: { received: null, sold: 12, waste: null, wasteRatePct: null, lossAmount: null } });
       if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
       throw new Error(`unexpected ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -204,6 +231,7 @@ describe('POS 현장 운영 화면', () => {
         });
       }
       if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
       throw new Error(`unexpected ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -231,6 +259,7 @@ describe('POS 현장 운영 화면', () => {
         return json({ openings: [opening], board: { 상담중: [], 진행: [opening], 보류: [], 완료: [] },
           kpi: { active: 1, overdue: 2, within30Days: 1 } });
       }
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
       throw new Error(`unexpected ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);

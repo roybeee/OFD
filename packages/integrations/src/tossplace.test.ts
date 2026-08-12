@@ -86,3 +86,20 @@ test("위조된 암호문과 잘못된 키를 거부한다", () => {
   assert.throws(() => decryptPosSecret("bogus", key), /POS_SECRET_FORMAT/);
   assert.throws(() => encryptPosSecret("x", ""), /ENCRYPTION_KEY_REQUIRED/);
 });
+
+/* 공식 문서(docs.tossplace.com/reference/open-api/webhook.html)의 서명 예시를 그대로 회귀 벡터로 쓴다 */
+test("웹훅 서명을 공식 문서 예시 벡터로 검증한다", async () => {
+  const { verifyTossWebhookSignature } = await import("./tossplace.ts");
+  const secret = "GA1k8THAGeGihd_Z0rW0MqpRTDQGYIktHBfmCWbsZn0";
+  const timestamp = "1767225600000";
+  const body = '{"id":"000000000000000000000000","type":"_test.v1","createdAt":"2026-01-01T00:00:00.000Z","merchantId":42,"app":"my-awesome-app","data": {}}';
+  const signature = "v1=0398718113ed9a277320953cd613e4ecad4fed4a6dc843064ec311e14368774e";
+  const now = Number(timestamp);
+  assert.equal(verifyTossWebhookSignature(body, timestamp, signature, secret, now), true);
+  /* 위변조·시계 어긋남·비밀키 오류는 전부 거부 */
+  assert.equal(verifyTossWebhookSignature(body.replace("42", "43"), timestamp, signature, secret, now), false);
+  assert.equal(verifyTossWebhookSignature(body, timestamp, "v1=deadbeef", secret, now), false);
+  assert.equal(verifyTossWebhookSignature(body, timestamp, signature, "wrong-secret", now), false);
+  assert.equal(verifyTossWebhookSignature(body, timestamp, signature, secret, now + 6 * 60_000), false);
+  assert.equal(verifyTossWebhookSignature(body, "not-a-number", signature, secret, now), false);
+});

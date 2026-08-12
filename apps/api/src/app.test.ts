@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { createDemoRepository, DEMO_IDS } from "@ofd/db";
 import { MockObjectStorage } from "@ofd/integrations";
 import { generateTotp, type OriginalDocument, type Shipment, type TaxInvoice } from "@ofd/domain";
@@ -82,6 +83,68 @@ describe("OFD v2 API", () => {
     expect((await app.inject({ method: "GET", url: "/api/v2/leads", headers: { "x-demo-actor-id": DEMO_IDS.owner } })).statusCode).toBe(403);
     expect((await app.inject({ method: "DELETE", url: `/api/v2/leads/${leadId}`, headers: master })).statusCode).toBe(200);
     expect((await app.inject({ method: "DELETE", url: `/api/v2/leads/${leadId}`, headers: master })).statusCode).toBe(404);
+  });
+
+  it("토스플레이스 앱 설치 웹훅이 merchantId를 자동 수집하고 연동 등록 시 목록에서 사라진다", async () => {
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent",
+      ENCRYPTION_KEY: "test-encryption-key-32chars-min!!" }, logger: false });
+    openApps.push(app);
+    const master = { "x-demo-actor-id": DEMO_IDS.master };
+    const install = (id: string, merchantId: number) => app.inject({ method: "POST", url: "/api/v2/webhooks/tossplace",
+      headers: { "x-toss-webhook-id": id },
+      payload: { id, type: "app.installation.created.v1", createdAt: "2026-08-12T00:00:00Z", merchantId, app: "ofd", data: {} } });
+
+    const first = await install("wh-1", 4242);
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ ok: true, merchantId: "4242", known: false, discovered: true });
+    /* at-least-once 재전송은 x-toss-webhook-id로 멱등 처리 */
+    await install("wh-1", 4242);
+    const list = await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: master });
+    expect((list.json() as { merchants: Array<{ merchantId: string }> }).merchants).toEqual([
+      expect.objectContaining({ merchantId: "4242", eventType: "app.installation.created.v1" }),
+    ]);
+
+    /* 발견된 ID를 매장과 연동하면 pending 목록에서 사라진다 */
+    const bootstrap = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: master });
+    const storeId = (bootstrap.json() as { stores: Array<{ id: string }> }).stores[0]!.id;
+    const linked = await app.inject({ method: "POST", url: "/api/v2/pos/links", headers: master,
+      payload: { storeId, merchantId: "4242", accessKey: "ak", secretKey: "sk" } });
+    expect(linked.statusCode).toBe(201);
+    expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: master })
+      .then((res) => res.json() as { merchants: unknown[] })).merchants).toHaveLength(0);
+
+    /* 이미 연동된 매장의 재설치 웹훅은 pending으로 돌아오지 않는다 */
+    await install("wh-2", 4242);
+    expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: master })
+      .then((res) => res.json() as { merchants: unknown[] })).merchants).toHaveLength(0);
+
+    /* 설치 외 이벤트는 수집하지 않고, 점주는 목록 조회가 막힌다 */
+    await app.inject({ method: "POST", url: "/api/v2/webhooks/tossplace", headers: { "x-toss-webhook-id": "wh-3" },
+      payload: { id: "wh-3", type: "order.created.v1", merchantId: 9999, data: {} } });
+    expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: master })
+      .then((res) => res.json() as { merchants: unknown[] })).merchants).toHaveLength(0);
+    expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered",
+      headers: { "x-demo-actor-id": DEMO_IDS.owner } })).statusCode).toBe(403);
+  });
+
+  it("웹훅 서명 secret이 설정되면 서명이 틀린 요청을 401로 거부한다", async () => {
+    const secret = "GA1k8THAGeGihd_Z0rW0MqpRTDQGYIktHBfmCWbsZn0";
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent",
+      TOSSPLACE_WEBHOOK_SECRET: secret }, logger: false });
+    openApps.push(app);
+    const rawBody = JSON.stringify({ id: "wh-sig", type: "app.installation.created.v1", merchantId: 7, data: {} });
+    const timestamp = String(Date.now());
+    const signature = `v1=${createHmac("sha256", secret).update(`${timestamp}.${rawBody}`, "utf8").digest("hex")}`;
+    const ok = await app.inject({ method: "POST", url: "/api/v2/webhooks/tossplace",
+      headers: { "content-type": "application/json", "x-toss-webhook-id": "wh-sig",
+        "x-toss-timestamp": timestamp, "x-toss-signature": signature },
+      payload: rawBody });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ ok: true, discovered: true });
+    const forged = await app.inject({ method: "POST", url: "/api/v2/webhooks/tossplace",
+      headers: { "content-type": "application/json", "x-toss-timestamp": timestamp, "x-toss-signature": "v1=00" },
+      payload: rawBody });
+    expect(forged.statusCode).toBe(401);
   });
 
   it("매출현황 매장 등록은 마스터만 가능하고 store 스냅샷에 자기 스코프를 남긴다", async () => {
