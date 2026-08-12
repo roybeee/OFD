@@ -1995,7 +1995,7 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
   font-size: var(--label-font); font-weight: 750;
 }
 :root .page-head h1, :root .page-heading h1, :root .driver-greeting h1 {
-  font-size: clamp(24px, 2.2vw, 31px); line-height: 1.2; font-weight: 800;
+  font-size: clamp(25px, 2.4vw, 34px); line-height: 1.2; font-weight: 800;
 }
 :root .page-head p, :root .page-heading > div:first-child > p:last-child { font-size: 13px; }
 :root .page-head h2, :root .panel > h2 { font-size: 15px; font-weight: 800; }
@@ -2016,7 +2016,8 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
   width: auto; max-width: 190px; min-height: 38px; padding: 0 9px; border-radius: 8px;
 }
 
-/* 모바일: 토큰만 키워 iOS 자동 확대(16px 미만) 방지 */
+/* 모바일: 토큰만 키워 iOS 자동 확대(16px 미만) 방지.
+ * 페이지 제목은 현장(점주·기사) 가독 기준 30px 이상 유지 — e2e expectMobileReadability가 강제한다 */
 @media (max-width: 720px) {
   :root {
     --control-h: 48px;
@@ -2024,4 +2025,8 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
     --control-pad-x: 13px;
     --label-font: 13.5px;
   }
+  :root .page-head h1, :root .page-heading h1, :root .driver-greeting h1 { font-size: 32px; line-height: 1.16; }
+}
+@media (max-width: 500px) {
+  :root .page-head h1, :root .page-heading h1, :root .driver-greeting h1 { font-size: 30px; }
 }
