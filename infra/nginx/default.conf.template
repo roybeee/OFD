@@ -23,6 +23,17 @@ server {
     proxy_read_timeout 30s;
   }
 
+  # PWA 설치 파일은 규격 MIME(application/manifest+json)으로 내려야 일부 브라우저에서 설치가 거부되지 않는다
+  location = /manifest.webmanifest {
+    default_type application/manifest+json;
+    add_header Cache-Control "public, max-age=3600";
+  }
+
+  # 서비스워커는 캐시되면 새 버전이 안 잡힌다 — 항상 원본 확인
+  location = /sw.js {
+    add_header Cache-Control "no-cache";
+  }
+
   location / {
     try_files $uri $uri/ /index.html;
   }
