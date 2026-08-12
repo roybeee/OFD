@@ -29,7 +29,10 @@
 
 * { box-sizing: border-box; }
 html { min-width: 320px; background: var(--canvas); scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; min-height: 100vh; overflow-x: hidden; background: var(--canvas); }
+body { margin: 0; min-width: 320px; min-height: 100vh; overflow-x: hidden; background: var(--canvas);
+  padding-bottom: env(safe-area-inset-bottom); }
+/* 가로 노치(landscape)에서 콘텐츠가 잘리지 않게 */
+.app-header, .page, .app-footer { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
 button, input, select, textarea { font: inherit; color: inherit; }
 button, a, input, select { min-height: 44px; }
 button { border: 0; cursor: pointer; }
@@ -1100,8 +1103,9 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
   .profile-button { width: 44px; padding: 4px; }
   .profile-button > svg { display: none; }
   .context-title { display: none; }
-  .primary-nav { flex: 1; }
-  .primary-nav button { flex: 1; justify-content: center; }
+  /* 모바일 내비는 가로 스크롤 스트립 — 폭에 맞춰 눌러 담지 않는다(글자 세로 깨짐 방지) */
+  .primary-nav { flex: 1 1 auto; min-width: 0; overflow-x: auto; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+  .primary-nav button { flex: none; justify-content: center; white-space: nowrap; scroll-snap-align: start; }
   .metrics-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .store-metrics, .driver-metrics { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .delivery-board { grid-template-columns: 1fr; }
@@ -1142,8 +1146,10 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
   .role-compact { display: inline; }
   .role-switcher button { padding: 0 10px; }
   .profile-button { display: none; }
-  .context-bar { gap: 4px; }
-  .source-pill { min-width: 26px; padding: 0 7px; font-size: 0; }
+  .context-bar { gap: 6px; }
+  /* 연결 상태는 점만 — 내비 폭을 최대한 내어준다 */
+  .source-pill { min-width: 22px; min-height: 22px; padding: 0 6px; font-size: 0; }
+  .source-pill span { width: 8px; height: 8px; }
   .primary-nav button { padding: 0 9px; }
   .primary-nav button::after { left: 8px; right: 8px; }
   .page { padding-top: 22px; }
@@ -1260,16 +1266,20 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 
 @media (max-width: 500px) {
   .header-main, .context-bar, .page, .app-footer, .page-driver { width: min(100% - 24px,1480px); }
-  .header-main { flex-wrap: wrap; gap: 7px; padding: 9px 0; }
-  .brand { min-height: 42px; }
-  .brand-copy strong { font-size: 15px; }
-  .header-actions { width: 100%; }
+  /* 헤더는 한 줄로 — 브랜드 + 홈(아이콘) + 로그아웃. 콘텐츠가 첫 화면에 더 들어온다 */
+  .header-main { flex-wrap: nowrap; gap: 8px; padding: 8px 0; }
+  .brand { min-height: 42px; min-width: 0; }
+  .brand-copy strong { font-size: 14px; }
+  .header-actions { width: auto; flex: none; gap: 6px; }
+  .legacy-home-link { min-width: 44px; padding: 0 11px; }
+  .legacy-home-link span { display: none; }        /* 아이콘만 — 이름은 aria-label로 읽힌다 */
+  .header-actions .button { padding: 0 12px; font-size: 12px; }
   .role-switcher { flex: 1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
   .role-switcher button { padding: 0 5px; }
   .context-bar { min-height: 55px; }
-  .primary-nav button { flex-direction: column; gap: 2px; padding: 4px; font-size: 11px; line-height: 1.2; }
-  .primary-nav button { min-width: 0; white-space: normal; }
-  .primary-nav button span { max-width: 100%; overflow-wrap: anywhere; }
+  .primary-nav button { flex-direction: column; gap: 3px; padding: 6px 10px; font-size: 11px; line-height: 1.2; }
+  .primary-nav button { flex: none; white-space: nowrap; }
+  .primary-nav button span { max-width: none; overflow-wrap: normal; }
   .primary-nav button svg { width: 17px; height: 17px; }
   .page-heading, .driver-greeting { margin-bottom: 17px; }
   .page-heading h1, .driver-greeting h1 { font-size: 25px; }
@@ -2100,3 +2110,10 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 .candidate-pick strong { font-weight: 800; }
 .candidate-pick .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
 @media (max-width: 720px) { .candidate-form { grid-template-columns: 1fr; } }
+
+/* 모바일: 표는 셀을 쪼개 세로로 눌러 담지 말고 가로 스크롤로 읽는다("독산 점" 같은 줄바꿈 방지) */
+@media (max-width: 720px) {
+  .data-table th, .data-table td { white-space: nowrap; }
+  .data-table th[scope='row'] { position: sticky; left: 0; background: inherit; }
+  .table-wrap { scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+}
