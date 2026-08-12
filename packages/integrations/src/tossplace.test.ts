@@ -57,8 +57,32 @@ test("할인이 판매가를 넘어도 음수 금액을 만들지 않는다", as
 test("KST 경계를 포함하도록 조회 구간을 to+1일로 요청한다", async () => {
   const calls: string[] = [];
   await fetchRange(ORDERS, calls);
-  assert.ok(calls[0]?.includes(encodeURIComponent("2026-08-03T00:00:00+09:00")));
-  assert.ok(calls[0]?.includes(encodeURIComponent("2026-08-05T00:00:00+09:00")), "종료일 다음날 자정까지 조회한다");
+  assert.ok(calls[0]?.includes(`from=${encodeURIComponent("2026-08-03T00:00:00+09:00")}`));
+  assert.ok(calls[0]?.includes(`to=${encodeURIComponent("2026-08-05T00:00:00+09:00")}`), "종료일 다음날 자정까지 조회한다");
+});
+
+/* 실서비스 404 회귀(2026-08-12): 실제 토스 경로는 /order/orders이고 from·to·orderStates
+ * 파라미터를 쓴다 — V1 server.js tossFetchRange와 동일해야 수집이 된다. */
+test("토스 주문 조회는 V1과 동일한 /order/orders 경로·파라미터로 호출한다", async () => {
+  const calls: string[] = [];
+  await fetchRange(ORDERS, calls);
+  const url = new URL(calls[0]!);
+  assert.equal(url.pathname, "/api-public/openapi/v1/merchants/521445/order/orders");
+  assert.equal(url.searchParams.get("orderStates"), "COMPLETED");
+  assert.equal(url.searchParams.get("sortOrder"), "ASC");
+  assert.equal(url.searchParams.get("size"), "500");
+  assert.equal(url.searchParams.get("page"), "1");
+});
+
+test("COMPLETED가 아닌 주문은 걸러지고 completedAt 없으면 createdAt으로 귀속한다", async () => {
+  const items = await fetchRange([
+    { orderState: "CANCELED", completedAt: "2026-08-03T05:00:00+09:00", lineItems: [
+      { item: { title: "취소건" }, quantity: 1, itemPrice: { priceValue: 1000 } }] },
+    { orderState: "COMPLETED", createdAt: "2026-08-03T06:00:00+09:00", lineItems: [
+      { item: { title: "생성시각귀속" }, quantity: 2, itemPrice: { priceValue: 1000 } }] },
+  ]);
+  assert.ok(!items.some((i) => i.rawName === "취소건"));
+  assert.equal(items.find((i) => i.rawName === "생성시각귀속")?.qty, 2);
 });
 
 test("SUCCESS 봉투가 아니면 오류를 던진다", async () => {

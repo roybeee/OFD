@@ -54,14 +54,16 @@ export async function fetchTossDailyItems(input: TossFetchInput): Promise<TossDa
   const toParam = encodeURIComponent(`${addDays(input.to, 1)}T00:00:00+09:00`);
   const agg = new Map<string, TossDailyItem>();
   for (let page = 1; page <= PAGE_LIMIT; page++) {
-    const url = `${TP_BASE}${encodeURIComponent(input.merchantId)}/orders?startDateTime=${fromParam}&endDateTime=${toParam}&page=${page}&size=${PAGE_SIZE}`;
+    /* 경로·파라미터는 V1 tossFetchRange와 동일해야 한다 — /orders 단독 경로는 404 (2026-08-12 회귀) */
+    const url = `${TP_BASE}${encodeURIComponent(input.merchantId)}/order/orders?from=${fromParam}&to=${toParam}&orderStates=COMPLETED&page=${page}&size=${PAGE_SIZE}&sortOrder=ASC`;
     const success = await tpGet(url, input.accessKey, input.secretKey, fetchImpl);
     const orders = Array.isArray((success as { orders?: unknown[] })?.orders)
       ? ((success as { orders: unknown[] }).orders)
       : Array.isArray(success) ? (success as unknown[]) : [];
     for (const order of orders) {
-      const o = order as { orderedAt?: string; completedAt?: string; lineItems?: Array<Record<string, unknown>> };
-      const kp = kstParts(o.completedAt ?? o.orderedAt);
+      const o = order as { orderState?: string; createdAt?: string; orderedAt?: string; completedAt?: string; lineItems?: Array<Record<string, unknown>> };
+      if (o.orderState && o.orderState !== "COMPLETED") continue;
+      const kp = kstParts(o.completedAt ?? o.createdAt ?? o.orderedAt);
       if (!kp || kp.date < input.from || kp.date > input.to) continue;
       for (const li of o.lineItems ?? []) {
         const item = li.item as { title?: string } | undefined;
