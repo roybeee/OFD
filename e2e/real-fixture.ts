@@ -28,7 +28,7 @@ function generateTotp(base32Secret: string) {
 }
 
 export const accounts = {
-  store: { email: 'store.owner@ofd.local', screen: 'store-order-screen' },
+  store: { email: 'store.owner@ofd.local', screen: 'store-home-screen' },
   ops: { email: 'hq.ops@ofd.local', screen: 'hq-order-screen' },
   finance: { email: 'hq.finance@ofd.local', screen: 'hq-reconciliation-screen' },
   master: { email: 'hq.master@ofd.local', screen: 'hq-order-screen' },

@@ -72,6 +72,9 @@ test.describe.serial('real V2 order-to-tax-invoice lifecycle', () => {
     expect((await page.request.get('/api/v2/bootstrap')).status()).toBe(401);
 
     await login(page, 'store', true);
+    // 점주는 필수 기능만 모은 홈으로 들어오고, 발주는 홈의 안내 카드에서 이어간다.
+    await expect(page.getByTestId('store-home-screen')).toBeVisible();
+    await page.goto('/store/orders', { waitUntil: 'networkidle' });
     await expect(page.getByTestId('store-order-screen')).toBeVisible();
     await page.getByRole('button', { name: /새 발주 시작/ }).click();
     const wizard = page.getByRole('dialog');
@@ -214,8 +217,8 @@ test.describe.serial('real V2 order-to-tax-invoice lifecycle', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page, 'store');
     await page.goto('/hq/invoices', { waitUntil: 'networkidle' });
-    await expect(page).toHaveURL(/\/store\/orders$/);
-    await expect(page.getByTestId('store-order-screen')).toBeVisible();
+    await expect(page).toHaveURL(/\/store\/home$/);
+    await expect(page.getByTestId('store-home-screen')).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await expectMobileReadability(page);
     await expectAccessible(page);

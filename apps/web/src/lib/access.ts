@@ -1,6 +1,8 @@
 import type { Role } from '../types';
 
 export const pathCapability: Record<string, string> = {
+  // 점주 홈이 매장 계정의 첫 화면이다 — defaultPathFor가 삽입 순서를 따르므로 맨 앞에 둔다.
+  '/store/home': 'store.orders.read',
   '/store/orders': 'store.orders.read',
   '/store/documents': 'store.documents.read',
   '/hq/orders': 'hq.orders.read',

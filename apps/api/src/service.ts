@@ -733,7 +733,9 @@ export class ProcurementService {
     const allReceipts = await this.repository.list<GoodsReceipt>("receipt", [store.id]);
     const usedIds = new Set((await this.repository.list<Settlement>("settlement", [store.id])).flatMap((settlement) => settlement.receiptIds));
     const selected = allReceipts.filter((receipt) => {
-      const date = receipt.confirmedAt.slice(0, 10);
+      // 정산 기간은 영업일(Asia/Seoul) 기준으로 들어온다. 확정 시각을 UTC로 자르면
+      // 00~09시(KST)에 확정된 입고가 전날로 밀려 정산에서 누락된다.
+      const date = operationalDateKst(new Date(receipt.confirmedAt));
       return receipt.status === "confirmed" && date >= input.periodStart && date <= input.periodEnd && !usedIds.has(receipt.id)
         && (!input.receiptIds || input.receiptIds.includes(receipt.id));
     });
