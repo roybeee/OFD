@@ -81,7 +81,7 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
   const mapInstance = useRef<unknown>(null);
   const markerPositions = useRef(new Map<string, { lat: number; lng: number }>());
   const distanceLine = useRef<NaverMarker | null>(null);
-  const [mapStatus, setMapStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [mapStatus, setMapStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'auth-error'>('idle');
   const [geocodeMisses, setGeocodeMisses] = useState<string[]>([]);
   const [selectedForDistance, setSelectedForDistance] = useState<string[]>([]);
 
@@ -119,6 +119,8 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
       };
       next();
     };
+    /* 네이버 SDK는 키·도메인 인증 실패 시 이 전역 콜백을 부른다 — 스크립트 차단과 구분해 안내 */
+    (window as { navermap_authFailure?: () => void }).navermap_authFailure = () => setMapStatus('auth-error');
     const existing = document.getElementById(scriptId);
     if (existing) { init(); return; }
     const script = document.createElement('script');
@@ -285,7 +287,8 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
         {mapKey && geocodable.length === 0 && <p className="panel-empty-copy">도로명주소가 입력된 매장이 없습니다. 대장에서 주소를 채우면 지도에 표시됩니다.</p>}
         {mapKey && geocodable.length > 0 && (
           <>
-            {mapStatus === 'error' && <p className="panel-empty-copy">지도 스크립트를 불러오지 못했습니다. 키가 올바른지, 네이버 클라우드 콘솔에 이 도메인이 등록됐는지 확인해 주세요.</p>}
+            {mapStatus === 'error' && <p className="panel-empty-copy">지도 스크립트를 불러오지 못했습니다. 네트워크 상태를 확인하고 새로고침해 주세요.</p>}
+            {mapStatus === 'auth-error' && <p className="panel-empty-copy">지도 키 인증에 실패했습니다. 네이버 클라우드 콘솔에서 Maps Application의 Client ID(ncpKeyId)가 맞는지, Web 서비스 URL에 https://ofd-web.onrender.com 이 등록됐는지 확인해 주세요.</p>}
             <div ref={mapContainer} style={{ width: '100%', height: 360, borderRadius: 13, overflow: 'hidden' }} aria-label="매장 위치 지도" role="application" />
             {distanceText && <p className="muted" role="status">{distanceText}</p>}
             {geocodeMisses.length > 0 && <p className="muted">주소를 찾지 못한 매장: {geocodeMisses.join(', ')}</p>}
