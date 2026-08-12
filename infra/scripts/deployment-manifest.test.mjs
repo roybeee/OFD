@@ -42,7 +42,10 @@ test('Render blueprint defines Web proxy, private API, worker, managed Postgres,
   const manifest = await text('render.yaml');
   assert.match(manifest, /type:\s*web[\s\S]*dockerfilePath:\s*\.\/infra\/docker\/web\.Dockerfile/);
   assert.match(manifest, /type:\s*pserv[\s\S]*dockerfilePath:\s*\.\/infra\/docker\/api\.Dockerfile/);
-  assert.match(manifest, /preDeployCommand:[^\n]*preflight\.mjs migrate[^\n]*node packages\/db\/dist\/migrate\.js/);
+  /* preDeployCommand는 셸 연산자(&&) 금지 — Render가 전체를 첫 프로그램 인자로 넘겨
+   * 뒷 명령이 실행되지 않는다(2026-08-12 migrate 미실행 장애). 단일 스크립트만 허용. */
+  assert.match(manifest, /preDeployCommand:\s*node infra\/scripts\/deploy\/predeploy-migrate\.mjs\s*$/m);
+  assert.doesNotMatch(manifest, /preDeployCommand:[^\n]*&&/);
   assert.match(manifest, /type:\s*worker[\s\S]*dockerfilePath:\s*\.\/infra\/docker\/worker\.Dockerfile/);
   assert.match(manifest, /type:\s*worker[\s\S]*preDeployCommand:[^\n]*preflight\.mjs worker/);
   assert.match(manifest, /fromDatabase:[\s\S]*property:\s*connectionString/);

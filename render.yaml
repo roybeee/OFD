@@ -25,7 +25,7 @@ services:
     dockerfilePath: ./infra/docker/api.Dockerfile
     dockerContext: .
     dockerCommand: node apps/api/dist/server.js
-    preDeployCommand: node infra/scripts/deploy/preflight.mjs migrate && node packages/db/dist/migrate.js
+    preDeployCommand: node infra/scripts/deploy/predeploy-migrate.mjs
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 60
     envVars:
