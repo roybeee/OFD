@@ -37,4 +37,12 @@ export function runDeploymentPreflight(env = process.env, role = process.argv[2]
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = runDeploymentPreflight();
+  /* 자기 치유: Render preDeployCommand는 셸이 아니어서 '&&' 이후가 이 스크립트의
+   * 잉여 인자로 들어온다(2026-08-12 migrate 미실행 장애). 대시보드에 옛 명령
+   * 'preflight.mjs migrate && node packages/db/dist/migrate.js'가 남아 있어도
+   * 여기서 끊긴 체인을 마저 실행한다. 새 배포 설정은 predeploy-migrate.mjs를 쓴다. */
+  if (process.exitCode === 0 && process.argv[2] === 'migrate' && process.argv.includes('&&')) {
+    await import('../../../packages/db/dist/migrate.js');
+    console.log('pre-deploy migrate finished (legacy command self-heal)');
+  }
 }
