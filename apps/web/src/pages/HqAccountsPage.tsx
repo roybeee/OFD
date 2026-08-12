@@ -67,7 +67,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   useEffect(() => { void load(); }, []);
 
   const storesRequired = storeRoles.has(role);
-  const canSubmit = name.trim().length >= 2 && email.trim() && password.length >= 12
+  const canSubmit = name.trim().length >= 2 && email.trim() && password.length >= 10
     && (!storesRequired || storeIds.length > 0);
 
   function changeRole(nextRole: ProvisionableActorRole) {
@@ -152,8 +152,8 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
               <input id="account-email" type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} />
             </label>
             <label htmlFor="account-password">초기 비밀번호
-              <input id="account-password" type="password" required minLength={12} maxLength={200} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby="account-password-hint" />
-              <small id="account-password-hint" className="field-hint">12자 이상. 생성 후 화면에 다시 표시되지 않습니다.</small>
+              <input id="account-password" type="password" required minLength={10} maxLength={200} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby="account-password-hint" />
+              <small id="account-password-hint" className="field-hint">10자 이상, 숫자·특수문자 포함. 생성 후 화면에 다시 표시되지 않습니다.</small>
             </label>
             {storesRequired && (
               <fieldset className="store-assignment">
@@ -220,7 +220,7 @@ function ResetAccountDialog({ actor, onClose, onSaved }: {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || password.length < 12) return;
+    if (busy || password.length < 10) return;
     setBusy(true);
     setError('');
     try {
@@ -241,11 +241,11 @@ function ResetAccountDialog({ actor, onClose, onSaved }: {
         <p>새 비밀번호를 저장하면 이 계정의 기존 로그인 세션이 모두 종료됩니다.</p>
         <form onSubmit={submit} noValidate>
           <label htmlFor="reset-password">새 비밀번호
-            <input data-dialog-initial id="reset-password" type="password" minLength={12} maxLength={200} required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby="reset-password-hint" />
-            <small id="reset-password-hint" className="field-hint">12자 이상. 저장 후 화면에 다시 표시되지 않습니다.</small>
+            <input data-dialog-initial id="reset-password" type="password" minLength={10} maxLength={200} required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby="reset-password-hint" />
+            <small id="reset-password-hint" className="field-hint">10자 이상, 숫자·특수문자 포함. 저장 후 화면에 다시 표시되지 않습니다.</small>
           </label>
           {error && <p className="form-alert" role="alert">{error}</p>}
-          <footer><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>취소</Button><Button type="submit" disabled={busy || password.length < 12}>{busy ? '저장 중…' : '재설정'}</Button></footer>
+          <footer><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>취소</Button><Button type="submit" disabled={busy || password.length < 10}>{busy ? '저장 중…' : '재설정'}</Button></footer>
         </form>
       </section>
     </div>
@@ -259,7 +259,7 @@ function ChangeMyPasswordPanel({ notify, onChanged }: { notify: Notify; onChange
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const mismatch = confirm.length > 0 && next !== confirm;
-  const canSubmit = current.length > 0 && next.length >= 12 && next === confirm;
+  const canSubmit = current.length > 0 && next.length >= 10 && next === confirm;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -288,11 +288,11 @@ function ChangeMyPasswordPanel({ notify, onChanged }: { notify: Notify; onChange
           <input id="my-current-password" type="password" required autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
         </label>
         <label htmlFor="my-new-password">새 비밀번호
-          <input id="my-new-password" type="password" required minLength={12} maxLength={200} autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} aria-describedby="my-new-password-hint" />
-          <small id="my-new-password-hint" className="field-hint">12자 이상.</small>
+          <input id="my-new-password" type="password" required minLength={10} maxLength={200} autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} aria-describedby="my-new-password-hint" />
+          <small id="my-new-password-hint" className="field-hint">10자 이상, 숫자·특수문자 포함.</small>
         </label>
         <label htmlFor="my-confirm-password">새 비밀번호 확인
-          <input id="my-confirm-password" type="password" required minLength={12} maxLength={200} autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} aria-invalid={mismatch} aria-describedby={mismatch ? 'my-confirm-error' : undefined} />
+          <input id="my-confirm-password" type="password" required minLength={10} maxLength={200} autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} aria-invalid={mismatch} aria-describedby={mismatch ? 'my-confirm-error' : undefined} />
         </label>
         {mismatch && <p id="my-confirm-error" className="form-alert" role="alert">새 비밀번호가 서로 일치하지 않습니다.</p>}
         {error && <p className="form-alert" role="alert">{error}</p>}

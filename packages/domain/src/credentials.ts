@@ -26,8 +26,8 @@ export function verifyPassword(password: string, encoded: string): boolean {
 }
 
 export function assertStrongPassword(password: string): void {
-  invariant(password.length >= 12 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password),
-    "WEAK_PASSWORD", "비밀번호는 12자 이상이며 대문자·소문자·숫자·특수문자를 포함해야 합니다.");
+  invariant(password.length >= 10 && /[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password),
+    "WEAK_PASSWORD", "비밀번호는 10자 이상이며 숫자와 특수문자를 포함해야 합니다.");
 }
 
 export function assertEncryptionKey(base64Key: string): void {
