@@ -154,8 +154,8 @@ export default function App() {
     setLogoutError('');
   }
 
-  async function completeStepUp(password: string, code: string) {
-    await stepUpV2(password, code);
+  async function completeStepUp(password: string) {
+    await stepUpV2(password);
     stepUpCoordinator.current?.complete();
   }
 

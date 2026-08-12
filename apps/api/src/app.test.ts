@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { createDemoRepository, DEMO_IDS } from "@ofd/db";
 import { MockObjectStorage } from "@ofd/integrations";
-import { generateTotp, type OriginalDocument, type Shipment, type TaxInvoice } from "@ofd/domain";
+import { type OriginalDocument, type Shipment, type TaxInvoice } from "@ofd/domain";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.ts";
@@ -244,7 +244,7 @@ describe("OFD v2 API", () => {
     expect((badMonth.json() as { month: string }).month).toMatch(/^\d{4}-\d{2}$/); // 잘못된 값은 현재 월로 폴백
   });
 
-  it("개인 이메일 로그인은 HttpOnly 세션을 발급하고 본사 계정은 MFA를 거친다", async () => {
+  it("개인 이메일 로그인은 본사 계정도 MFA 없이 비밀번호만으로 HttpOnly 세션을 발급한다", async () => {
     const app = await demoApp();
     const storeLogin = await app.inject({ method: "POST", url: "/api/v2/auth/login",
       payload: { email: "store.owner@ofd.local", password: "OFD-demo-2026!" } });
@@ -255,11 +255,13 @@ describe("OFD v2 API", () => {
 
     const hqLogin = await app.inject({ method: "POST", url: "/api/v2/auth/login",
       payload: { email: "hq.finance@ofd.local", password: "OFD-demo-2026!" } });
-    expect(hqLogin.json()).toMatchObject({ authenticated: false, mfaRequired: true });
-    const mfa = await app.inject({ method: "POST", url: "/api/v2/auth/mfa",
-      payload: { challengeToken: hqLogin.json().challengeToken, code: generateTotp("JBSWY3DPEHPK3PXP") } });
-    expect(mfa.statusCode).toBe(200);
-    expect(mfa.headers["set-cookie"]).toContain("HttpOnly");
+    expect(hqLogin.statusCode).toBe(200);
+    expect(hqLogin.json()).toMatchObject({ authenticated: true, mfaRequired: false });
+    expect(hqLogin.headers["set-cookie"]).toContain("HttpOnly");
+
+    // MFA 엔드포인트는 제거됐다
+    const gone = await app.inject({ method: "POST", url: "/api/v2/auth/mfa", payload: { challengeToken: "x", code: "000000" } });
+    expect(gone.statusCode).toBe(404);
   });
 
   it("requires a signed session in the isolated test stack when TEST_AUTH_REQUIRED is enabled", async () => {
@@ -281,23 +283,17 @@ describe("OFD v2 API", () => {
     expect(authenticated.json().currentActor.id).toBe(DEMO_IDS.owner);
   });
 
-  it("MFA 5회 실패로 잠긴 본사 계정은 기존 challenge의 정답으로도 우회할 수 없다", async () => {
+  it("비밀번호 5회 실패로 잠긴 본사 계정은 정답 비밀번호로도 우회할 수 없다", async () => {
     const app = await demoApp();
-    const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",
-      payload: { email: "hq.finance@ofd.local", password: "OFD-demo-2026!" } });
-    const challengeToken = login.json().challengeToken as string;
-    const validCode = generateTotp("JBSWY3DPEHPK3PXP");
-    const invalidCode = validCode === "000000" ? "000001" : "000000";
-
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const failed = await app.inject({ method: "POST", url: "/api/v2/auth/mfa",
-        payload: { challengeToken, code: invalidCode } });
+      const failed = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+        payload: { email: "hq.finance@ofd.local", password: "wrong-password" } });
       expect(failed.statusCode).toBe(401);
-      expect(failed.json().error.code).toBe("INVALID_MFA_CODE");
+      expect(failed.json().error.code).toBe("INVALID_CREDENTIALS");
     }
 
-    const blocked = await app.inject({ method: "POST", url: "/api/v2/auth/mfa",
-      payload: { challengeToken, code: validCode } });
+    const blocked = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "hq.finance@ofd.local", password: "OFD-demo-2026!" } });
     expect(blocked.statusCode).toBe(423);
     expect(blocked.json().error.code).toBe("ACCOUNT_LOCKED");
   });
@@ -305,19 +301,50 @@ describe("OFD v2 API", () => {
   it("관리자 step-up 재인증 실패도 계정 잠금에 누적되어 무제한 추측을 차단한다", async () => {
     const app = await demoApp();
     const headers = { "x-demo-actor-id": DEMO_IDS.finance };
-    const validCode = generateTotp("JBSWY3DPEHPK3PXP");
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const failed = await app.inject({ method: "POST", url: "/api/v2/auth/step-up", headers,
-        payload: { password: "wrong-password", code: validCode } });
+        payload: { password: "wrong-password" } });
       expect(failed.statusCode).toBe(401);
       expect(failed.json().error.code).toBe("INVALID_CREDENTIALS");
     }
 
     const blocked = await app.inject({ method: "POST", url: "/api/v2/auth/step-up", headers,
-      payload: { password: "OFD-demo-2026!", code: validCode } });
+      payload: { password: "OFD-demo-2026!" } });
     expect(blocked.statusCode).toBe(423);
     expect(blocked.json().error.code).toBe("ACCOUNT_LOCKED");
+  });
+
+  it("본인 비밀번호 변경은 현재 비밀번호를 확인하고 세션을 재발급하며 옛 비밀번호를 무효화한다", async () => {
+    const app = await demoApp();
+    const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "store.owner@ofd.local", password: "OFD-demo-2026!" } });
+    const cookie = String(login.headers["set-cookie"] ?? "").split(";")[0];
+
+    // 현재 비밀번호가 틀리면 401
+    const wrong = await app.inject({ method: "POST", url: "/api/v2/auth/change-password", headers: { cookie },
+      payload: { currentPassword: "wrong-password", newPassword: "BrandNewPassword-2026!" } });
+    expect(wrong.statusCode).toBe(401);
+
+    // 같은 비밀번호로는 바꿀 수 없다
+    const same = await app.inject({ method: "POST", url: "/api/v2/auth/change-password", headers: { cookie },
+      payload: { currentPassword: "OFD-demo-2026!", newPassword: "OFD-demo-2026!" } });
+    expect(same.statusCode).toBe(422);
+
+    // 정상 변경 → 200 + 새 세션 쿠키 재발급
+    const changed = await app.inject({ method: "POST", url: "/api/v2/auth/change-password", headers: { cookie },
+      payload: { currentPassword: "OFD-demo-2026!", newPassword: "BrandNewPassword-2026!" } });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.json()).toMatchObject({ changed: true });
+    expect(changed.headers["set-cookie"]).toContain("HttpOnly");
+
+    // 옛 비밀번호 로그인은 실패, 새 비밀번호는 성공
+    expect((await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "store.owner@ofd.local", password: "OFD-demo-2026!" } })).json().error.code).toBe("INVALID_CREDENTIALS");
+    const relogin = await app.inject({ method: "POST", url: "/api/v2/auth/login",
+      payload: { email: "store.owner@ofd.local", password: "BrandNewPassword-2026!" } });
+    expect(relogin.statusCode).toBe(200);
+    expect(relogin.json()).toMatchObject({ authenticated: true });
   });
 
   it("배송 기사 bootstrap은 배정 배송에 필요한 정보 외 재무·타매장 정보를 노출하지 않는다", async () => {
@@ -334,14 +361,12 @@ describe("OFD v2 API", () => {
     expect(body.orders.every((order: { id: string }) => assignedOrderIds.has(order.id))).toBe(true);
   });
 
-  it("감사자는 MFA로 로그인해 전 매장 원장과 감사 이벤트를 읽되 운영 mutation은 수행하지 못한다", async () => {
+  it("감사자는 비밀번호로 로그인해 전 매장 원장과 감사 이벤트를 읽되 운영 mutation은 수행하지 못한다", async () => {
     const app = await demoApp();
     const login = await app.inject({ method: "POST", url: "/api/v2/auth/login",
       payload: { email: "auditor@ofd.local", password: "OFD-demo-2026!" } });
-    expect(login.json()).toMatchObject({ authenticated: false, mfaRequired: true });
-    const mfa = await app.inject({ method: "POST", url: "/api/v2/auth/mfa",
-      payload: { challengeToken: login.json().challengeToken, code: generateTotp("JBSWY3DPEHPK3PXP") } });
-    expect(mfa.statusCode).toBe(200);
+    expect(login.statusCode).toBe(200);
+    expect(login.json()).toMatchObject({ authenticated: true, mfaRequired: false });
 
     const headers = { "x-demo-actor-id": DEMO_IDS.auditor };
     const bootstrap = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers });

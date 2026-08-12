@@ -3,13 +3,10 @@ import type { StateRepository } from "@ofd/db";
 import {
   assertRecentStepUp,
   assertRole,
-  decryptMfaSecret,
   DomainError,
-  encryptMfaSecret,
   hashPassword,
   invariant,
   verifyPassword,
-  verifyTotp,
   type ActorDirectoryEntry,
   type AdminInvariant,
   type AdminActorSummary,
@@ -20,10 +17,9 @@ import {
   type UserCredential,
 } from "@ofd/domain";
 import { audit } from "./events.ts";
-import { signSessionToken, verifySessionToken, type SessionPayload } from "./auth.ts";
+import { signSessionToken, type SessionPayload } from "./auth.ts";
 
 const dummyPasswordHash = hashPassword("Dummy-login-2026!", Buffer.alloc(16, 3));
-const privilegedMfaRoles: ReadonlySet<ProvisionableActorRole> = new Set(["hq_ops", "hq_finance", "hq_master", "auditor"]);
 
 export interface ProvisionActorInput {
   name: string;
@@ -31,7 +27,6 @@ export interface ProvisionActorInput {
   storeIds: string[];
   email: string;
   password: string;
-  mfaSecret?: string | undefined;
 }
 
 type ProvisionableActor = Actor & { role: ProvisionableActorRole };
@@ -46,7 +41,7 @@ export class AuthService {
     private readonly encryptionKey?: string,
   ) {}
 
-  async login(email: string, password: string, ip: string): Promise<{ token?: string; mfaRequired: boolean; challengeToken?: string; actor: PublicActor }> {
+  async login(email: string, password: string, ip: string): Promise<{ token?: string; mfaRequired: boolean; actor: PublicActor }> {
     this.checkRate(`${ip}:${email.toLowerCase()}`);
     const credential = (await this.repository.list<UserCredential>("credential"))
       .find((item) => item.email.toLowerCase() === email.trim().toLowerCase());
@@ -61,33 +56,12 @@ export class AuthService {
       throw new DomainError("INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다.", 401);
     }
     if (!actor.active) throw new DomainError("ACCOUNT_DISABLED", "비활성화된 계정입니다.", 403);
-    const needsMfa = actor.role.startsWith("hq_") || actor.role === "auditor" || Boolean(credential.mfaSecretEncrypted);
-    if (needsMfa) {
-      invariant(Boolean(credential.mfaSecretEncrypted), "MFA_NOT_ENROLLED", "본사 계정에 MFA가 등록되지 않았습니다.", 403);
-      const challengeToken = signSessionToken(this.payload(actor, "mfa_challenge", undefined, 5 * 60), this.secret);
-      return { mfaRequired: true, challengeToken, actor: publicActor(actor) };
-    }
     const token = await this.finishLogin(credential, actor);
     return { token, mfaRequired: false, actor: publicActor(actor) };
   }
 
-  async completeMfa(challengeToken: string, code: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
-    this.checkRate(`mfa-ip:${ip}`);
-    const payload = verifySessionToken(challengeToken, this.secret, "mfa_challenge");
-    this.checkRate(`mfa-actor:${payload.sub}`);
-    const actor = await this.requiredActor(payload.sub);
-    invariant(payload.ver === actor.authVersion, "SESSION_REVOKED", "폐기된 로그인 요청입니다.", 401);
-    const credential = await this.credentialForActor(actor.id);
-    this.assertCredentialAvailable(credential, actor);
-    const secret = decryptMfaSecret(credential.mfaSecretEncrypted ?? "", this.encryptionKey, this.appMode !== "production");
-    if (!verifyTotp(code, secret)) {
-      await this.recordFailure(credential, actor, "auth.mfa_failed");
-      throw new DomainError("INVALID_MFA_CODE", "인증 코드가 올바르지 않습니다.", 401);
-    }
-    return { token: await this.finishLogin(credential, actor, new Date().toISOString()), actor: publicActor(actor) };
-  }
-
-  async stepUp(actor: Actor, password: string, code: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
+  /** 중요 작업 본인 확인 — MFA 없이 비밀번호만 재확인해 최근 스텝업 세션을 발급한다. */
+  async stepUp(actor: Actor, password: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
     this.checkRate(`step-up:${actor.id}:${ip}`);
     const credential = await this.credentialForActor(actor.id);
     this.assertCredentialAvailable(credential, actor);
@@ -95,19 +69,41 @@ export class AuthService {
       await this.recordFailure(credential, actor, "auth.step_up_failed");
       throw new DomainError("INVALID_CREDENTIALS", "비밀번호가 올바르지 않습니다.", 401);
     }
-    const secret = decryptMfaSecret(credential.mfaSecretEncrypted ?? "", this.encryptionKey, this.appMode !== "production");
-    if (!verifyTotp(code, secret)) {
-      await this.recordFailure(credential, actor, "auth.step_up_failed");
-      throw new DomainError("INVALID_MFA_CODE", "인증 코드가 올바르지 않습니다.", 401);
-    }
-    const mfaAt = new Date().toISOString();
+    const stepUpAt = new Date().toISOString();
     const updated: UserCredential = { ...credential, failedAttempts: 0, version: credential.version + 1 };
     delete updated.lockedUntil;
     await this.repository.commit({
       changes: [{ type: "credential", id: credential.id, expectedVersion: credential.version, value: updated }],
       audits: [audit(actor, "credential", credential.id, "auth.step_up_succeeded", undefined, undefined, { actorId: actor.id })],
     });
-    return { token: signSessionToken(this.payload(actor, "session", mfaAt), this.secret), actor: publicActor(actor) };
+    return { token: signSessionToken(this.payload(actor, "session", stepUpAt), this.secret), actor: publicActor(actor) };
+  }
+
+  /** POST /api/v2/auth/change-password — 본인 비밀번호 변경. 현재 비밀번호 확인 후 전 세션 폐기. */
+  async changeOwnPassword(actor: Actor, currentPassword: string, newPassword: string, ip: string): Promise<{ token: string; actor: PublicActor }> {
+    this.checkRate(`change-password:${actor.id}:${ip}`);
+    const credential = await this.credentialForActor(actor.id);
+    this.assertCredentialAvailable(credential, actor);
+    if (!verifyPassword(currentPassword, credential.passwordHash)) {
+      await this.recordFailure(credential, actor, "auth.password_change_failed");
+      throw new DomainError("INVALID_CREDENTIALS", "현재 비밀번호가 올바르지 않습니다.", 401);
+    }
+    invariant(!verifyPassword(newPassword, credential.passwordHash), "PASSWORD_UNCHANGED", "새 비밀번호가 기존 비밀번호와 같습니다.", 422);
+    const freshActor = await this.requiredActor(actor.id);
+    const updatedActor: Actor = { ...freshActor, authVersion: freshActor.authVersion + 1 };
+    const updatedCredential: UserCredential = {
+      ...credential, passwordHash: hashPassword(newPassword), failedAttempts: 0, version: credential.version + 1,
+    };
+    delete updatedCredential.lockedUntil;
+    await this.repository.commit({
+      changes: [
+        { type: "actor", id: freshActor.id, expectedVersion: freshActor.authVersion, value: updatedActor },
+        { type: "credential", id: credential.id, expectedVersion: credential.version, value: updatedCredential },
+      ],
+      audits: [audit(actor, "credential", credential.id, "auth.password_changed", undefined, undefined, { actorId: actor.id })],
+    });
+    // 새 authVersion으로 세션을 즉시 재발급해 현재 사용자는 로그인 상태를 유지한다(다른 기기 세션만 폐기).
+    return { token: signSessionToken(this.payload(updatedActor, "session"), this.secret), actor: publicActor(updatedActor) };
   }
 
   /** GET /api/v2/admin/actors response. No credential secret or password material is returned. */
@@ -150,13 +146,12 @@ export class AuthService {
     const existingCredentials = await this.repository.list<UserCredential>("credential");
     invariant(!existingCredentials.some((credential) => credential.email.toLowerCase() === email),
       "EMAIL_ALREADY_REGISTERED", "이미 등록된 이메일입니다.", 409);
-    const mfaSecretEncrypted = this.prepareMfaSecret(input.role, input.mfaSecret);
     const createdActor: Actor = {
       id: randomUUID(), name, role: input.role, storeIds: [...new Set(input.storeIds)], active: true, authVersion: 1,
     };
     const credential: UserCredential = {
       id: stableCredentialId(email), actorId: createdActor.id, email, passwordHash: hashPassword(input.password),
-      failedAttempts: 0, ...(mfaSecretEncrypted ? { mfaSecretEncrypted } : {}), version: 1,
+      failedAttempts: 0, version: 1,
     };
     await this.repository.commit({
       changes: [
@@ -164,7 +159,7 @@ export class AuthService {
         { type: "credential", id: credential.id, expectedVersion: null, value: credential },
       ],
       audits: [audit(actor, "actor", createdActor.id, "admin.actor_provisioned", undefined, undefined,
-        publicActor(createdActor), { role: createdActor.role, mfaEnabled: Boolean(mfaSecretEncrypted) })],
+        publicActor(createdActor), { role: createdActor.role })],
     });
     return { actor: adminActorSummary(createdActor, credential) };
   }
@@ -219,29 +214,25 @@ export class AuthService {
     return { actor: adminActorSummary(updated, credential) };
   }
 
-  /** PATCH /api/v2/admin/actors action=reset. Rotates password/MFA and revokes all sessions. */
-  async resetActor(actor: Actor, actorId: string, expectedVersion: number, newPassword: string,
-    mfaSecret?: string): Promise<{ actor: AdminActorSummary }> {
+  /** PATCH /api/v2/admin/actors action=reset. 비밀번호를 재설정하고 남은 MFA 흔적을 제거하며 전 세션을 폐기한다. */
+  async resetActor(actor: Actor, actorId: string, expectedVersion: number, newPassword: string): Promise<{ actor: AdminActorSummary }> {
     this.assertMasterStepUp(actor);
     const target = await this.requiredActorForAdmin(actorId);
     invariant(target.authVersion === expectedVersion, "VERSION_CONFLICT", "계정이 변경되었습니다. 새로고침 후 다시 시도해 주세요.", 409);
     const credential = await this.credentialForActor(target.id);
-    const rotatedMfaSecret = mfaSecret === undefined ? credential.mfaSecretEncrypted : this.prepareMfaSecret(target.role, mfaSecret);
-    invariant(!privilegedMfaRoles.has(target.role) || Boolean(rotatedMfaSecret),
-      "MFA_REQUIRED", "본사 및 감사 계정에는 TOTP 비밀키가 필요합니다.");
     const updatedActor: Actor = { ...target, authVersion: target.authVersion + 1 };
     const updatedCredential: UserCredential = {
-      ...credential, passwordHash: hashPassword(newPassword), failedAttempts: 0,
-      ...(rotatedMfaSecret ? { mfaSecretEncrypted: rotatedMfaSecret } : {}), version: credential.version + 1,
+      ...credential, passwordHash: hashPassword(newPassword), failedAttempts: 0, version: credential.version + 1,
     };
     delete updatedCredential.lockedUntil;
+    delete updatedCredential.mfaSecretEncrypted;
     await this.repository.commit({
       changes: [
         { type: "actor", id: target.id, expectedVersion, value: updatedActor },
         { type: "credential", id: credential.id, expectedVersion: credential.version, value: updatedCredential },
       ],
       audits: [audit(actor, "actor", target.id, "admin.actor_credentials_reset", undefined,
-        publicActor(target), publicActor(updatedActor), { mfaRotated: mfaSecret !== undefined })],
+        publicActor(target), publicActor(updatedActor), {})],
     });
     return { actor: adminActorSummary(updatedActor, updatedCredential) };
   }
@@ -335,19 +326,6 @@ export class AuthService {
     }
     invariant(storeIds.length === 0, "STORE_ASSIGNMENT_NOT_ALLOWED", "본사·감사·배송 계정에는 매장을 배정할 수 없습니다.");
   }
-
-  private prepareMfaSecret(role: ProvisionableActorRole, rawSecret?: string): string | undefined {
-    const required = privilegedMfaRoles.has(role);
-    invariant(!required || Boolean(rawSecret), "MFA_REQUIRED", "본사 및 감사 계정에는 TOTP 비밀키가 필요합니다.");
-    if (!rawSecret) return undefined;
-    const secret = rawSecret.trim().toUpperCase().replace(/=+$/, "");
-    invariant(secret.length >= 16 && secret.length <= 128 && /^[A-Z2-7]+$/.test(secret),
-      "INVALID_MFA_SECRET", "TOTP 비밀키 형식이 올바르지 않습니다.");
-    if (this.appMode !== "production") return `demo:${secret}`;
-    const encryptionKey = this.encryptionKey;
-    invariant(encryptionKey, "ENCRYPTION_KEY_REQUIRED", "ENCRYPTION_KEY가 필요합니다.", 503);
-    return encryptMfaSecret(secret, encryptionKey);
-  }
 }
 
 function publicActor(actor: Actor): PublicActor {
@@ -365,7 +343,6 @@ function isProvisionableActorRole(role: Actor["role"]): role is ProvisionableAct
 function adminActorSummary(actor: Actor, credential: UserCredential): AdminActorSummary {
   return {
     ...publicActor(actor), active: actor.active, version: actor.authVersion, email: credential.email,
-    mfaEnabled: Boolean(credential.mfaSecretEncrypted),
     ...(credential.lastLoginAt ? { lastLoginAt: credential.lastLoginAt } : {}),
     ...(credential.lockedUntil ? { lockedUntil: credential.lockedUntil } : {}),
   };

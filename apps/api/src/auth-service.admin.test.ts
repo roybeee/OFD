@@ -61,7 +61,6 @@ describe("AuthService actor administration", () => {
       email: "driver.new@ofd.local",
       active: true,
       version: 1,
-      mfaEnabled: false,
     });
     expect(JSON.stringify(result)).not.toContain("passwordHash");
     expect(JSON.stringify(result)).not.toContain("mfaSecretEncrypted");
@@ -79,15 +78,20 @@ describe("AuthService actor administration", () => {
     expect(JSON.stringify(directory)).not.toContain("mfaSecretEncrypted");
   });
 
-  it("requires MFA for privileged accounts and rejects system provisioning even from an untyped caller", async () => {
+  it("provisions privileged accounts without MFA and rejects system provisioning even from an untyped caller", async () => {
     const { repository, master, auth } = await adminFixture();
-    await expect(auth.provisionActor(master, {
+    // MFA 제거 후 본사 계정도 비밀번호만으로 생성된다 — TOTP 비밀키 없이 성공한다
+    const privileged = await auth.provisionActor(master, {
       name: "신규 운영자",
       role: "hq_ops",
       storeIds: [],
       email: "ops.new@ofd.local",
       password: "OFD-operator-2026!",
-    })).rejects.toMatchObject({ code: "MFA_REQUIRED" });
+    });
+    expect(privileged.actor).toMatchObject({ role: "hq_ops", email: "ops.new@ofd.local", active: true });
+    const opsCredential = (await repository.list<UserCredential>("credential"))
+      .find((credential) => credential.actorId === privileged.actor.id);
+    expect(opsCredential && "mfaSecretEncrypted" in opsCredential).toBe(false);
 
     const unsafeSystemInput = {
       name: "시스템 위장 계정",

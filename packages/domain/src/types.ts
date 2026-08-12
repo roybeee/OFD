@@ -17,6 +17,7 @@ export interface Actor {
   storeIds: string[];
   active: boolean;
   authVersion: number;
+  /** 최근 스텝업(중요 작업 본인 확인) 여부. 세션 토큰에서 파생되며, 비밀번호 재확인으로만 세워진다. */
   mfaVerified?: boolean;
   mfaVerifiedAt?: string;
 }
@@ -34,7 +35,6 @@ export interface AdminActorSummary extends PublicActor {
   /** Optimistic concurrency token; changing it also revokes existing sessions. */
   version: number;
   email: string;
-  mfaEnabled: boolean;
   lastLoginAt?: string;
   lockedUntil?: string;
 }

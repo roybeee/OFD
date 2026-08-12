@@ -84,7 +84,6 @@ const credentials: UserCredential[] = actors.filter((actor) => actor.role !== "s
   email: `${actor.role.replaceAll("_", ".")}@ofd.local`,
   passwordHash: demoPasswordHash,
   failedAttempts: 0,
-  ...(["hq_ops", "hq_finance", "hq_master", "auditor"].includes(actor.role) ? { mfaSecretEncrypted: "demo:JBSWY3DPEHPK3PXP" } : {}),
   version: 1,
 }));
 

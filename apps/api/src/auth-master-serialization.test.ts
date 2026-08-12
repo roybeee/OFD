@@ -67,11 +67,11 @@ describe("hq_master deactivation serialization", () => {
     const auth = new AuthService(repository, "test-session-secret-with-at-least-32-bytes", "test");
     const second = await auth.provisionActor(master, {
       name: "두 번째 최고관리자", role: "hq_master", storeIds: [], email: "master.second@ofd.local",
-      password: "OFD-master-two-2026!", mfaSecret: "JBSWY3DPEHPK3PXP",
+      password: "OFD-master-two-2026!",
     });
     const third = await auth.provisionActor(master, {
       name: "세 번째 최고관리자", role: "hq_master", storeIds: [], email: "master.third@ofd.local",
-      password: "OFD-master-three-2026!", mfaSecret: "JBSWY3DPEHPK3PXQ",
+      password: "OFD-master-three-2026!",
     });
 
     const outcomes = await Promise.allSettled([

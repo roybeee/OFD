@@ -17,8 +17,8 @@ describe('step-up authentication dialog', () => {
     container.remove();
   });
 
-  it('captures password and MFA code, reports server errors, and supports Escape cancellation', async () => {
-    const onSubmit = vi.fn().mockRejectedValue(new Error('인증번호가 올바르지 않습니다.'));
+  it('captures password only, reports server errors, and supports Escape cancellation', async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error('비밀번호가 올바르지 않습니다.'));
     const onCancel = vi.fn();
     await act(async () => {
       root = createRoot(container);
@@ -26,6 +26,8 @@ describe('step-up authentication dialog', () => {
     });
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(dialog.getAttribute('aria-modal')).toBe('true');
+    // MFA 코드 입력은 제거됐다 — 비밀번호 한 칸만 남는다
+    expect(container.querySelector('input[inputmode="numeric"]')).toBeNull();
 
     async function enter(selector: string, value: string) {
       await act(async () => {
@@ -35,10 +37,9 @@ describe('step-up authentication dialog', () => {
       });
     }
     await enter('input[type="password"]', 'CorrectHorseBatteryStaple!');
-    await enter('input[inputmode="numeric"]', '000000');
     await act(async () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
-    expect(onSubmit).toHaveBeenCalledWith('CorrectHorseBatteryStaple!', '000000');
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('인증번호가 올바르지 않습니다.');
+    expect(onSubmit).toHaveBeenCalledWith('CorrectHorseBatteryStaple!');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('비밀번호가 올바르지 않습니다.');
 
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
     expect(onCancel).toHaveBeenCalledTimes(1);

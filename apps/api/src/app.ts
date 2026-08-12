@@ -37,7 +37,6 @@ const idParams = z.object({ id: z.string().min(1) });
 const expectedVersion = z.object({ expectedVersion: z.number().int().positive() });
 const processSessionSecret = randomBytes(32).toString("base64url");
 const provisionableRole = z.enum(["store_owner", "store_staff", "driver", "hq_ops", "hq_finance", "hq_master", "auditor"]);
-const mfaSecret = z.string().trim().min(16).max(128).regex(/^[A-Za-z2-7]+=*$/);
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = options.env ?? process.env;
@@ -84,7 +83,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.addHook("preHandler", async (request) => {
     const path = request.url.split("?")[0];
-    if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login" || path === "/api/v2/auth/mfa"
+    if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login"
       || path === "/api/v2/webhooks/popbill" || path === "/api/v2/webhooks/tossplace" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
     request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
   });
@@ -129,19 +128,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const body = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(200) }).parse(request.body);
     const result = await authService.login(body.email, body.password, request.ip);
     if (result.token) setSessionCookie(reply, result.token, config.appMode);
-    return { authenticated: Boolean(result.token), mfaRequired: result.mfaRequired, challengeToken: result.challengeToken, actor: result.actor };
-  });
-  app.post("/api/v2/auth/mfa", async (request, reply) => {
-    const body = z.object({ challengeToken: z.string().min(20), code: z.string().regex(/^\d{6}$/) }).parse(request.body);
-    const result = await authService.completeMfa(body.challengeToken, body.code, request.ip);
-    setSessionCookie(reply, result.token, config.appMode);
-    return { authenticated: true, actor: result.actor };
+    return { authenticated: Boolean(result.token), mfaRequired: false, actor: result.actor };
   });
   app.post("/api/v2/auth/step-up", async (request, reply) => {
-    const body = z.object({ password: z.string().min(1).max(200), code: z.string().regex(/^\d{6}$/) }).parse(request.body);
-    const result = await authService.stepUp(request.actor, body.password, body.code, request.ip);
+    const body = z.object({ password: z.string().min(1).max(200) }).parse(request.body);
+    const result = await authService.stepUp(request.actor, body.password, request.ip);
     setSessionCookie(reply, result.token, config.appMode);
     return { authenticated: true, mfaVerifiedAt: new Date().toISOString(), actor: result.actor };
+  });
+  app.post("/api/v2/auth/change-password", async (request, reply) => {
+    const body = z.object({ currentPassword: z.string().min(1).max(200), newPassword: z.string().min(12).max(200) }).parse(request.body);
+    const result = await authService.changeOwnPassword(request.actor, body.currentPassword, body.newPassword, request.ip);
+    setSessionCookie(reply, result.token, config.appMode);
+    return { changed: true, actor: result.actor };
   });
   app.post("/api/v2/auth/logout", async (_request, reply) => {
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
@@ -161,7 +160,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const body = z.object({
       name: z.string().trim().min(2).max(100), role: provisionableRole,
       storeIds: z.array(z.string().min(1)).max(100).default([]),
-      email: z.string().email().max(254), password: z.string().min(12).max(200), mfaSecret: mfaSecret.optional(),
+      email: z.string().email().max(254), password: z.string().min(12).max(200),
     }).parse(request.body);
     return idempotentMutation(request, reply, repository, request.actor, 201,
       (scoped) => new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY).provisionActor(request.actor, body));
@@ -170,13 +169,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const body = z.discriminatedUnion("action", [
       z.object({ action: z.literal("deactivate"), actorId: z.string().min(1), expectedVersion: z.number().int().positive() }),
       z.object({ action: z.literal("reset"), actorId: z.string().min(1), expectedVersion: z.number().int().positive(),
-        newPassword: z.string().min(12).max(200), mfaSecret: mfaSecret.optional() }),
+        newPassword: z.string().min(12).max(200) }),
     ]).parse(request.body);
     return idempotentMutation(request, reply, repository, request.actor, 200, (scoped) => {
       const scopedAuth = new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY);
       return body.action === "deactivate"
         ? scopedAuth.deactivateActor(request.actor, body.actorId, body.expectedVersion)
-        : scopedAuth.resetActor(request.actor, body.actorId, body.expectedVersion, body.newPassword, body.mfaSecret);
+        : scopedAuth.resetActor(request.actor, body.actorId, body.expectedVersion, body.newPassword);
     });
   });
 

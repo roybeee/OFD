@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { stdin, stdout } from "node:process";
 import { PostgresRepository } from "@ofd/db";
-import { encryptMfaSecret, hashPassword, type Actor, type UserCredential } from "@ofd/domain";
+import { hashPassword, type Actor, type UserCredential } from "@ofd/domain";
 import { audit } from "./events.ts";
 
 const databaseUrl = required("DATABASE_URL");
@@ -14,7 +14,6 @@ try {
   const password = process.env.BOOTSTRAP_MASTER_PASSWORD ?? await promptSecret("최초 마스터 비밀번호: ");
   const passwordConfirm = process.env.BOOTSTRAP_MASTER_PASSWORD ?? await promptSecret("비밀번호 확인: ");
   if (password !== passwordConfirm) throw new Error("비밀번호가 일치하지 않습니다.");
-  const mfaSecret = process.env.BOOTSTRAP_MASTER_MFA_SECRET ?? await promptSecret("마스터 TOTP Base32 비밀키: ");
   const actor: Actor = {
     id: randomUUID(), name: required("BOOTSTRAP_MASTER_NAME"), role: "hq_master", storeIds: [],
     active: true, authVersion: 1,
@@ -29,8 +28,7 @@ try {
   if (!/^\d{10}$/.test(legalEntity.businessNumber)) throw new Error("본사 사업자번호는 숫자 10자리여야 합니다.");
   const credential: UserCredential = {
     id: randomUUID(), actorId: actor.id, email: required("BOOTSTRAP_MASTER_EMAIL").trim().toLowerCase(),
-    passwordHash: hashPassword(password), failedAttempts: 0,
-    mfaSecretEncrypted: encryptMfaSecret(mfaSecret, required("ENCRYPTION_KEY")), version: 1,
+    passwordHash: hashPassword(password), failedAttempts: 0, version: 1,
   };
   await repository.commit({
     changes: [
@@ -53,7 +51,7 @@ function required(name: string): string {
 }
 
 async function promptSecret(label: string): Promise<string> {
-  if (!stdin.isTTY || !stdin.setRawMode) throw new Error("비대화형 실행에서는 BOOTSTRAP_MASTER_PASSWORD와 BOOTSTRAP_MASTER_MFA_SECRET이 필요합니다.");
+  if (!stdin.isTTY || !stdin.setRawMode) throw new Error("비대화형 실행에서는 BOOTSTRAP_MASTER_PASSWORD가 필요합니다.");
   stdout.write(label);
   stdin.setRawMode(true);
   stdin.resume();

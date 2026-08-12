@@ -198,7 +198,6 @@ export type AdminActorSummary = PublicActor & {
   active: boolean;
   version: number;
   email: string;
-  mfaEnabled: boolean;
   lastLoginAt?: string;
   lockedUntil?: string;
 };

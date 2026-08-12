@@ -16,7 +16,7 @@ export interface SessionPayload {
   aud: "ofd-web";
   sid: string;
   ver: number;
-  purpose: "session" | "mfa_challenge";
+  purpose: "session";
   mfaAt?: string;
 }
 

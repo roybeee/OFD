@@ -35,13 +35,13 @@ describe('HQ account administration', () => {
   it('lists sanitized accounts and provisions a store owner with explicit stores', async () => {
     const existing = {
       id: 'driver-1', name: '김배송', role: 'driver', storeIds: [], active: true, version: 1,
-      email: 'driver@example.com', mfaEnabled: false, passwordHash: 'must-not-render', mfaSecret: 'must-not-render',
+      email: 'driver@example.com', passwordHash: 'must-not-render', mfaSecret: 'must-not-render',
     };
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (!init?.method || init.method === 'GET') return response({ actors: [existing] });
       return response({ actor: {
         id: 'owner-1', name: '새 점주', role: 'store_owner', storeIds: ['store-1'], active: true,
-        version: 1, email: 'owner@example.com', mfaEnabled: false,
+        version: 1, email: 'owner@example.com',
       } }, 201);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -55,7 +55,7 @@ describe('HQ account administration', () => {
     }
     expect(container.textContent).toContain('driver@example.com');
     expect(container.textContent).not.toContain('must-not-render');
-    expect(container.querySelector('button[aria-label="김배송 자격정보 재설정"]')).toBeTruthy();
+    expect(container.querySelector('button[aria-label="김배송 비밀번호 재설정"]')).toBeTruthy();
     expect(container.querySelector('button[aria-label="김배송 계정 비활성화"]')).toBeTruthy();
 
     async function change(selector: string, value: string, eventName = 'input') {
@@ -87,7 +87,7 @@ describe('HQ account administration', () => {
   it('revokes the current UI session after self credential reset and prevents closing while the reset is saving', async () => {
     const master = {
       id: 'master-1', name: '최고관리자', role: 'hq_master', storeIds: [], active: true, version: 1,
-      email: 'master@example.com', mfaEnabled: true,
+      email: 'master@example.com',
     };
     let resolveReset!: () => void;
     const resetGate = new Promise<void>((resolve) => { resolveReset = resolve; });
@@ -101,10 +101,10 @@ describe('HQ account administration', () => {
       root = createRoot(container);
       root.render(<HqAccountsPage data={data} notify={vi.fn()} onCurrentSessionRevoked={onCurrentSessionRevoked} />);
     });
-    for (let attempt = 0; attempt < 20 && !container.querySelector('[aria-label="최고관리자 자격정보 재설정"]'); attempt += 1) {
+    for (let attempt = 0; attempt < 20 && !container.querySelector('[aria-label="최고관리자 비밀번호 재설정"]'); attempt += 1) {
       await act(async () => { await Promise.resolve(); });
     }
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="최고관리자 자격정보 재설정"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="최고관리자 비밀번호 재설정"]')!.click());
     await act(async () => {
       const password = container.querySelector<HTMLInputElement>('#reset-password')!;
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(password, 'NewCorrectPassword!');

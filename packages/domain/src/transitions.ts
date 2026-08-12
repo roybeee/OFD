@@ -82,5 +82,5 @@ export function assertInvoiceApprovalSegregation(reviewedBy: string | undefined,
 export function assertRecentStepUp(actor: Actor, maxAgeMs = 5 * 60_000, now = Date.now()): void {
   const verifiedAt = actor.mfaVerifiedAt ? new Date(actor.mfaVerifiedAt).valueOf() : Number.NaN;
   invariant(actor.mfaVerified && Number.isFinite(verifiedAt) && now - verifiedAt >= 0 && now - verifiedAt <= maxAgeMs,
-    "STEP_UP_REQUIRED", "이 작업을 위해 5분 이내 MFA 재인증이 필요합니다.", 403);
+    "STEP_UP_REQUIRED", "이 작업을 위해 5분 이내 비밀번호 재확인이 필요합니다.", 403);
 }

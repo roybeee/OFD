@@ -1,31 +1,11 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import pg from 'pg';
 
 const { Pool } = pg;
-export const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
 export const TEST_PASSWORD = 'OFD-demo-2026!';
 export const WEBHOOK_KEY = 'e2e-webhook-c715bad7bf7196538d40dbf31d8569b7';
 export const DRIVER_ID = '00000000-0000-4000-8000-000000000106';
-
-function generateTotp(base32Secret: string) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = '';
-  for (const char of base32Secret.toUpperCase().replace(/=+$/, '')) {
-    const index = alphabet.indexOf(char);
-    if (index < 0) throw new Error('Invalid E2E TOTP secret');
-    bits += index.toString(2).padStart(5, '0');
-  }
-  const bytes: number[] = [];
-  for (let index = 0; index + 8 <= bits.length; index += 8) bytes.push(Number.parseInt(bits.slice(index, index + 8), 2));
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000)));
-  const digest = createHmac('sha1', Buffer.from(bytes)).update(counter).digest();
-  const offset = digest[digest.length - 1]! & 0x0f;
-  const binary = ((digest[offset]! & 0x7f) << 24) | ((digest[offset + 1]! & 0xff) << 16)
-    | ((digest[offset + 2]! & 0xff) << 8) | (digest[offset + 3]! & 0xff);
-  return String(binary % 1_000_000).padStart(6, '0');
-}
 
 export const accounts = {
   store: { email: 'store.owner@ofd.local', screen: 'store-home-screen' },
@@ -50,25 +30,18 @@ export async function login(page: Page, account: keyof typeof accounts, throughU
     await page.getByLabel('이메일').fill(selected.email);
     await page.getByLabel('비밀번호').fill(TEST_PASSWORD);
     await page.getByRole('button', { name: '로그인' }).click();
-    if (account === 'ops' || account === 'finance' || account === 'master') {
-      await page.getByLabel('인증 코드').fill(generateTotp(TOTP_SECRET));
-      await page.getByRole('button', { name: '인증하고 계속' }).click();
-    }
     await page.getByTestId(selected.screen).waitFor();
     return;
   }
 
-  const started = await requireOk<{ authenticated: boolean; mfaRequired: boolean; challengeToken?: string }>(
+  const started = await requireOk<{ authenticated: boolean; mfaRequired: boolean }>(
     await page.request.post('/api/v2/auth/login', { data: { email: selected.email, password: TEST_PASSWORD } }),
     `${account} login`,
   );
-  if (started.mfaRequired) {
-    if (!started.challengeToken) throw new Error(`${account} login did not return an MFA challenge`);
-    await requireOk(await page.request.post('/api/v2/auth/mfa', {
-      data: { challengeToken: started.challengeToken, code: generateTotp(TOTP_SECRET) },
-    }), `${account} MFA`);
-  } else if (!started.authenticated) {
-    throw new Error(`${account} login did not authenticate`);
+  if (!started.authenticated) throw new Error(`${account} login did not authenticate`);
+  // MFA 제거 후 중요 작업 본인 확인은 비밀번호만으로 스텝업한다 — 마스터의 승인 동작에 필요하다.
+  if (account === 'master') {
+    await requireOk(await page.request.post('/api/v2/auth/step-up', { data: { password: TEST_PASSWORD } }), `${account} step-up`);
   }
 }
 

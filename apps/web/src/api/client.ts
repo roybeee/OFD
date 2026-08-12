@@ -587,13 +587,13 @@ export function toggleOpeningTaskV2(taskId: string, done: boolean, memo?: string
 
 export function logoutV2() { return authPost<Record<string, unknown>>('/auth/logout', {}); }
 
-export type LoginResult = { authenticated: boolean; mfaRequired: boolean; challengeToken?: string; actor: PublicActor };
+export type LoginResult = { authenticated: boolean; mfaRequired: boolean; actor: PublicActor };
 export function loginV2(email: string, password: string) { return authPost<LoginResult>('/auth/login', { email, password }); }
-export function completeMfaV2(challengeToken: string, code: string) {
-  return authPost<{ authenticated: true; actor: PublicActor }>('/auth/mfa', { challengeToken, code });
+export function stepUpV2(password: string) {
+  return authPost<{ authenticated: true; mfaVerifiedAt: string; actor: PublicActor }>('/auth/step-up', { password });
 }
-export function stepUpV2(password: string, code: string) {
-  return authPost<{ authenticated: true; mfaVerifiedAt: string; actor: PublicActor }>('/auth/step-up', { password, code });
+export function changePasswordV2(currentPassword: string, newPassword: string) {
+  return authPost<{ changed: true; actor: PublicActor }>('/auth/change-password', { currentPassword, newPassword });
 }
 
 export type ProvisionActorInput = {
@@ -602,7 +602,6 @@ export type ProvisionActorInput = {
   storeIds: string[];
   email: string;
   password: string;
-  mfaSecret?: string;
 };
 
 export function listActorAccountsV2() {
@@ -622,10 +621,10 @@ export function deactivateActorV2(actorId: string, expectedVersion: number, idem
   }, true);
 }
 
-export function resetActorV2(actorId: string, expectedVersion: number, newPassword: string, mfaSecret: string | undefined, idempotencyKey: string) {
+export function resetActorV2(actorId: string, expectedVersion: number, newPassword: string, idempotencyKey: string) {
   return apiRequest<{ actor: AdminActorSummary }>('/admin/actors', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },
-    body: JSON.stringify({ action: 'reset', actorId, expectedVersion, newPassword, ...(mfaSecret ? { mfaSecret } : {}) }),
+    body: JSON.stringify({ action: 'reset', actorId, expectedVersion, newPassword }),
   }, true);
 }
 

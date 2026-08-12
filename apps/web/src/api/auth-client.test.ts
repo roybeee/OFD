@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  completeMfaV2,
+  changePasswordV2,
   listActorAccountsV2,
   loginV2,
   mutateV2,
@@ -19,20 +19,20 @@ afterEach(() => {
 });
 
 describe('production authentication client', () => {
-  it('copies the Fastify login and MFA challenge contracts exactly', async () => {
+  it('logs in with password only and changes own password against the Fastify contract', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json({ authenticated: false, mfaRequired: true, challengeToken: 'challenge-token-1234567890', actor: { id: 'hq-1', name: 'HQ', role: 'hq_master', storeIds: [] } }))
-      .mockResolvedValueOnce(json({ authenticated: true, actor: { id: 'hq-1', name: 'HQ', role: 'hq_master', storeIds: [] } }));
+      .mockResolvedValueOnce(json({ authenticated: true, mfaRequired: false, actor: { id: 'hq-1', name: 'HQ', role: 'hq_master', storeIds: [] } }))
+      .mockResolvedValueOnce(json({ changed: true, actor: { id: 'hq-1', name: 'HQ', role: 'hq_master', storeIds: [] } }));
     vi.stubGlobal('fetch', fetchMock);
 
     const login = await loginV2('master@example.com', 'correct-password');
-    expect(login).toMatchObject({ authenticated: false, mfaRequired: true, challengeToken: 'challenge-token-1234567890' });
-    await completeMfaV2(login.challengeToken!, '123456');
+    expect(login).toMatchObject({ authenticated: true, mfaRequired: false });
+    await changePasswordV2('correct-password', 'new-strong-password');
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v2/auth/login');
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ email: 'master@example.com', password: 'correct-password' });
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v2/auth/mfa');
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ challengeToken: 'challenge-token-1234567890', code: '123456' });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v2/auth/change-password');
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ currentPassword: 'correct-password', newPassword: 'new-strong-password' });
   });
 
   it('opens one step-up request and retries the original mutation once with the same idempotency key', async () => {
@@ -88,7 +88,7 @@ describe('production authentication client', () => {
   });
 
   it('uses GET/POST/PATCH actor administration contracts without serializing secrets into list responses', async () => {
-    const actor = { id: 'actor-1', name: '기사', role: 'driver', storeIds: [], active: true, version: 1, email: 'driver@example.com', mfaEnabled: false };
+    const actor = { id: 'actor-1', name: '기사', role: 'driver', storeIds: [], active: true, version: 1, email: 'driver@example.com' };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ actors: [actor] }))
       .mockResolvedValueOnce(json({ actor }, 201))
@@ -97,7 +97,7 @@ describe('production authentication client', () => {
 
     expect(await listActorAccountsV2()).toEqual({ actors: [actor] });
     await provisionActorV2({ name: '기사', role: 'driver', storeIds: [], email: 'driver@example.com', password: 'strong-password' }, 'create-actor-key');
-    await resetActorV2('actor-1', 1, 'new-strong-password', undefined, 'reset-actor-key');
+    await resetActorV2('actor-1', 1, 'new-strong-password', 'reset-actor-key');
 
     expect(fetchMock.mock.calls.map((call) => call[1]?.method ?? 'GET')).toEqual(['GET', 'POST', 'PATCH']);
     expect(String(fetchMock.mock.calls[0]?.[1]?.body ?? '')).not.toContain('password');

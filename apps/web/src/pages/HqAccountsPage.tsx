@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  changePasswordV2,
   deactivateActorV2,
   listActorAccountsV2,
   newIdempotencyKey,
@@ -23,7 +24,7 @@ const roles: Array<{ value: ProvisionableActorRole; label: string }> = [
   { value: 'auditor', label: '감사자' },
 ];
 const storeRoles = new Set<ProvisionableActorRole>(['store_owner', 'store_staff']);
-const privilegedRoles = new Set<ProvisionableActorRole>(['hq_ops', 'hq_finance', 'hq_master', 'auditor']);
+const hqRoles = new Set<ProvisionableActorRole>(['hq_ops', 'hq_finance', 'hq_master', 'auditor']);
 
 function roleLabel(role: string) {
   return roles.find((item) => item.value === role)?.label ?? role;
@@ -45,7 +46,6 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   const [role, setRole] = useState<ProvisionableActorRole>('store_owner');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [mfaSecret, setMfaSecret] = useState('');
   const [storeIds, setStoreIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
@@ -67,15 +67,13 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   useEffect(() => { void load(); }, []);
 
   const storesRequired = storeRoles.has(role);
-  const mfaRequired = privilegedRoles.has(role);
   const canSubmit = name.trim().length >= 2 && email.trim() && password.length >= 12
-    && (!storesRequired || storeIds.length > 0) && (!mfaRequired || mfaSecret.trim().length >= 16);
+    && (!storesRequired || storeIds.length > 0);
 
   function changeRole(nextRole: ProvisionableActorRole) {
     setRole(nextRole);
     setFormError('');
     if (!storeRoles.has(nextRole)) setStoreIds([]);
-    if (!privilegedRoles.has(nextRole)) setMfaSecret('');
   }
 
   function toggleStore(storeId: string) {
@@ -90,13 +88,11 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
     try {
       const result = await provisionActorV2({
         name: name.trim(), role, storeIds: storesRequired ? storeIds : [], email: email.trim().toLowerCase(), password,
-        ...(mfaRequired ? { mfaSecret: mfaSecret.trim().toUpperCase().replace(/\s/g, '') } : {}),
       }, newIdempotencyKey());
       setActors((current) => [result.actor, ...current.filter((actor) => actor.id !== result.actor.id)]);
       setName('');
       setEmail('');
       setPassword('');
-      setMfaSecret('');
       setStoreIds([]);
       notify(`${result.actor.name} 계정을 생성했습니다.`, 'success');
     } catch (error) {
@@ -124,7 +120,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   const counts = useMemo(() => ({
     active: actors.filter((actor) => actor.active).length,
     store: actors.filter((actor) => storeRoles.has(actor.role as ProvisionableActorRole)).length,
-    hq: actors.filter((actor) => privilegedRoles.has(actor.role as ProvisionableActorRole)).length,
+    hq: actors.filter((actor) => hqRoles.has(actor.role as ProvisionableActorRole)).length,
   }), [actors]);
 
   return (
@@ -171,19 +167,13 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
                 ))}</div>
               </fieldset>
             )}
-            {mfaRequired && (
-              <label htmlFor="account-mfa">TOTP 비밀키
-                <input id="account-mfa" type="password" required minLength={16} maxLength={128} autoComplete="off" spellCheck={false} value={mfaSecret} onChange={(event) => setMfaSecret(event.target.value)} aria-describedby="account-mfa-hint" />
-                <small id="account-mfa-hint" className="field-hint">인증 앱 등록용 Base32 키입니다. 저장 후 다시 표시되지 않습니다.</small>
-              </label>
-            )}
             {formError && <p className="form-alert" role="alert">{formError}</p>}
             <Button type="submit" disabled={!canSubmit || submitting}>{submitting ? '생성 중…' : '계정 생성'}</Button>
           </form>
         </section>
 
         <section className="panel account-list-panel" aria-labelledby="account-list-title" aria-busy={loading}>
-          <header><div><h2 id="account-list-title">등록 계정</h2><p>비밀번호와 TOTP 키는 목록에 노출되지 않습니다.</p></div><strong>{actors.length}개</strong></header>
+          <header><div><h2 id="account-list-title">등록 계정</h2><p>비밀번호는 목록에 노출되지 않습니다.</p></div><strong>{actors.length}개</strong></header>
           {loadError && <div className="account-load-error" role="alert"><p>{loadError}</p><Button type="button" variant="secondary" onClick={() => void load()}>다시 시도</Button></div>}
           {loading && <p className="account-loading" role="status">계정 목록을 불러오는 중입니다…</p>}
           {!loading && !loadError && actors.length === 0 && <p className="account-loading">등록된 계정이 없습니다.</p>}
@@ -193,9 +183,9 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
                 <li key={actor.id} className={!actor.active ? 'inactive' : ''}>
                   <span className="account-avatar" aria-hidden="true">{actor.name.slice(0, 1)}</span>
                   <div className="account-identity"><strong>{actor.name}</strong><span>{actor.email}</span><small>{actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</small></div>
-                  <div className="account-security"><span className={`account-status ${actor.active ? 'active' : 'inactive'}`}>{actor.active ? '활성' : '비활성'}</span><small>{roleLabel(actor.role)} · MFA {actor.mfaEnabled ? '사용' : '미사용'}</small>{actor.lockedUntil && <em>로그인 잠김</em>}</div>
+                  <div className="account-security"><span className={`account-status ${actor.active ? 'active' : 'inactive'}`}>{actor.active ? '활성' : '비활성'}</span><small>{roleLabel(actor.role)}</small>{actor.lockedUntil && <em>로그인 잠김</em>}</div>
                   <div className="account-actions">
-                    <Button type="button" variant="secondary" aria-label={`${actor.name} 자격정보 재설정`} onClick={() => setResetTarget(actor)}>자격정보 재설정</Button>
+                    <Button type="button" variant="secondary" aria-label={`${actor.name} 비밀번호 재설정`} onClick={() => setResetTarget(actor)}>비밀번호 재설정</Button>
                     <Button type="button" variant="danger" aria-label={`${actor.name} 계정 비활성화`} disabled={!actor.active || actor.id === data.actor.id} onClick={() => void deactivate(actor)}>비활성화</Button>
                   </div>
                 </li>
@@ -205,7 +195,9 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
         </section>
       </div>
 
-      <section className="safety-strip"><LockKeyhole size={25} /><div><strong>민감정보 비표시 원칙</strong><p>비밀번호 해시와 TOTP 비밀키는 API 응답과 이 화면 어디에도 표시되지 않습니다.</p></div><span className="safe-mode">SANITIZED ADMIN VIEW</span></section>
+      <ChangeMyPasswordPanel notify={notify} onChanged={onCurrentSessionRevoked} />
+
+      <section className="safety-strip"><LockKeyhole size={25} /><div><strong>민감정보 비표시 원칙</strong><p>비밀번호 해시는 API 응답과 이 화면 어디에도 표시되지 않습니다.</p></div><span className="safe-mode">SANITIZED ADMIN VIEW</span></section>
       {resetTarget && <ResetAccountDialog actor={resetTarget} onClose={() => setResetTarget(null)} onSaved={(updated) => {
         replaceActor(updated);
         setResetTarget(null);
@@ -222,11 +214,9 @@ function ResetAccountDialog({ actor, onClose, onSaved }: {
   onSaved: (actor: AdminActorSummary) => void;
 }) {
   const [password, setPassword] = useState('');
-  const [mfaSecret, setMfaSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const dialogRef = useAccessibleDialog(() => { if (!busy) onClose(); });
-  const privileged = privilegedRoles.has(actor.role as ProvisionableActorRole);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -234,13 +224,11 @@ function ResetAccountDialog({ actor, onClose, onSaved }: {
     setBusy(true);
     setError('');
     try {
-      const result = await resetActorV2(actor.id, actor.version, password,
-        mfaSecret.trim() ? mfaSecret.trim().toUpperCase().replace(/\s/g, '') : undefined, newIdempotencyKey());
+      const result = await resetActorV2(actor.id, actor.version, password, newIdempotencyKey());
       setPassword('');
-      setMfaSecret('');
       onSaved(result.actor);
     } catch (caught) {
-      setError(errorMessage(caught, '자격정보를 재설정하지 못했습니다.'));
+      setError(errorMessage(caught, '비밀번호를 재설정하지 못했습니다.'));
     } finally {
       setBusy(false);
     }
@@ -249,20 +237,67 @@ function ResetAccountDialog({ actor, onClose, onSaved }: {
   return (
     <div className="dialog-backdrop" role="presentation">
       <section ref={dialogRef} className="step-up-dialog account-reset-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-account-title" tabIndex={-1}>
-        <header><span className="auth-symbol"><LockKeyhole size={24} /></span><div><p className="eyebrow"><span /> CREDENTIAL RESET</p><h2 id="reset-account-title">{actor.name} 자격정보 재설정</h2></div><button type="button" className="icon-button" aria-label={`${actor.name} 재설정 닫기`} onClick={onClose} disabled={busy}><X size={20} /></button></header>
+        <header><span className="auth-symbol"><LockKeyhole size={24} /></span><div><p className="eyebrow"><span /> PASSWORD RESET</p><h2 id="reset-account-title">{actor.name} 비밀번호 재설정</h2></div><button type="button" className="icon-button" aria-label={`${actor.name} 재설정 닫기`} onClick={onClose} disabled={busy}><X size={20} /></button></header>
         <p>새 비밀번호를 저장하면 이 계정의 기존 로그인 세션이 모두 종료됩니다.</p>
         <form onSubmit={submit} noValidate>
           <label htmlFor="reset-password">새 비밀번호
-            <input data-dialog-initial id="reset-password" type="password" minLength={12} maxLength={200} required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            <input data-dialog-initial id="reset-password" type="password" minLength={12} maxLength={200} required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby="reset-password-hint" />
+            <small id="reset-password-hint" className="field-hint">12자 이상. 저장 후 화면에 다시 표시되지 않습니다.</small>
           </label>
-          {privileged && <label htmlFor="reset-mfa">새 TOTP 비밀키 (선택)
-            <input id="reset-mfa" type="password" minLength={16} maxLength={128} autoComplete="off" spellCheck={false} value={mfaSecret} onChange={(event) => setMfaSecret(event.target.value)} aria-describedby="reset-mfa-hint" />
-            <small id="reset-mfa-hint" className="field-hint">비워 두면 현재 MFA 등록을 유지합니다.</small>
-          </label>}
           {error && <p className="form-alert" role="alert">{error}</p>}
           <footer><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>취소</Button><Button type="submit" disabled={busy || password.length < 12}>{busy ? '저장 중…' : '재설정'}</Button></footer>
         </form>
       </section>
     </div>
+  );
+}
+
+function ChangeMyPasswordPanel({ notify, onChanged }: { notify: Notify; onChanged?: () => void }) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const canSubmit = current.length > 0 && next.length >= 12 && next === confirm;
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!canSubmit || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await changePasswordV2(current, next);
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+      notify('비밀번호를 변경했습니다. 다른 기기의 세션은 모두 종료됩니다.', 'success');
+      onChanged?.();
+    } catch (caught) {
+      setError(errorMessage(caught, '비밀번호를 변경하지 못했습니다.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel account-create-panel" aria-labelledby="change-password-title">
+      <header><span className="panel-symbol"><LockKeyhole size={22} /></span><div><h2 id="change-password-title">내 비밀번호 변경</h2><p>현재 비밀번호를 확인한 뒤 새 비밀번호로 바꿉니다. 변경하면 다른 기기의 로그인은 종료됩니다.</p></div></header>
+      <form onSubmit={submit} noValidate>
+        <label htmlFor="my-current-password">현재 비밀번호
+          <input id="my-current-password" type="password" required autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
+        </label>
+        <label htmlFor="my-new-password">새 비밀번호
+          <input id="my-new-password" type="password" required minLength={12} maxLength={200} autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} aria-describedby="my-new-password-hint" />
+          <small id="my-new-password-hint" className="field-hint">12자 이상.</small>
+        </label>
+        <label htmlFor="my-confirm-password">새 비밀번호 확인
+          <input id="my-confirm-password" type="password" required minLength={12} maxLength={200} autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} aria-invalid={mismatch} aria-describedby={mismatch ? 'my-confirm-error' : undefined} />
+        </label>
+        {mismatch && <p id="my-confirm-error" className="form-alert" role="alert">새 비밀번호가 서로 일치하지 않습니다.</p>}
+        {error && <p className="form-alert" role="alert">{error}</p>}
+        <Button type="submit" disabled={!canSubmit || busy}>{busy ? '변경 중…' : '비밀번호 변경'}</Button>
+      </form>
+    </section>
   );
 }

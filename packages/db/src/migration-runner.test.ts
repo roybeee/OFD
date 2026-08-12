@@ -17,6 +17,7 @@ test("discovers every numbered SQL migration in deterministic order", async () =
     "007_store_openings",
     "008_field_operations",
     "009_pos_discovery",
+    "010_remove_mfa",
   ]);
   for (const migration of migrations) {
     assert.match(migration.checksumSha256, /^[0-9a-f]{64}$/);

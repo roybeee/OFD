@@ -124,24 +124,21 @@ describe('role-aware OFD workspace', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/auth/login'))).toBe(true);
   });
 
-  it('completes the HQ MFA challenge and redirects to the first permitted HQ route', async () => {
+  it('logs an HQ master in with password only and redirects to the first permitted HQ route', async () => {
     let authenticated = false;
     window.history.replaceState({}, '', '/store/orders');
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/bootstrap')) return authenticated
         ? apiResponse(bootstrapPayload({ role: 'hq_master', capabilities: ['hq.orders.read'] }))
         : apiResponse({ error: { code: 'UNAUTHENTICATED', message: '로그인이 필요합니다.' } }, 401);
-      if (url.endsWith('/auth/login') && init?.method === 'POST') return apiResponse({
-        authenticated: false, mfaRequired: true, challengeToken: 'challenge-token-1234567890',
-        actor: { id: 'hq-1', name: '본사 관리자', role: 'hq_master', storeIds: [] },
-      });
-      if (url.endsWith('/auth/mfa') && init?.method === 'POST') {
+      if (url.endsWith('/auth/login') && init?.method === 'POST') {
         authenticated = true;
-        return apiResponse({ authenticated: true, actor: { id: 'hq-1', name: '본사 관리자', role: 'hq_master', storeIds: [] } });
+        return apiResponse({ authenticated: true, mfaRequired: false, actor: { id: 'hq-1', name: '본사 관리자', role: 'hq_master', storeIds: [] } });
       }
       return apiResponse({ error: { code: 'UNEXPECTED', message: 'unexpected' } }, 500);
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
     await renderApp();
     await waitFor(() => hasHeading('OFD 워크스테이션 로그인'));
 
@@ -155,12 +152,11 @@ describe('role-aware OFD workspace', () => {
     await enter('input[type="email"]', 'master@example.com');
     await enter('input[type="password"]', 'CorrectHorseBatteryStaple!');
     await act(async () => button('로그인').click());
-    await waitFor(() => hasHeading('2단계 인증'));
-    await enter('input[inputmode="numeric"]', '123456');
-    await act(async () => button('인증하고 계속').click());
 
     await waitFor(() => hasHeading('주문 운영'));
     expect(window.location.pathname).toBe('/hq/orders');
+    // MFA 2단계는 더 이상 없다 — /auth/mfa 호출이 없어야 한다
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/auth/mfa'))).toBe(false);
   });
 
   it('shows only menus granted by the current OFD session and keeps home destinations distinct', async () => {
@@ -276,7 +272,7 @@ describe('role-aware OFD workspace', () => {
     window.history.replaceState({}, '', '/hq/accounts');
     const master = {
       id: 'actor-1', name: '운영 사용자', role: 'hq_master', storeIds: [], active: true, version: 1,
-      email: 'master@example.com', mfaEnabled: true,
+      email: 'master@example.com',
     };
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -286,8 +282,8 @@ describe('role-aware OFD workspace', () => {
       return apiResponse({ error: { code: 'UNEXPECTED', message: 'unexpected' } }, 500);
     }));
     await renderApp();
-    await waitFor(() => Boolean(container.querySelector('[aria-label="운영 사용자 자격정보 재설정"]')));
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="운영 사용자 자격정보 재설정"]')!.click());
+    await waitFor(() => Boolean(container.querySelector('[aria-label="운영 사용자 비밀번호 재설정"]')));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="운영 사용자 비밀번호 재설정"]')!.click());
     await act(async () => {
       const password = container.querySelector<HTMLInputElement>('#reset-password')!;
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(password, 'NewCorrectPassword!');
