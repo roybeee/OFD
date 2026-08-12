@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   createPosAliasV2, createPosProductV2, loadPosLinks, loadPosProducts, loadPosUnmatched, loadPosWaste,
-  newIdempotencyKey, type PosDeviation, type PosProduct, type PosUnmatched, type PosWasteResult,
+  newIdempotencyKey, updatePosProductV2, type PosDeviation, type PosProduct, type PosUnmatched, type PosWasteResult,
 } from '../api/client';
+import { V1_CATALOG } from '../data/v1-catalog';
 import { Button, EmptyState, MetricCard } from '../components/ui';
 import { PackageCheck } from '../components/icons';
 import type { BootstrapData, Toast } from '../types';
@@ -17,7 +18,7 @@ const shiftDays = (date: string, days: number) => {
 };
 
 /** V1 상품 관리 이식: 카테고리·미매칭 매핑·가격 편차 + 폐기 산출 */
-export function HqProductsPage({ notify }: { data: BootstrapData; notify: (message: string, tone?: Toast['tone']) => void }) {
+export function HqProductsPage({ data, notify }: { data: BootstrapData; notify: (message: string, tone?: Toast['tone']) => void }) {
   const [to, setTo] = useState(seoulToday);
   const [from, setFrom] = useState(() => shiftDays(seoulToday(), -29));
   const [products, setProducts] = useState<PosProduct[]>([]);
@@ -89,9 +90,46 @@ export function HqProductsPage({ notify }: { data: BootstrapData; notify: (messa
     }
   }
 
-  const label = (storeId: string) => storeNames[storeId] ?? storeId.slice(0, 8);
+  /* 화면에는 매장 이름을 우선 표기 — merchantId는 대장에 이름이 없을 때의 예비 표기 */
+  const label = (storeId: string) => data.stores.find((store) => store.id === storeId)?.name ?? storeNames[storeId] ?? storeId.slice(0, 8);
   const shown = category === '전체' ? products : products.filter((product) => product.category === category);
   const unmatchedAmount = unmatched.reduce((acc, item) => acc + item.amount, 0);
+
+  /* V1 워크스테이션 상품 대장 41종 일괄 등록 — 이미 같은 이름이 있으면 건너뛴다 */
+  async function importV1Catalog() {
+    const existing = new Set(products.map((product) => product.name));
+    const missing = V1_CATALOG.filter((item) => !existing.has(item.name));
+    if (missing.length === 0) { notify('V1 품목이 모두 이미 등록되어 있습니다.', 'success'); return; }
+    setPending('__v1_import__');
+    let created = 0;
+    try {
+      for (const item of missing) {
+        await createPosProductV2({ name: item.name, category: item.category, storeId: null, consumerPrice: item.consumerPrice }, newIdempotencyKey());
+        created += 1;
+      }
+      notify(`V1 품목 ${created}종 등록 완료 (기존 ${existing.size}종 유지) — 매장 전용 품목은 범위를 조정해 주세요.`, 'success');
+      await refresh();
+    } catch (cause) {
+      notify(cause instanceof Error ? `${created}종 등록 후 실패: ${cause.message}` : 'V1 품목 등록에 실패했습니다.', 'warning');
+      await refresh();
+    } finally {
+      setPending('');
+    }
+  }
+
+  /* 등록 상품 세부내용(카테고리·범위·소비자가) 인라인 수정 */
+  async function patchProduct(product: PosProduct, patch: { category?: string; storeId?: string | null; consumerPrice?: number | null }) {
+    setPending(product.id);
+    try {
+      await updatePosProductV2(product.id, patch);
+      notify(`"${product.name}" 수정 완료`, 'success');
+      await refresh();
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : '상품 수정에 실패했습니다.', 'warning');
+    } finally {
+      setPending('');
+    }
+  }
 
   return (
     <section className="page" aria-labelledby="products-heading">
@@ -245,14 +283,20 @@ export function HqProductsPage({ notify }: { data: BootstrapData; notify: (messa
       </section>
 
       <section className="panel" aria-labelledby="catalog-heading">
-        <h2 id="catalog-heading">상품 목록</h2>
+        <div className="page-head">
+          <h2 id="catalog-heading">상품 목록</h2>
+          <Button type="button" variant="secondary" onClick={() => void importV1Catalog()} disabled={pending === '__v1_import__'}>
+            {pending === '__v1_import__' ? '등록 중…' : `V1 품목 불러오기 (${V1_CATALOG.length}종)`}
+          </Button>
+        </div>
+        <p className="muted">카테고리·범위·소비자가는 표에서 바로 수정됩니다. 수정 즉시 저장돼요.</p>
         <div className="filter-bar" role="group" aria-label="카테고리 필터">
           {(['전체', ...CATEGORIES] as string[]).map((item) => (
             <button key={item} type="button" className={category === item ? 'chip chip-on' : 'chip'} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>
           ))}
         </div>
         {loading ? <p className="muted">불러오는 중…</p> : shown.length === 0 ? (
-          <EmptyState icon={<PackageCheck size={20} aria-hidden="true" />} title="상품이 없습니다">미매칭 품목을 신규 등록하면 여기에 나타납니다.</EmptyState>
+          <EmptyState icon={<PackageCheck size={20} aria-hidden="true" />} title="상품이 없습니다">V1 품목을 불러오거나 미매칭 품목을 신규 등록하면 여기에 나타납니다.</EmptyState>
         ) : (
           <div className="table-wrap">
             <table className="data-table">
@@ -268,9 +312,30 @@ export function HqProductsPage({ notify }: { data: BootstrapData; notify: (messa
                 {shown.map((product) => (
                   <tr key={product.id}>
                     <th scope="row">{product.name}</th>
-                    <td>{product.category}</td>
-                    <td>{product.storeId ? `${label(product.storeId)} 전용` : '공통'}</td>
-                    <td className="num">{product.consumerPrice === null ? '미등록' : won(product.consumerPrice)}</td>
+                    <td>
+                      <select aria-label={`${product.name} 카테고리`} value={product.category} disabled={pending === product.id}
+                        onChange={(event) => void patchProduct(product, { category: event.target.value })}>
+                        {CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select aria-label={`${product.name} 범위`} value={product.storeId ?? ''} disabled={pending === product.id}
+                        onChange={(event) => void patchProduct(product, { storeId: event.target.value || null })}>
+                        <option value="">공통 (전 매장)</option>
+                        {data.stores.map((store) => <option key={store.id} value={store.id}>{store.name} 전용</option>)}
+                      </select>
+                    </td>
+                    <td className="num">
+                      <input key={`${product.id}:${product.consumerPrice ?? ''}`} type="number" inputMode="numeric"
+                        aria-label={`${product.name} 소비자가`} min={0} step={100}
+                        defaultValue={product.consumerPrice ?? ''} placeholder="미등록" disabled={pending === product.id}
+                        onBlur={(event) => {
+                          const raw = event.target.value.trim();
+                          const next = raw === '' ? null : Number(raw);
+                          if (next === (product.consumerPrice ?? null) || (next !== null && !Number.isFinite(next))) return;
+                          void patchProduct(product, { consumerPrice: next });
+                        }} />
+                    </td>
                   </tr>
                 ))}
               </tbody>

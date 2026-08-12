@@ -506,6 +506,10 @@ export function createPosAliasV2(rawName: string, productId: string, idempotency
 export function createPosProductV2(input: { name: string; category: string; storeId: string | null; consumerPrice: number | null; rawName?: string }, idempotencyKey: string) {
   return mutateV2<{ product: PosProduct }>('/pos/products', input, { idempotencyKey });
 }
+
+export function updatePosProductV2(id: string, patch: { category?: string; storeId?: string | null; consumerPrice?: number | null }) {
+  return jsonRequest<{ product: PosProduct }>(`/pos/products/${encodeURIComponent(id)}`, 'PATCH', patch);
+}
 export function createPosStoreV2(input: { name: string; code?: string; billingCycle: string; paymentMethod: string; notificationPhone?: string; storeKind?: string }, idempotencyKey: string) {
   return mutateV2<{ store: { id: string; code: string; name: string } }>('/pos/stores', input, { idempotencyKey });
 }

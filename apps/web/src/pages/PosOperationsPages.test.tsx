@@ -21,8 +21,8 @@ const json = (body: unknown, status = 200) =>
 
 const LINKS = {
   links: [
-    { id: 'link-1', storeId: 'store-1', merchantId: '맵달서울점', status: 'active', lastSyncAt: null },
-    { id: 'link-2', storeId: 'store-2', merchantId: '독산점', status: 'active', lastSyncAt: null },
+    { id: 'link-1', storeId: 'store-1', merchantId: '480975', status: 'active', lastSyncAt: null },
+    { id: 'link-2', storeId: 'store-2', merchantId: '521445', status: 'active', lastSyncAt: null },
   ],
 };
 
@@ -83,6 +83,10 @@ describe('POS 현장 운영 화면', () => {
 
     expect(container.textContent).toContain('매출현황');
     expect(container.textContent).toContain('32,400');
+    /* 매장 열·필터는 상점번호(merchantId)가 아니라 매장 이름으로 표기한다 */
+    expect(container.textContent).toContain('맵달서울점');
+    expect(container.textContent).toContain('독산점');
+    expect(container.textContent).not.toContain('480975');
     expect(container.textContent).not.toContain('우유크림도넛');
 
     const toggle = [...container.querySelectorAll('button.row-toggle')].find((node) => node.textContent?.includes('2026-08-03'))!;
@@ -92,6 +96,7 @@ describe('POS 현장 운영 화면', () => {
     expect(container.textContent).toContain('우유크림도넛');
     expect(container.textContent).toContain('미매칭(기타)');
     expect(container.textContent).toContain('90.7%');
+    expect(container.textContent).toContain('4,200원'); /* 품목 단가 = 29,400 ÷ 7 */
     const reopened = [...container.querySelectorAll('button.row-toggle')].find((node) => node.textContent?.includes('2026-08-03'))!;
     expect(reopened.getAttribute('aria-expanded')).toBe('true');
   });
@@ -216,6 +221,47 @@ describe('POS 현장 운영 화면', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('3건 소급 반영'), 'success');
+  });
+
+  it('상품 관리: 카테고리·범위·소비자가를 표에서 바로 수정하고 V1 품목을 일괄 등록한다', async () => {
+    const patches: Array<{ url: string; body: unknown }> = [];
+    let created = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/pos/products') && init?.method === 'PATCH') {
+        patches.push({ url, body: JSON.parse(String(init.body)) });
+        return json({ product: { id: 'p1' } });
+      }
+      if (url.includes('/pos/products') && init?.method === 'POST') { created += 1; return json({ product: { id: `v1-${created}` } }, 201); }
+      if (url.includes('/pos/products')) {
+        return json({ products: [{ id: 'p1', sku: 'S1', name: '우유크림도넛', category: '기타', storeId: null, consumerPrice: 4_200 }], deviations: [] });
+      }
+      if (url.includes('/pos/unmatched')) return json({ items: [] });
+      if (url.includes('/pos/waste')) return json({ storeId: 'store-1', date: '2026-08-04', hasReceipt: false, hasPos: false,
+        items: [], totals: { received: null, sold: 0, waste: null, wasteRatePct: null, lossAmount: null } });
+      if (url.includes('/pos/links')) return json(LINKS);
+      if (url.includes('/pos/discovered')) return json({ merchants: [] });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const notify = vi.fn();
+    await render(<HqProductsPage data={data} notify={notify} />);
+
+    /* 카테고리 인라인 수정 → PATCH */
+    const categorySelect = container.querySelector('select[aria-label="우유크림도넛 카테고리"]') as HTMLSelectElement;
+    await act(async () => { setValue(categorySelect, '도넛'); });
+    expect(patches[0]?.body).toMatchObject({ category: '도넛' });
+
+    /* 범위(매장 전용) 인라인 수정 → PATCH */
+    const scopeSelect = container.querySelector('select[aria-label="우유크림도넛 범위"]') as HTMLSelectElement;
+    await act(async () => { setValue(scopeSelect, 'store-2'); });
+    expect(patches[1]?.body).toMatchObject({ storeId: 'store-2' });
+
+    /* V1 카탈로그 일괄 등록 — 이미 있는 우유크림도넛은 건너뛰고 40종만 등록 */
+    const importButton = [...container.querySelectorAll('button')].find((node) => node.textContent?.includes('V1 품목 불러오기')) as HTMLButtonElement;
+    await act(async () => { importButton.click(); });
+    expect(created).toBe(40);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('V1 품목 40종 등록 완료'), 'success');
   });
 
   it('상품 관리: 입고가 있으면 폐기율과 로스를 보여준다', async () => {

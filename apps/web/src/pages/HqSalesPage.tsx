@@ -132,7 +132,8 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
     setOpen(new Set());
   }
 
-  const label = (storeId: string) => storeNames[storeId] ?? storeId.slice(0, 8);
+  /* 화면에는 매장 이름을 우선 표기 — merchantId는 대장에 이름이 없을 때의 예비 표기 */
+  const label = (storeId: string) => localStores.find((store) => store.id === storeId)?.name ?? storeNames[storeId] ?? storeId.slice(0, 8);
   const cell = (value: { qty: number; amount: number } | undefined) => value ? won(metric === 'amount' ? value.amount : value.qty) : '–';
 
   return (
@@ -298,6 +299,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                               <tr>
                                 <th scope="col">품목</th>
                                 {storeIds.length > 1 && storeIds.map((storeId) => <th key={storeId} scope="col" className="num">{label(storeId)}</th>)}
+                                <th scope="col" className="num">단가</th>
                                 <th scope="col" className="num">수량</th>
                                 <th scope="col" className="num">매출</th>
                                 <th scope="col" className="num">비중</th>
@@ -311,6 +313,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                                     const store = mix.stores.find((item) => item.storeId === storeId);
                                     return <td key={storeId} className="num muted">{store ? won(metric === 'amount' ? store.amount : store.qty) : '–'}</td>;
                                   })}
+                                  <td className="num muted">{mix.qty > 0 ? `${won(Math.round(mix.amount / mix.qty))}원` : '–'}</td>
                                   <td className="num">{won(mix.qty)}</td>
                                   <td className="num strong">{won(mix.amount)}</td>
                                   <td className="num muted">{row.total.amount ? ((mix.amount / row.total.amount) * 100).toFixed(1) : '0.0'}%</td>
