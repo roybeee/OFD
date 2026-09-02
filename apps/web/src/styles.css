@@ -2174,3 +2174,67 @@ button.chip.chip-on { border-color: var(--orange); background: var(--orange); co
 .menu-order-actions { display: flex; gap: 5px; flex: none; margin-left: auto; }
 .menu-order-actions .button { min-height: 36px; min-width: 40px; padding: 0 10px; font-size: 14px; }
 @media (max-width: 500px) { .menu-order-path { display: none; } }
+
+/* ── 매장 대장 — 표·지도·공지 패널 규격 통일 ──────────────────────────
+ * 여백은 패널 헤딩(가로 17px)에 맞추고, 세로 간격은 컨테이너 gap 하나로만 준다.
+ * 버튼 높이는 입력 토큰(--control-h)과 같은 값으로 묶어 줄바닥이 흔들리지 않게 한다. */
+
+/* 지금까지 규칙이 없어 여백 없이 붙던 안내 문단 */
+.panel-empty-copy { margin: 0; padding: 13px 17px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+
+.panel-body { display: grid; gap: 12px; padding: 14px 17px 17px; }
+.panel-body .panel-empty-copy { padding: 0; }
+.panel-body .candidate-form { margin-bottom: 0; }
+.panel-body .map-legend,
+.panel-body .distance-readout,
+.panel-body .candidate-list { margin-top: 0; }
+
+/* 지도 액자 — 표(.table-wrap)와 같은 테두리·모서리 규격 */
+.store-map { width: 100%; height: 360px; border: 1px solid var(--line); border-radius: 13px; overflow: hidden; background: #eef1f4; }
+
+/* 입력줄: 입력이 남는 폭을 먹고 버튼은 내용 폭만 · 모두 바닥선 정렬 */
+.candidate-form { align-items: end; }
+.map-key-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.map-key-form label { display: grid; gap: 6px; color: var(--muted); font-size: var(--label-font); font-weight: 750; }
+.notice-form { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto auto; align-items: end; }
+.notice-form .inline-check { min-height: var(--control-h); }
+.candidate-form .button,
+.map-key-form .button,
+.notice-form .button { min-height: var(--control-h); justify-self: start; }
+
+@media (max-width: 720px) {
+  .map-key-form, .notice-form { grid-template-columns: 1fr; }
+  .candidate-form .button,
+  .map-key-form .button,
+  .notice-form .button { justify-self: stretch; }
+}
+
+/* 대장 표 — 행 높이와 동작 버튼 규격을 하나로 */
+.stores-ledger-table th, .stores-ledger-table td { padding: 10px 13px; }
+.stores-ledger-table tbody tr { height: 56px; }
+.stores-ledger-table tbody tr:hover { background: var(--orange-pale); }
+.stores-ledger-table .col-action { width: 1%; text-align: right; white-space: nowrap; }
+.stores-ledger-table .col-action .row-actions { justify-content: flex-end; flex-wrap: nowrap; }
+.stores-ledger-table .row-actions .button { min-height: 36px; padding: 0 15px; font-size: 12.5px; }
+.stores-ledger-table td input,
+.stores-ledger-table td select { width: 100%; max-width: none; min-height: 36px; }
+.stores-ledger-table .inline-check { min-height: 36px; white-space: nowrap; }
+
+/* 상태 — 색 글자 대신 같은 크기의 알약으로 */
+.state-pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 10px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 800; white-space: nowrap; }
+.state-pill.on { background: rgba(11,118,80,.1); color: var(--green); }
+.state-pill.off { background: rgba(195,61,53,.1); color: var(--red); }
+
+/* 목록 행 안의 보조 버튼 — 행 높이를 밀어 올리지 않는 한 규격 */
+.candidate-list .button,
+.notice-admin-list .button { flex: none; min-height: 34px; padding: 0 13px; font-size: 12px; }
+
+/* 체크박스 라벨 — .form-grid label(그리드)에 눌려 세로로 쌓이던 것을 한 줄로 되돌린다 */
+.form-grid label.inline-check { display: flex; align-items: center; gap: 7px; }
+.inline-check input[type='checkbox'] { width: 16px; height: 16px; flex: none; margin: 0; accent-color: var(--orange); }
+
+/* 모바일에서 패널 제목과 설명이 좌우로 끼여 3줄로 접히던 문제 */
+@media (max-width: 720px) {
+  .panel-heading > div:first-child { flex-direction: column; align-items: flex-start; gap: 4px; }
+}

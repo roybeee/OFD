@@ -338,10 +338,11 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
         ? <EmptyState icon={<StoreIcon size={22} aria-hidden="true" />} title="등록된 매장이 없습니다">매출현황 탭에서 매장을 등록하면 대장에 나타납니다.</EmptyState>
         : (
           <div className="table-wrap">
-            <table className="data-table" aria-label="매장 대장">
+            <table className="data-table stores-ledger-table" aria-label="매장 대장">
               <thead><tr>
                 <th scope="col">코드</th><th scope="col">매장명</th><th scope="col">구분</th><th scope="col">지역</th>
-                <th scope="col">도로명주소</th><th scope="col">전화</th><th scope="col">오픈일</th><th scope="col">상태</th><th scope="col" aria-label="동작" />
+                <th scope="col">도로명주소</th><th scope="col" className="num">전화</th><th scope="col" className="num">오픈일</th>
+                <th scope="col">상태</th><th scope="col" className="col-action" aria-label="동작" />
               </tr></thead>
               <tbody>
                 {stores.map((store) => {
@@ -372,13 +373,13 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
                         : store.openDate ?? <span className="muted">—</span>}</td>
                       <td>{editing
                         ? <label className="inline-check"><input type="checkbox" checked={draft.active} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} /> 활성</label>
-                        : store.active === false ? <span className="tone-red">비활성</span> : <span className="tone-green">활성</span>}</td>
-                      <td>{editing
-                        ? <span className="row-actions">
+                        : store.active === false ? <span className="state-pill off">비활성</span> : <span className="state-pill on">활성</span>}</td>
+                      <td className="col-action"><span className="row-actions">{editing
+                        ? <>
                             <Button type="button" onClick={() => void saveEdit(store)} disabled={busy}>저장</Button>
                             <Button type="button" variant="ghost" onClick={() => { setEditingId(null); setDraft(null); }} disabled={busy}>취소</Button>
-                          </span>
-                        : <Button type="button" variant="secondary" onClick={() => startEdit(store)}>수정</Button>}</td>
+                          </>
+                        : <Button type="button" variant="secondary" onClick={() => startEdit(store)}>수정</Button>}</span></td>
                     </tr>
                   );
                 })}
@@ -389,70 +390,72 @@ export function HqStoresPage({ data, notify, refresh }: { data: BootstrapData; n
 
       <section className="panel" aria-labelledby="stores-map-heading">
         <div className="panel-heading"><div><h2 id="stores-map-heading">매장 지도 · 출점 거리 검토</h2><p>기존 매장은 파란 핀, 예비 출점 후보는 빨간 핀입니다 · 핀 두 개를 누르면 직선거리를 계산합니다</p></div></div>
-        {!mapKey && <p className="panel-empty-copy">네이버 지도 키가 아직 없습니다. {isMaster ? '아래에서 키를 저장하면 지도가 나타납니다.' : '마스터 계정에서 지도 키를 설정할 수 있습니다.'}</p>}
-        {mapKey && geocodable.length === 0 && <p className="panel-empty-copy">도로명주소가 입력된 매장이 없습니다. 대장에서 주소를 채우면 지도에 표시됩니다.</p>}
-        {mapKey && geocodable.length > 0 && (
-          <>
-            {mapStatus === 'error' && <p className="panel-empty-copy">지도 스크립트를 불러오지 못했습니다. 네트워크 상태를 확인하고 새로고침해 주세요.</p>}
-            {mapStatus === 'auth-error' && <p className="panel-empty-copy">지도 키 인증에 실패했습니다. 네이버 클라우드 콘솔에서 Maps Application의 Client ID(ncpKeyId)가 맞는지, Web 서비스 URL에 https://ofd-web.onrender.com 이 등록됐는지 확인해 주세요.</p>}
-            <form className="candidate-form" onSubmit={addCandidate}>
-              <label htmlFor="candidate-address">예비 출점 주소
-                <input id="candidate-address" value={candidateAddress} onChange={(event) => setCandidateAddress(event.target.value)}
-                  placeholder="예: 서울 강남구 테헤란로 123" disabled={candidateBusy} />
+        <div className="panel-body">
+          {!mapKey && <p className="panel-empty-copy">네이버 지도 키가 아직 없습니다. {isMaster ? '아래에서 키를 저장하면 지도가 나타납니다.' : '마스터 계정에서 지도 키를 설정할 수 있습니다.'}</p>}
+          {mapKey && geocodable.length === 0 && <p className="panel-empty-copy">도로명주소가 입력된 매장이 없습니다. 대장에서 주소를 채우면 지도에 표시됩니다.</p>}
+          {mapKey && geocodable.length > 0 && (
+            <>
+              {mapStatus === 'error' && <p className="panel-empty-copy">지도 스크립트를 불러오지 못했습니다. 네트워크 상태를 확인하고 새로고침해 주세요.</p>}
+              {mapStatus === 'auth-error' && <p className="panel-empty-copy">지도 키 인증에 실패했습니다. 네이버 클라우드 콘솔에서 Maps Application의 Client ID(ncpKeyId)가 맞는지, Web 서비스 URL에 https://ofd-web.onrender.com 이 등록됐는지 확인해 주세요.</p>}
+              <form className="candidate-form" onSubmit={addCandidate}>
+                <label htmlFor="candidate-address">예비 출점 주소
+                  <input id="candidate-address" value={candidateAddress} onChange={(event) => setCandidateAddress(event.target.value)}
+                    placeholder="예: 서울 강남구 테헤란로 123" disabled={candidateBusy} />
+                </label>
+                <label htmlFor="candidate-label">표시 이름 (선택)
+                  <input id="candidate-label" value={candidateLabel} onChange={(event) => setCandidateLabel(event.target.value)}
+                    placeholder="예: 역삼 상담건" disabled={candidateBusy} />
+                </label>
+                <Button type="submit" disabled={candidateBusy || !candidateAddress.trim()}>{candidateBusy ? '찾는 중…' : '후보 추가'}</Button>
+              </form>
+              {candidateError && <p className="form-alert" role="alert">{candidateError}</p>}
+              <div ref={mapContainer} className="store-map" aria-label="매장 위치 지도" role="application" />
+              <div className="map-legend">
+                <span><i className="pin-swatch store" aria-hidden="true" />기존 매장</span>
+                <span><i className="pin-swatch candidate" aria-hidden="true" />예비 출점 후보</span>
+                <span className="muted">핀을 누르면 선택 표시(큰 핀)되고, 두 개를 고르면 직선거리가 나옵니다</span>
+              </div>
+              {distanceText && <p className="distance-readout" role="status">{distanceText}</p>}
+              {selectedForDistance.length === 1 && (
+                <p className="muted" role="status">{pointName(selectedForDistance[0]!)} 선택됨 — 비교할 다른 핀을 눌러 주세요.</p>
+              )}
+              {candidates.length > 0 && (
+                <ul className="candidate-list">
+                  {candidates.map((candidate) => {
+                    const selected = selectedForDistance.includes(candidate.id);
+                    return (
+                      <li key={candidate.id} className={selected ? 'selected' : ''}>
+                        <button type="button" className="candidate-pick" onClick={() => toggleDistanceTarget(candidate.id)}
+                          aria-pressed={selected}>
+                          <i className="pin-swatch candidate" aria-hidden="true" />
+                          <strong>{candidate.name}</strong><span className="muted">{candidate.address}</span>
+                        </button>
+                        <Button type="button" variant="ghost" onClick={() => removeCandidate(candidate.id)}>삭제</Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {geocodeMisses.length > 0 && <p className="muted">주소를 찾지 못한 매장: {geocodeMisses.join(', ')}</p>}
+            </>
+          )}
+          {isMaster && (
+            <div className="map-key-form">
+              <label>네이버 지도 키(ncpKeyId)
+                <input value={mapKeyInput} onChange={(event) => setMapKeyInput(event.target.value)} placeholder="네이버 클라우드 콘솔의 Client ID" />
               </label>
-              <label htmlFor="candidate-label">표시 이름 (선택)
-                <input id="candidate-label" value={candidateLabel} onChange={(event) => setCandidateLabel(event.target.value)}
-                  placeholder="예: 역삼 상담건" disabled={candidateBusy} />
-              </label>
-              <Button type="submit" disabled={candidateBusy || !candidateAddress.trim()}>{candidateBusy ? '찾는 중…' : '후보 추가'}</Button>
-            </form>
-            {candidateError && <p className="form-alert" role="alert">{candidateError}</p>}
-            <div ref={mapContainer} style={{ width: '100%', height: 360, borderRadius: 13, overflow: 'hidden' }} aria-label="매장 위치 지도" role="application" />
-            <div className="map-legend">
-              <span><i className="pin-swatch store" aria-hidden="true" />기존 매장</span>
-              <span><i className="pin-swatch candidate" aria-hidden="true" />예비 출점 후보</span>
-              <span className="muted">핀을 누르면 선택 표시(큰 핀)되고, 두 개를 고르면 직선거리가 나옵니다</span>
+              <Button type="button" variant="secondary" onClick={async () => {
+                try { const saved = await saveNaverMapKeyV2(mapKeyInput.trim()); setMapKey(saved.keyId || null); notify('지도 키를 저장했습니다.', 'success'); }
+                catch (cause) { notify(cause instanceof Error ? cause.message : '키 저장에 실패했습니다.', 'warning'); }
+              }}>키 저장</Button>
             </div>
-            {distanceText && <p className="distance-readout" role="status">{distanceText}</p>}
-            {selectedForDistance.length === 1 && (
-              <p className="muted" role="status">{pointName(selectedForDistance[0]!)} 선택됨 — 비교할 다른 핀을 눌러 주세요.</p>
-            )}
-            {candidates.length > 0 && (
-              <ul className="candidate-list">
-                {candidates.map((candidate) => {
-                  const selected = selectedForDistance.includes(candidate.id);
-                  return (
-                    <li key={candidate.id} className={selected ? 'selected' : ''}>
-                      <button type="button" className="candidate-pick" onClick={() => toggleDistanceTarget(candidate.id)}
-                        aria-pressed={selected}>
-                        <i className="pin-swatch candidate" aria-hidden="true" />
-                        <strong>{candidate.name}</strong><span className="muted">{candidate.address}</span>
-                      </button>
-                      <Button type="button" variant="ghost" onClick={() => removeCandidate(candidate.id)}>삭제</Button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {geocodeMisses.length > 0 && <p className="muted">주소를 찾지 못한 매장: {geocodeMisses.join(', ')}</p>}
-          </>
-        )}
-        {isMaster && (
-          <div className="form-grid" style={{ marginTop: 10 }}>
-            <label>네이버 지도 키(ncpKeyId)
-              <input value={mapKeyInput} onChange={(event) => setMapKeyInput(event.target.value)} placeholder="네이버 클라우드 콘솔의 Client ID" />
-            </label>
-            <Button type="button" variant="secondary" onClick={async () => {
-              try { const saved = await saveNaverMapKeyV2(mapKeyInput.trim()); setMapKey(saved.keyId || null); notify('지도 키를 저장했습니다.', 'success'); }
-              catch (cause) { notify(cause instanceof Error ? cause.message : '키 저장에 실패했습니다.', 'warning'); }
-            }}>키 저장</Button>
-          </div>
-        )}
+          )}
+        </div>
       </section>
 
       <section className="panel" aria-labelledby="notices-heading">
         <div className="panel-heading"><div><h2 id="notices-heading">공지 관리</h2><p>매장 발주 화면 상단 배너로 나갑니다 · 고정 공지가 먼저 보입니다</p></div></div>
-        <div className="form-grid">
+        <div className="form-grid notice-form">
           <label>제목<input value={noticeForm.title} onChange={(event) => setNoticeForm({ ...noticeForm, title: event.target.value })} placeholder="예: 광복절 배송 휴무" /></label>
           <label>내용<input value={noticeForm.body} onChange={(event) => setNoticeForm({ ...noticeForm, body: event.target.value })} placeholder="선택 입력" /></label>
           <label className="inline-check"><input type="checkbox" checked={noticeForm.pinned} onChange={(event) => setNoticeForm({ ...noticeForm, pinned: event.target.checked })} /> 상단 고정</label>
