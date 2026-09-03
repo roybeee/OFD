@@ -14,7 +14,7 @@
   text-rendering: optimizeLegibility;
   --ink: #33261a;
   --muted: #786550;
-  --muted-2: #8a7660;
+  --muted-2: #7b6956; /* WCAG AA 4.5:1 — 모든 배경 토큰(blue-soft 포함)에서 4.58 이상. #8a7660은 4.26이었다 */
   --line: #eddfc6;
   --line-strong: #dcc9a8;
   --panel: #fffdf8;
