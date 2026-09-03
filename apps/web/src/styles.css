@@ -759,7 +759,7 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .stop-detail { min-height: 44px; display: flex; align-items: center; gap: 4px; padding: 0 7px; color: var(--orange-dark); background: transparent; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .driver-safety { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 14px 17px; border-radius: 12px; color: var(--blue); background: var(--blue-soft); }
 .driver-safety strong { font-size: 10px; }
-.driver-safety p { margin-top: 2px; color: #58718c; font-size: 8px; }
+.driver-safety p { margin-top: 2px; color: #526983; /* blue-soft 위 4.93:1 (AA). #58718c은 4.40 */ font-size: 8px; }
 .delivery-drawer { width: min(520px,100%); }
 .destination-card { overflow: hidden; border: 1px solid var(--line); border-radius: 11px; }
 .map-placeholder { position: relative; height: 105px; display: grid; place-items: center; color: var(--orange); background: #e7e3da; overflow: hidden; }
@@ -796,7 +796,7 @@ h1, h2, h3, strong { letter-spacing: -.025em; }
 .recipient-field input { padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: white; font-size: 9px; }
 .photo-required { display: flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--red); font-size: 8px; font-weight: 700; }
 .completion-effect { display: flex; align-items: flex-start; gap: 8px; margin-top: 11px; padding: 11px; border-radius: 9px; color: var(--blue); background: var(--blue-soft); }
-.completion-effect p { color: #58718c; font-size: 8px; line-height: 1.5; }
+.completion-effect p { color: #526983; /* blue-soft 위 4.93:1 (AA). #58718c은 4.40 */ font-size: 8px; line-height: 1.5; }
 
 /* Feedback & loading */
 .toast-region { position: fixed; z-index: 200; right: 18px; bottom: 18px; width: min(360px,calc(100% - 32px)); display: grid; gap: 7px; }
