@@ -47,6 +47,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
   const [error, setError] = useState('');
   const [links, setLinks] = useState<Array<{ id: string; storeId: string; merchantId: string; lastSyncAt: string | null }>>([]);
   const [discovered, setDiscovered] = useState<Array<{ merchantId: string; lastSeenAt: string }>>([]);
+  const [lastWebhook, setLastWebhook] = useState<{ receivedAt: string; eventType: string | null } | null>(null);
   const [localStores, setLocalStores] = useState<Array<{ id: string; name: string }>>(() => data.stores.map((store) => ({ id: store.id, name: store.name })));
   const [setupOpen, setSetupOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -68,6 +69,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
       setLinks(linkResult.links.map(({ id, storeId, merchantId, lastSyncAt }) => ({ id, storeId, merchantId, lastSyncAt })));
       setStoreNames(Object.fromEntries(linkResult.links.map((link) => [link.storeId, link.merchantId])));
       setDiscovered(discoveredResult.merchants.map(({ merchantId, lastSeenAt }) => ({ merchantId, lastSeenAt })));
+      setLastWebhook(discoveredResult.lastWebhook ?? null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '매출을 불러오지 못했습니다.');
     } finally {
@@ -256,6 +258,11 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
           <Button type="button" variant="secondary" onClick={submitStore} disabled={setupBusy}>매장 등록</Button>
 
           <h3 className="setup-sub">② 토스플레이스 연동</h3>
+          <p className="muted" data-testid="webhook-heartbeat">
+            {lastWebhook
+              ? `웹훅 마지막 수신 ${lastWebhook.receivedAt.slice(0, 16).replace('T', ' ')}${lastWebhook.eventType ? ` · ${lastWebhook.eventType}` : ''}`
+              : '웹훅을 아직 한 번도 받지 못했습니다 — 개발자센터의 Payload URL과 서명 Secret을 확인하십시오.'}
+          </p>
           {discovered.length > 0 && (
             <div className="discovered-strip" data-testid="discovered-merchants" role="group" aria-label="자동 수집된 매장 ID">
               <p className="muted">매장 POS에서 앱 설치가 감지됐습니다 — 매장 ID를 클릭하면 아래 입력칸에 채워집니다.</p>

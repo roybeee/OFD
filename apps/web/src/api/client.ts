@@ -495,9 +495,12 @@ export function loadPosLinks() {
   return getV2<{ links: Array<{ id: string; storeId: string; merchantId: string; status: string; lastSyncAt: string | null }> }>('/pos/links');
 }
 
-/** 매장 POS에 앱이 설치되면 웹훅으로 자동 수집된, 아직 매장 미연결 merchantId 목록 */
+/** 매장 POS에 앱이 설치되면 웹훅으로 자동 수집된, 아직 매장 미연결 merchantId 목록 + 마지막 웹훅 수신 기록 */
 export function loadPosDiscovered() {
-  return getV2<{ merchants: Array<{ merchantId: string; eventType: string; lastSeenAt: string }> }>('/pos/discovered');
+  return getV2<{
+    merchants: Array<{ merchantId: string; eventType: string; lastSeenAt: string }>;
+    lastWebhook?: { receivedAt: string; eventType: string | null; merchantId: string | null } | null;
+  }>('/pos/discovered');
 }
 export function syncPosV2(from: string, to: string, idempotencyKey: string) {
   return mutateV2<{ from: string; to: string; results: Array<{ merchantId: string; rows: number; status: string; error?: string }> }>('/pos/sync', { from, to }, { idempotencyKey });

@@ -994,10 +994,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { ok: true, merchantId, known: Boolean(known), discovered };
   });
 
-  /* 웹훅으로 발견됐지만 아직 매장과 연결되지 않은 merchantId 목록 */
+  /* 웹훅으로 발견됐지만 아직 매장과 연결되지 않은 merchantId 목록.
+   * lastWebhook은 신규 매장 없이도 웹훅 파이프가 살아 있는지 확인하기 위한 것 —
+   * 이미 연동된 매장의 이벤트는 화면에 아무 흔적을 남기지 않으므로, 수신 자체를 따로 보여준다. */
   app.get("/api/v2/pos/discovered", async (request) => {
     assertPosRole(request.actor);
-    return { merchants: await posStore.listDiscoveredMerchants() };
+    const [merchants, lastWebhook] = await Promise.all([
+      posStore.listDiscoveredMerchants(), posStore.lastWebhook("tossplace"),
+    ]);
+    return { merchants, lastWebhook };
   });
 
   app.post("/api/v2/webhooks/popbill", async (request, reply) => {

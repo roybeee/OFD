@@ -19,6 +19,11 @@ export interface PosDiscoveredMerchant {
   firstSeenAt: string; lastSeenAt: string;
 }
 
+/** 웹훅 파이프가 살아 있는지 확인하기 위한 마지막 수신 기록. 신규 매장 없이도 연동 상태를 점검할 수 있게 한다. */
+export interface PosWebhookReceipt {
+  receivedAt: string; eventType: string | null; merchantId: string | null;
+}
+
 export interface PosStore {
   upsertLink(link: Omit<PosLink, "id" | "lastSyncAt"> & { id?: string }): Promise<PosLink>;
   listLinks(): Promise<PosLink[]>;
@@ -30,6 +35,8 @@ export interface PosStore {
   recordRun(run: PosSyncRun): Promise<void>;
   /** eventId(x-toss-webhook-id)를 멱등 키로 저장한다. 이미 받은 이벤트면 false. */
   recordWebhookInbox(provider: string, payload: unknown, eventId?: string): Promise<boolean>;
+  /** 해당 provider로 마지막에 수신한 웹훅. 한 번도 없으면 null. */
+  lastWebhook(provider: string): Promise<PosWebhookReceipt | null>;
   /* ── 앱 설치 웹훅으로 발견된 매장 ID 자동 수집 ── */
   recordDiscoveredMerchant(merchantId: string, eventType: string): Promise<void>;
   listDiscoveredMerchants(): Promise<PosDiscoveredMerchant[]>;
@@ -311,6 +318,14 @@ export class PostgresPosStore implements PosStore {
       [provider, key, JSON.stringify(payload ?? {})]);
     return (res.rowCount ?? 0) > 0;
   }
+  async lastWebhook(provider: string): Promise<PosWebhookReceipt | null> {
+    const res = await this.pool.query(
+      `SELECT received_at, payload->>'type' AS event_type, payload->>'merchantId' AS merchant_id
+       FROM webhook_inbox WHERE provider = $1 ORDER BY received_at DESC LIMIT 1`, [provider]);
+    const row = res.rows[0];
+    if (!row) return null;
+    return { receivedAt: new Date(row.received_at).toISOString(), eventType: row.event_type ?? null, merchantId: row.merchant_id ?? null };
+  }
   async recordDiscoveredMerchant(merchantId: string, eventType: string): Promise<void> {
     await this.pool.query(
       `INSERT INTO pos_discovered_merchants (merchant_id, event_type)
@@ -528,6 +543,7 @@ export class MemoryPosStore implements PosStore {
   }
   async recordRun(run: PosSyncRun): Promise<void> { this.runs.push({ ...run }); }
   private inboxEventIds = new Set<string>();
+  private lastWebhooks = new Map<string, PosWebhookReceipt>();
   private discovered = new Map<string, PosDiscoveredMerchant>();
   async recordWebhookInbox(provider: string, payload: unknown, eventId?: string): Promise<boolean> {
     const key = eventId?.trim();
@@ -537,7 +553,16 @@ export class MemoryPosStore implements PosStore {
       this.inboxEventIds.add(dedupe);
     }
     this.inbox.push(payload);
+    const body = (payload ?? {}) as { type?: unknown; merchantId?: unknown };
+    this.lastWebhooks.set(provider, {
+      receivedAt: new Date().toISOString(),
+      eventType: typeof body.type === "string" ? body.type : null,
+      merchantId: body.merchantId === undefined || body.merchantId === null ? null : String(body.merchantId),
+    });
     return true;
+  }
+  async lastWebhook(provider: string): Promise<PosWebhookReceipt | null> {
+    return this.lastWebhooks.get(provider) ?? null;
   }
   async recordDiscoveredMerchant(merchantId: string, eventType: string): Promise<void> {
     const now = new Date().toISOString();

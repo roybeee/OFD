@@ -194,7 +194,8 @@ describe('POS 현장 운영 화면', () => {
       const url = String(input);
       if (url.includes('/pos/report')) return json({ unit: 'day', storeIds: [], rows: [] });
       if (url.includes('/pos/discovered')) {
-        return json({ merchants: [{ merchantId: '905533', eventType: 'app.installation.created.v1', lastSeenAt: '2026-08-12T04:00:00.000Z' }] });
+        return json({ merchants: [{ merchantId: '905533', eventType: 'app.installation.created.v1', lastSeenAt: '2026-08-12T04:00:00.000Z' }],
+          lastWebhook: { receivedAt: '2026-08-12T04:00:00.000Z', eventType: 'app.installation.created.v1', merchantId: '905533' } });
       }
       if (url.includes('/pos/links')) return json({ links: [] });
       throw new Error(`unexpected ${url}`);
@@ -210,6 +211,25 @@ describe('POS 현장 운영 화면', () => {
     const merchantInput = [...container.querySelectorAll('input[type="text"]')]
       .find((node) => (node as HTMLInputElement).placeholder.includes('매장 ID')) as HTMLInputElement;
     expect(merchantInput.value).toBe('905533');
+    /* 파이프 생사는 칩과 별개로 항상 보여야 한다 */
+    expect(container.querySelector('[data-testid="webhook-heartbeat"]')!.textContent)
+      .toContain('웹훅 마지막 수신 2026-08-12 04:00');
+  });
+
+  it('POS 연동: 웹훅을 한 번도 받지 못하면 개발자센터 설정을 확인하라고 알린다', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/pos/report')) return json({ unit: 'day', storeIds: [], rows: [] });
+      if (url.includes('/pos/discovered')) return json({ merchants: [], lastWebhook: null });
+      if (url.includes('/pos/links')) return json({ links: [] });
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await render(<HqSalesPage data={data} notify={() => {}} />);
+
+    expect(container.querySelector('[data-testid="discovered-merchants"]')).toBeNull();
+    expect(container.querySelector('[data-testid="webhook-heartbeat"]')!.textContent)
+      .toContain('한 번도 받지 못했습니다');
   });
 
   it('매출현황: 엑셀 내보내기는 체크한 섹션만 CSV로 담는다', async () => {

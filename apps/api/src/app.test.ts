@@ -103,6 +103,9 @@ describe("OFD v2 API", () => {
     expect((list.json() as { merchants: Array<{ merchantId: string }> }).merchants).toEqual([
       expect.objectContaining({ merchantId: "4242", eventType: "app.installation.created.v1" }),
     ]);
+    /* 신규 매장 없이도 파이프 생사를 확인할 수 있어야 한다 — 마지막 수신 기록을 함께 돌려준다 */
+    expect((list.json() as { lastWebhook: { eventType: string; merchantId: string } | null }).lastWebhook)
+      .toMatchObject({ eventType: "app.installation.created.v1", merchantId: "4242" });
 
     /* 발견된 ID를 매장과 연동하면 pending 목록에서 사라진다 */
     const bootstrap = await app.inject({ method: "GET", url: "/api/v2/bootstrap", headers: master });
@@ -135,6 +138,13 @@ describe("OFD v2 API", () => {
     /* 점주는 목록 조회가 막힌다 */
     expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered",
       headers: { "x-demo-actor-id": DEMO_IDS.owner } })).statusCode).toBe(403);
+  });
+
+  it("웹훅을 한 번도 받지 못한 상태는 lastWebhook null로 드러난다", async () => {
+    const app = await buildApp({ env: { APP_MODE: "test", PROVIDER_MODE: "mock", LOG_LEVEL: "silent" }, logger: false });
+    openApps.push(app);
+    const empty = await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: { "x-demo-actor-id": DEMO_IDS.master } });
+    expect(empty.json()).toMatchObject({ merchants: [], lastWebhook: null });
   });
 
   it("웹훅 서명 secret이 설정되면 서명이 틀린 요청을 401로 거부한다", async () => {
