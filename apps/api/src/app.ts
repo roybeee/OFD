@@ -956,8 +956,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { ok: true };
   });
 
-  /* 토스플레이스 웹훅 — 매장 POS에 OFD 앱이 설치되면 app.installation.created.v1이 오고,
-   * merchantId를 자동 수집해 매출현황 연동 화면에 노출한다.
+  /* 토스플레이스 웹훅 — 앱이 설치된 매장의 이벤트가 이 endpoint로 모이고, payload의 merchantId로 매장을 구분한다.
+   * merchantId를 실은 이벤트면 종류를 가리지 않고 수집한다(설치·해제·주문·결제 모두). 매장 고유번호(POS 로그인용)와
+   * API의 매장 ID는 서로 다른 값이라, 현장에 재설치를 요청하지 않아도 다음 주문 한 건이면 진짜 ID가 드러나게 한다.
    * 서명 secret이 설정되면 검증 실패는 401, production에서 secret 미설정이면 수집만 하고 처리하지 않는다(위조 방지). */
   const tossWebhookSecret = (env.TOSSPLACE_WEBHOOK_SECRET ?? "").trim();
   app.post("/api/v2/webhooks/tossplace", async (request) => {
@@ -977,7 +978,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const eventType = typeof payload?.type === "string" ? payload.type : "";
     const mayProcess = Boolean(tossWebhookSecret) || config.appMode !== "production";
     let discovered = false;
-    if (fresh && mayProcess && merchantId && eventType.startsWith("app.installation.created")) {
+    if (fresh && mayProcess && merchantId) {
       await posStore.recordDiscoveredMerchant(merchantId, eventType);
       if (await posStore.findLinkByMerchant(merchantId)) {
         await posStore.markDiscoveredLinked(merchantId);

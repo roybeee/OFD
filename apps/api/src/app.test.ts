@@ -118,11 +118,21 @@ describe("OFD v2 API", () => {
     expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: master })
       .then((res) => res.json() as { merchants: unknown[] })).merchants).toHaveLength(0);
 
-    /* 설치 외 이벤트는 수집하지 않고, 점주는 목록 조회가 막힌다 */
+    /* 설치 이벤트가 아니어도 merchantId를 실은 주문 이벤트면 수집한다 — 재설치 없이 매장 ID가 드러나야 한다 */
     await app.inject({ method: "POST", url: "/api/v2/webhooks/tossplace", headers: { "x-toss-webhook-id": "wh-3" },
       payload: { id: "wh-3", type: "order.created.v1", merchantId: 9999, data: {} } });
     expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: master })
-      .then((res) => res.json() as { merchants: unknown[] })).merchants).toHaveLength(0);
+      .then((res) => res.json() as { merchants: Array<{ merchantId: string; eventType: string }> })).merchants).toEqual([
+      expect.objectContaining({ merchantId: "9999", eventType: "order.created.v1" }),
+    ]);
+
+    /* merchantId가 없는 이벤트(연결 확인용 _test 등)는 수집 대상이 아니다 */
+    await app.inject({ method: "POST", url: "/api/v2/webhooks/tossplace", headers: { "x-toss-webhook-id": "wh-4" },
+      payload: { id: "wh-4", type: "_test.v1" } });
+    expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered", headers: master })
+      .then((res) => res.json() as { merchants: unknown[] })).merchants).toHaveLength(1);
+
+    /* 점주는 목록 조회가 막힌다 */
     expect((await app.inject({ method: "GET", url: "/api/v2/pos/discovered",
       headers: { "x-demo-actor-id": DEMO_IDS.owner } })).statusCode).toBe(403);
   });

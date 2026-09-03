@@ -106,6 +106,10 @@ services:
         sync: false
       - key: POPBILL_WEBHOOK_API_KEY
         sync: false
+      # 토스플레이스 개발자센터 → 웹훅 생성 시 발급되는 서명 Secret.
+      # production에서 이 값이 비어 있으면 웹훅은 200으로 받되 merchantId를 수집하지 않는다(위조 방지).
+      - key: TOSSPLACE_WEBHOOK_SECRET
+        sync: false
       - key: POPBILL_CERTIFICATE_CONFIGURED
         value: "false"
       - key: POPBILL_BANK_ACCOUNT_AUTHORIZED
