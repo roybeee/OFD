@@ -79,8 +79,11 @@ export function StoreDocumentsPage({ data, notify }: { data: BootstrapData; noti
   );
 }
 
-function documentMonth(period: string, title: string, generatedAt: string) {
-  const full = `${period} ${title}`.match(/(20\d{2})[.년-]\s*(\d{1,2})/);
+/* 문서를 어느 달 탭에 넣을지 정한다. 제목을 기간보다 먼저 본다 —
+ * 전자세금계산서의 period는 법정 발급기한(익월 10일)이라, 기간을 먼저 보면 9월 계산서가 10월 탭으로 들어가
+ * 점주가 '9월'에서 자기 계산서를 못 찾는다. 제목에는 귀속월('2026년 9월 전자세금계산서')이 들어 있다. */
+export function documentMonth(period: string, title: string, generatedAt: string) {
+  const full = `${title} ${period}`.match(/(20\d{2})[.년-]\s*(\d{1,2})/);
   if (full) return `${full[1]}-${full[2]!.padStart(2, '0')}`;
   const monthOnly = title.match(/(\d{1,2})월/);
   const generatedYear = new Date(generatedAt).getFullYear();

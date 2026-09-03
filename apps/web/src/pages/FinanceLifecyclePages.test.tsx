@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HqInvoicesPage } from './HqInvoicesPage';
 import { HqReconciliationPage } from './HqReconciliationPage';
-import { StoreDocumentsPage } from './StoreDocumentsPage';
+import { StoreDocumentsPage, documentMonth } from './StoreDocumentsPage';
 import type { BootstrapData } from '../types';
 
 const baseData: BootstrapData = {
@@ -184,5 +184,22 @@ describe('finance lifecycle pages', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v2/documents/document-1/download', expect.objectContaining({ method: 'GET' }));
     expect(target.location.href).toBe('https://files.example/signed');
     expect(open).toHaveBeenCalledWith('', '_blank');
+  });
+});
+
+describe('점주 증빙 — 문서의 달 분류', () => {
+  it('전자세금계산서는 발급기한(익월 10일)이 아니라 귀속월 탭에 들어간다', () => {
+    /* CI e2e가 9/3에 처음 잡아낸 실제 결함: 9월 정산의 계산서 period가 2026-10-10이라 10월 탭으로 숨었다 */
+    expect(documentMonth('2026-10-10', '2026년 9월 전자세금계산서', '2026-09-03T00:00:00Z')).toBe('2026-09');
+    expect(documentMonth('2026-10-10', '2026년 9월 수정 전자세금계산서', '2026-09-03T00:00:00Z')).toBe('2026-09');
+  });
+
+  it('월 정산서·거래명세서·결제 요청은 이전과 같은 달에 들어간다', () => {
+    expect(documentMonth('2026-09-01–2026-09-30', '2026년 9월 월 정산서', '2026-09-03T00:00:00Z')).toBe('2026-09');
+    expect(documentMonth('2026-09-03', '독산점 거래명세서', '2026-09-03T00:00:00Z')).toBe('2026-09');
+    expect(documentMonth('납부기한 2026-09-30', '결제 요청', '2026-09-03T00:00:00Z')).toBe('2026-09');
+    /* 연도 없는 제목은 기간에서, 둘 다 없으면 생성 연도 + 제목의 월 */
+    expect(documentMonth('2026-08-31', '8월 전자세금계산서', '2026-09-03T00:00:00Z')).toBe('2026-08');
+    expect(documentMonth('', '7월 전자세금계산서', '2026-09-03T00:00:00Z')).toBe('2026-07');
   });
 });
