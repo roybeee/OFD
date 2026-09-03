@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { searchAuditV2, type AuditRow } from '../api/client';
 import { Button } from '../components/ui';
+import { seoulShortDateTime } from '../lib/datetime';
 import type { BootstrapData, Toast } from '../types';
 
 const ROLE_LABEL: Record<string, string> = {
   hq_master: '마스터', hq_finance: '재무', hq_ops: '운영', auditor: '감사', driver: '기사',
   store_owner: '점주', store_staff: '매장', system: '시스템',
 };
-const formatKst = (iso: string) => new Intl.DateTimeFormat('ko-KR', {
-  timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-}).format(new Date(iso));
+const formatKst = seoulShortDateTime;
 
 /** V1 감사 로그 화면 이식 — 해시체인 원장은 서버에 있고, 여기서는 검색·열람만 한다 */
 export function HqAuditPage({ data, notify }: { data: BootstrapData; notify: (message: string, tone?: Toast['tone']) => void }) {

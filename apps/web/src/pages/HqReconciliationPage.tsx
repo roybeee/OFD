@@ -89,4 +89,4 @@ export function HqReconciliationPage({ data, notify, refresh }: { data: Bootstra
 }
 
 function seoulDate(date: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date); }
-function formatSyncTime(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '시간 확인 필요' : new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date); }
+function formatSyncTime(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '시간 확인 필요' : new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date); }

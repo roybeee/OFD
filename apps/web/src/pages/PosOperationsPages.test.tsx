@@ -211,9 +211,9 @@ describe('POS 현장 운영 화면', () => {
     const merchantInput = [...container.querySelectorAll('input[type="text"]')]
       .find((node) => (node as HTMLInputElement).placeholder.includes('매장 ID')) as HTMLInputElement;
     expect(merchantInput.value).toBe('905533');
-    /* 파이프 생사는 칩과 별개로 항상 보여야 한다 */
+    /* 파이프 생사는 칩과 별개로 항상 보여야 하고, 시각은 UTC가 아니라 서울 기준이어야 한다 */
     expect(container.querySelector('[data-testid="webhook-heartbeat"]')!.textContent)
-      .toContain('웹훅 마지막 수신 2026-08-12 04:00');
+      .toContain('웹훅 마지막 수신 2026-08-12 13:00');
   });
 
   it('POS 연동: 웹훅을 한 번도 받지 못하면 개발자센터 설정을 확인하라고 알린다', async () => {

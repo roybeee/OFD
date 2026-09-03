@@ -378,7 +378,7 @@ export function normalizeBootstrap(input: unknown): BootstrapData {
 function orderFor(orders: Order[], id: string) { return orders.find((order) => order.id === id); }
 function actorName(actors: Dict[], id: string) { return text(actors.find((actor) => text(actor.id) === id)?.name, id || '담당자 미등록'); }
 function formatPeriod(value: string) { const match = value.match(/^(\d{4})-(\d{2})/); return match ? `${match[1]}년 ${Number(match[2])}월` : '정산 기간'; }
-function formatApiDate(value: string) { if (!value) return '시간 미상'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ko-KR', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date); }
+function formatApiDate(value: string) { if (!value) return '시간 미상'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date); }
 
 export function isAllowedApiAppMode(appMode: string, devMode = !import.meta.env.PROD, allowTestApi = import.meta.env.VITE_ALLOW_TEST_API === 'true') {
   return appMode === 'production' || (devMode && allowTestApi && appMode === 'test');

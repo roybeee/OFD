@@ -1,3 +1,5 @@
+import { seoulDayLabel } from './datetime';
+
 export function calculateCartTotals(lines: Array<{ unitGross: number; quantity: number }>) {
   let gross = 0;
   for (const line of lines) {
@@ -33,7 +35,7 @@ export function formatMoney(value: number | null | undefined) {
 }
 
 export function formatShortDate(value: string) {
-  return new Intl.DateTimeFormat('ko-KR', { month: 'short', day: 'numeric', weekday: 'short' }).format(new Date(value));
+  return seoulDayLabel(value, { month: 'short', day: 'numeric', weekday: 'short' });
 }
 
 export function getStatusLabel(status: string) {

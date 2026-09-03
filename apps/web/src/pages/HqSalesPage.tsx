@@ -6,6 +6,7 @@ import {
 import { Button, EmptyState, MetricCard } from '../components/ui';
 import { LayoutGrid } from '../components/icons';
 import { buildSalesCsv, SALES_EXPORT_LABELS, type SalesExportOptions } from '../lib/sales-export';
+import { seoulDateTime, seoulToday } from '../lib/datetime';
 import type { BootstrapData, Toast } from '../types';
 
 const won = (value: number) => value.toLocaleString('ko-KR');
@@ -23,7 +24,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   '미분류': '#e34948',
 };
 const categoryColor = (name: string) => CATEGORY_COLORS[name] ?? CATEGORY_COLORS['기타']!;
-const seoulToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 const shiftDays = (date: string, days: number) => {
   const base = new Date(`${date}T00:00:00Z`);
   base.setUTCDate(base.getUTCDate() + days);
@@ -227,7 +227,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                     <tr key={link.id}>
                       <th scope="row">{link.merchantId}</th>
                       <td>{localStores.find((store) => store.id === link.storeId)?.name ?? link.storeId.slice(0, 8)}</td>
-                      <td className="muted">{link.lastSyncAt ? link.lastSyncAt.slice(0, 16).replace('T', ' ') : '아직 없음'}</td>
+                      <td className="muted">{seoulDateTime(link.lastSyncAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -260,7 +260,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
           <h3 className="setup-sub">② 토스플레이스 연동</h3>
           <p className="muted" data-testid="webhook-heartbeat">
             {lastWebhook
-              ? `웹훅 마지막 수신 ${lastWebhook.receivedAt.slice(0, 16).replace('T', ' ')}${lastWebhook.eventType ? ` · ${lastWebhook.eventType}` : ''}`
+              ? `웹훅 마지막 수신 ${seoulDateTime(lastWebhook.receivedAt)}${lastWebhook.eventType ? ` · ${lastWebhook.eventType}` : ''}`
               : '웹훅을 아직 한 번도 받지 못했습니다 — 개발자센터의 Payload URL과 서명 Secret을 확인하십시오.'}
           </p>
           {discovered.length > 0 && (
@@ -270,7 +270,7 @@ export function HqSalesPage({ data, notify }: { data: BootstrapData; notify: (me
                 {discovered.map((item) => (
                   <button key={item.merchantId} type="button" className="chip"
                     onClick={() => setLinkForm((current) => ({ ...current, merchantId: item.merchantId }))}>
-                    {item.merchantId} <span className="muted">({item.lastSeenAt.slice(0, 16).replace('T', ' ')})</span>
+                    {item.merchantId} <span className="muted">({seoulDateTime(item.lastSeenAt)})</span>
                   </button>
                 ))}
               </div>

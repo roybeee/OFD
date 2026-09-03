@@ -15,6 +15,7 @@ import type { BootstrapData, Order } from '../types';
 import { Button, MetricCard, StatusBadge } from '../components/ui';
 import { ApiError, mutateV2, newIdempotencyKey } from '../api/client';
 import { useAccessibleDialog } from '../components/useAccessibleDialog';
+import { seoulDayLabel } from '../lib/datetime';
 
 export function HqOrdersPage({ data, notify, refresh }: { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void; refresh: () => void }) {
   const [filter, setFilter] = useState<'waiting' | 'legacy' | 'all'>('waiting');
@@ -113,7 +114,7 @@ export function HqOrdersPage({ data, notify, refresh }: { data: BootstrapData; n
           {orders.map((order) => (
               <button type="button" className={`order-table-row ${order.source === 'legacy_unverified' ? 'legacy-read-only' : ''}`} role="row" key={order.id} onClick={() => setSelected(order)}>
                 <span role="cell" className="store-cell"><span className="store-avatar"><Store size={17} /></span><span><strong>{order.storeName}</strong><small>{order.code} · {order.itemCount}개 품목</small></span></span>
-                <span role="cell" data-label="입고 예정"><strong>{new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric', weekday: 'short' }).format(new Date(order.deliveryDate))}</strong><small>입고 예정일</small></span>
+                <span role="cell" data-label="입고 예정"><strong>{seoulDayLabel(order.deliveryDate, { month: 'numeric', day: 'numeric', weekday: 'short' })}</strong><small>입고 예정일</small></span>
                 <span role="cell" data-label="결제 조건"><strong>{order.paymentTerm === 'prepaid' ? '선결제' : order.paymentTerm === 'monthly_credit' ? '월 외상' : '확인 필요'}</strong><small>{order.paymentTerm === 'unconfigured' ? '서버 미등록' : '서버 등록값'}</small></span>
                 <span role="cell" data-label="금액"><strong>{formatMoney(order.grossAmount)}</strong><small>{order.source === 'legacy_unverified' ? '기존 원장에서 확인' : 'VAT 포함'}</small></span>
                 <span role="cell" data-label="상태"><StatusBadge status={order.status} />{order.source === 'legacy_unverified' && <small>기존 원장 · 읽기 전용</small>}</span>
@@ -139,7 +140,7 @@ function OrderReviewDrawer({ order, pendingAction, canApprove, canRequestChange,
         <header><div><span className="drawer-kicker">{legacyReadOnly ? '기존 원장 조회' : '수동 승인 검토'}</span><h2 id="review-title">{order.storeName} · {order.code}</h2></div><button type="button" className="icon-button" data-dialog-initial aria-label="주문 상세 닫기" onClick={onClose}><X size={22} /></button></header>
         <div className="drawer-body">
           {legacyReadOnly && <div className="risk-box neutral-risk"><CircleAlert size={20} /><div><strong>이전 시스템에서 생성된 읽기 전용 주문입니다</strong><p>과거 단가를 현재 값으로 덮어쓰지 않기 위해 통합 화면의 승인·변경은 차단됩니다. 기존 워크스테이션 발주 메뉴에서 처리해 주세요.</p></div></div>}
-          <section className="review-block"><h3>승인 전 체크</h3><ul className="check-list"><li><Check size={16} /> <span>요청 입고일 <strong>{new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(order.deliveryDate))}</strong></span></li>{order.paymentTerm === 'unconfigured' ? <li><CircleAlert size={16} /> <span>결제 조건 <strong>미등록 · 담당자 확인 필요</strong></span></li> : <li><Check size={16} /> <span>결제 조건 <strong>{order.paymentTerm === 'prepaid' ? '선결제' : '월 외상'}</strong></span></li>}{order.storeAddress && <li><Check size={16} /> <span>배송지 <strong>{order.storeAddress}</strong></span></li>}</ul></section>
+          <section className="review-block"><h3>승인 전 체크</h3><ul className="check-list"><li><Check size={16} /> <span>요청 입고일 <strong>{seoulDayLabel(order.deliveryDate, { month: 'long', day: 'numeric', weekday: 'short' })}</strong></span></li>{order.paymentTerm === 'unconfigured' ? <li><CircleAlert size={16} /> <span>결제 조건 <strong>미등록 · 담당자 확인 필요</strong></span></li> : <li><Check size={16} /> <span>결제 조건 <strong>{order.paymentTerm === 'prepaid' ? '선결제' : '월 외상'}</strong></span></li>}{order.storeAddress && <li><Check size={16} /> <span>배송지 <strong>{order.storeAddress}</strong></span></li>}</ul></section>
           <section className="review-block"><div className="block-title"><h3>주문 품목</h3><span>{order.itemCount}개</span></div>{order.lines?.length ? <div className="sample-lines">{order.lines.map((line) => <div key={line.id}><span>{line.name} <small>{line.quantity}{line.unit}</small></span><strong>{formatMoney(line.gross)}</strong></div>)}</div> : <p className="unavailable-copy">이 주문의 품목 세부 정보는 API에서 제공되지 않았습니다.</p>}<div className="review-total"><span>{legacyReadOnly ? '기존 원장 금액' : '총 결제 예정'}</span><strong>{formatMoney(order.grossAmount)}</strong></div></section>
           {!legacyReadOnly && <section className="review-block"><h3>변경 요청 사유</h3><label className="note-field"><span>점주에게 전달할 내용 <small>변경 요청 시 필수</small></span><textarea value={changeReason} onChange={(event) => setChangeReason(event.target.value)} maxLength={500} placeholder="예: 원두 수량과 희망 배송일을 다시 확인해 주세요." /></label><p className="audit-notice">승인·변경 요청은 담당자, 시간, 사유와 함께 감사 원장에 기록됩니다.</p></section>}
         </div>

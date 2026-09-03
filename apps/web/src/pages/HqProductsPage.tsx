@@ -7,10 +7,10 @@ import { V1_CATALOG } from '../data/v1-catalog';
 import { Button, EmptyState, MetricCard } from '../components/ui';
 import { PackageCheck } from '../components/icons';
 import type { BootstrapData, Toast } from '../types';
+import { seoulToday } from '../lib/datetime';
 
 const CATEGORIES = ['도넛', '링도넛', '음료', '굿즈', '서비스', '세트', '기타'] as const;
 const won = (value: number) => value.toLocaleString('ko-KR');
-const seoulToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 const shiftDays = (date: string, days: number) => {
   const base = new Date(`${date}T00:00:00Z`);
   base.setUTCDate(base.getUTCDate() + days);

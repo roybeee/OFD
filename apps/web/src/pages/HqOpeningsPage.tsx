@@ -6,11 +6,11 @@ import {
 import { Button, EmptyState, MetricCard } from '../components/ui';
 import { ClipboardCheck } from '../components/icons';
 import type { BootstrapData, Toast } from '../types';
+import { seoulToday } from '../lib/datetime';
 
 const STAGES = ['상담중', '진행', '보류', '완료'] as const;
 const PHASES = ['D-4주차', 'D-3주차', 'D-2주차', 'D-1주차', 'D-DAY'] as const;
 const OWNER_LABEL: Record<string, string> = { hq: '본사', pt: '가맹점', both: '협의' };
-const seoulToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 
 /** V1 오픈 탭 이식: 칸반 보드 + 단계별 체크리스트 */
 export function HqOpeningsPage({ notify }: { data: BootstrapData; notify: (message: string, tone?: Toast['tone']) => void }) {
