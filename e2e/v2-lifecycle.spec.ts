@@ -12,6 +12,7 @@ import {
   operationalDateKst,
   requireOk,
   waitForAggregate,
+  resetIsolatedDatabaseForRetry,
 } from './real-fixture';
 
 type OrderResponse = { order: { id: string; number: string; status: string; version: number; gross: number; storeId: string } };
@@ -61,6 +62,10 @@ async function expectMobileReadability(page: Page) {
 }
 
 test.describe.serial('real V2 order-to-tax-invoice lifecycle', () => {
+  test.beforeAll(async ({}, testInfo) => {
+    if (testInfo.retry > 0) await resetIsolatedDatabaseForRetry();
+  });
+
   test('store → HQ → driver → finance → master → worker → store documents', async ({ page }, testInfo) => {
     const health = await requireOk<{ ok: boolean; mode: string }>(await page.request.get('/api/v2/health'), 'health');
     expect(health).toMatchObject({ ok: true, mode: 'test' });

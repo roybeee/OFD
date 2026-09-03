@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import pg from 'pg';
+import { seedPostgres } from './seed-postgres.mjs';
 
 const { Pool } = pg;
 export const TEST_PASSWORD = 'OFD-demo-2026!';
@@ -65,6 +66,14 @@ function isolatedDatabaseUrl() {
     throw new Error('Direct E2E fixture writes require E2E_ALLOW_RESET=1 and an isolated e2e/test PostgreSQL database.');
   }
   return raw;
+}
+
+/* 직렬 그룹은 뒤 테스트가 실패하면 앞 테스트부터 다시 돈다. 첫 실행이 만든 정산(settlement.period 업무키)이
+ * DB에 남아 있으면 재시도는 항상 409로 죽어, 한 번의 흔들림이 곧 빨간불이 된다. 재시도 전에 격리 DB를 되돌린다.
+ * seedPostgres가 DB 이름·E2E_ALLOW_RESET 가드를 다시 검사하므로 운영 DB를 건드릴 수는 없다. */
+export async function resetIsolatedDatabaseForRetry() {
+  isolatedDatabaseUrl();
+  await seedPostgres();
 }
 
 export function operationalDateKst(now = new Date()) {
