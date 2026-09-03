@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { Page } from '@playwright/test';
 import pg from 'pg';
-import { seedPostgres } from './seed-postgres.mjs';
 
 const { Pool } = pg;
 export const TEST_PASSWORD = 'OFD-demo-2026!';
@@ -73,7 +75,10 @@ function isolatedDatabaseUrl() {
  * seedPostgres가 DB 이름·E2E_ALLOW_RESET 가드를 다시 검사하므로 운영 DB를 건드릴 수는 없다. */
 export async function resetIsolatedDatabaseForRetry() {
   isolatedDatabaseUrl();
-  await seedPostgres();
+  /* 스펙은 Playwright가 CJS로 변환하므로 ESM인 seed-postgres.mjs를 import할 수 없다.
+   * CI의 시드 단계와 똑같은 명령을 자식 프로세스로 돌린다. */
+  const seed = resolve(__dirname, 'seed-postgres.mjs');
+  await promisify(execFile)(process.execPath, [seed], { cwd: resolve(__dirname, '..'), env: process.env });
 }
 
 export function operationalDateKst(now = new Date()) {
