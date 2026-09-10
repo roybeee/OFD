@@ -335,15 +335,15 @@ function RolePagesPanel({ access, notify, onSaved }: { access: AccessSettings; n
   const [busy, setBusy] = useState(false);
   const domain = role === 'driver' ? 'driver' : (role.startsWith('hq_') || role === 'auditor') ? 'hq' : 'store';
   const domainPages = access.pages.filter((page) => page.domain === domain);
-  const effective = access.rolePages[role] ?? access.roleDefaults[role] ?? [];
+  const effective = access.roleEffectivePages?.[role] ?? access.rolePages[role] ?? access.roleDefaults[role] ?? [];
   const [selected, setSelected] = useState<string[]>(effective);
 
   useEffect(() => {
-    setSelected(access.rolePages[role] ?? access.roleDefaults[role] ?? []);
+    setSelected(access.roleEffectivePages?.[role] ?? access.rolePages[role] ?? access.roleDefaults[role] ?? []);
   }, [role, access]);
 
   const isDefault = !access.rolePages[role];
-  const dirty = !sameSet(selected, access.rolePages[role] ?? access.roleDefaults[role] ?? []);
+  const dirty = !sameSet(selected, access.roleEffectivePages?.[role] ?? access.rolePages[role] ?? access.roleDefaults[role] ?? []);
 
   function toggle(path: string) {
     setSelected((current) => current.includes(path) ? current.filter((item) => item !== path) : [...current, path]);
@@ -407,10 +407,10 @@ function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, on
   const dialogRef = useAccessibleDialog(() => { if (!busy) onClose(); });
   const domain = actor.role === 'driver' ? 'driver' : (actor.role.startsWith('hq_') || actor.role === 'auditor') ? 'hq' : 'store';
   const domainPages = access.pages.filter((page) => page.domain === domain);
-  const roleEffective = access.rolePages[actor.role] ?? access.roleDefaults[actor.role] ?? [];
+  const roleEffective = access.roleEffectivePages?.[actor.role] ?? access.rolePages[actor.role] ?? access.roleDefaults[actor.role] ?? [];
   const hasOverride = Boolean(access.actorPages[actor.id]);
   const [custom, setCustom] = useState(hasOverride);
-  const [selected, setSelected] = useState<string[]>(access.actorPages[actor.id] ?? roleEffective);
+  const [selected, setSelected] = useState<string[]>(access.actorEffectivePages[actor.id] ?? roleEffective);
   const [busy, setBusy] = useState(false);
   const [nextRole, setNextRole] = useState<ProvisionableActorRole>(actor.role as ProvisionableActorRole);
   const [nextStoreIds, setNextStoreIds] = useState<string[]>(actor.storeIds);
@@ -497,7 +497,7 @@ function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, on
           <h3>노출 페이지</h3>
           <div className="access-page-grid access-mode">
             <label className="access-page-option"><input type="radio" name="access-mode" checked={!custom} onChange={() => setCustom(false)} disabled={busy} /><span>역할 기본값 따르기</span></label>
-            <label className="access-page-option"><input type="radio" name="access-mode" checked={custom} onChange={() => { setCustom(true); setSelected(access.actorPages[actor.id] ?? roleEffective); }} disabled={busy} /><span>이 계정만 지정</span></label>
+            <label className="access-page-option"><input type="radio" name="access-mode" checked={custom} onChange={() => { setCustom(true); setSelected(access.actorEffectivePages[actor.id] ?? roleEffective); }} disabled={busy} /><span>이 계정만 지정</span></label>
           </div>
           <fieldset className="access-pages" disabled={!custom || busy}>
             <legend className="sr-only">이 계정의 노출 페이지</legend>

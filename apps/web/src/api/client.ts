@@ -635,6 +635,7 @@ export type AccessSettings = {
   rolePages: Record<string, string[]>;
   actorPages: Record<string, string[]>;
   actorEffectivePages: Record<string, string[]>;
+  roleEffectivePages?: Record<string, string[]>;
   menuOrder?: string[];
 };
 export function loadAccessSettingsV2() {

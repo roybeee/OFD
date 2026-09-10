@@ -59,6 +59,9 @@ export interface AccessPolicyDocument {
   actorPages: Record<string, string[]>;
   /** 메뉴 노출 순서(경로 배열). 비어 있으면 카탈로그 기본 순서를 쓴다. */
   menuOrder?: string[];
+  /** 이 정책이 저장될 당시 알고 있던 페이지 카탈로그. 여기 없는 페이지는 정책 저장 이후 추가된 것으로 보고,
+   *  다음 저장 전까지 역할 기본값을 따른다 — 새 화면을 추가할 때마다 모든 계정 정책을 손보지 않아도 되게 한다. */
+  knownPaths?: string[];
 }
 export const ACCESS_POLICY_ID = "access-policy";
 const ACCESS_POLICY_SYSTEM_SCOPE = "__system__";
@@ -251,6 +254,8 @@ export class ProcurementService {
       rolePages: policy.rolePages,
       actorPages: policy.actorPages,
       actorEffectivePages: Object.fromEntries(actors.map((candidate) => [candidate.id, resolveVisiblePages(candidate, policy)])),
+      roleEffectivePages: Object.fromEntries((Object.keys(roleDefaults) as Actor["role"][])
+        .map((role) => [role, withPagesAddedSincePolicy(role, policy.rolePages[role] ?? roleDefaults[role] ?? [], policy)])),
       menuOrder: policy.menuOrder ?? [],
     };
   }
@@ -277,7 +282,8 @@ export class ProcurementService {
     }
 
     const next: AccessPolicyDocument = { id: ACCESS_POLICY_ID, version: current.version + 1,
-      rolePages: nextRolePages, actorPages: nextActorPages, menuOrder: current.menuOrder ?? [] };
+      rolePages: nextRolePages, actorPages: nextActorPages, menuOrder: current.menuOrder ?? [],
+      knownPaths: ACCESS_PAGES.map((page) => page.path) };
     await this.repository.commit({
       changes: [{ type: "access_policy", id: ACCESS_POLICY_ID, storeId: ACCESS_POLICY_SYSTEM_SCOPE,
         expectedVersion: current.version === 0 ? null : current.version, value: next }],
@@ -294,7 +300,8 @@ export class ProcurementService {
     const known = new Set(ACCESS_PAGES.map((page) => page.path));
     const menuOrder = [...new Set(order)].filter((path) => known.has(path));
     const current = await this.loadAccessPolicy();
-    const next: AccessPolicyDocument = { ...current, id: ACCESS_POLICY_ID, version: current.version + 1, menuOrder };
+    const next: AccessPolicyDocument = { ...current, id: ACCESS_POLICY_ID, version: current.version + 1, menuOrder,
+      knownPaths: ACCESS_PAGES.map((page) => page.path) };
     await this.repository.commit({
       changes: [{ type: "access_policy", id: ACCESS_POLICY_ID, storeId: ACCESS_POLICY_SYSTEM_SCOPE,
         expectedVersion: current.version === 0 ? null : current.version, value: next }],
@@ -1169,12 +1176,31 @@ export function baseCapabilitiesFor(role: Actor["role"]): string[] {
   return map[role];
 }
 
+/** 정책 문서가 저장 시점에 '알고 있던' 페이지 집합. knownPaths가 없는 구버전 문서는
+ *  문서 안에 등장하는 모든 경로를 아는 것으로 간주한다(그 밖의 경로 = 저장 이후 추가된 페이지). */
+function policyKnownPaths(policy: AccessPolicyDocument): Set<string> {
+  if (policy.knownPaths?.length) return new Set(policy.knownPaths);
+  const known = new Set<string>();
+  for (const pages of Object.values(policy.rolePages)) for (const path of pages ?? []) known.add(path);
+  for (const pages of Object.values(policy.actorPages)) for (const path of pages) known.add(path);
+  return known;
+}
+
+/** 저장된 목록 뒤에, 정책이 몰랐던(=저장 이후 추가된) 역할 기본 페이지를 붙인다.
+ *  정책은 저장 당시 존재하던 페이지에 대해서만 발언한다 — 새 페이지는 다음 저장에서 관할로 들어온다. */
+export function withPagesAddedSincePolicy(role: Actor["role"], saved: readonly string[], policy: AccessPolicyDocument): string[] {
+  const known = policyKnownPaths(policy);
+  const added = defaultPagesForRole(role, baseCapabilitiesFor(role))
+    .filter((path) => !known.has(path) && !saved.includes(path));
+  return added.length ? [...saved, ...added] : [...saved];
+}
+
 /** 계정 유형별·계정별 페이지 노출 정책. capability는 선택된 페이지 묶음으로부터 계산된다. */
 export function resolveVisiblePages(actor: Actor, policy?: AccessPolicyDocument): string[] {
   const actorPages = policy?.actorPages?.[actor.id];
-  if (actorPages) return actorPages;
+  if (actorPages) return withPagesAddedSincePolicy(actor.role, actorPages, policy!);
   const rolePages = policy?.rolePages?.[actor.role];
-  if (rolePages) return rolePages;
+  if (rolePages) return withPagesAddedSincePolicy(actor.role, rolePages, policy!);
   return defaultPagesForRole(actor.role, baseCapabilitiesFor(actor.role));
 }
 
