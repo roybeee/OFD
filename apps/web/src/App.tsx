@@ -16,6 +16,7 @@ import { HqSalesPage } from './pages/HqSalesPage';
 import { HqProductsPage } from './pages/HqProductsPage';
 import { HqOpeningsPage } from './pages/HqOpeningsPage';
 import { HqStoresPage } from './pages/HqStoresPage';
+import { HqDesignPage } from './pages/HqDesignPage';
 import { HqLeadsPage } from './pages/HqLeadsPage';
 import { HqAuditPage } from './pages/HqAuditPage';
 import { StoreDocumentsPage } from './pages/StoreDocumentsPage';
@@ -24,7 +25,7 @@ import { StoreOrdersPage } from './pages/StoreOrdersPage';
 import type { BootstrapData, PublicActor, Toast } from './types';
 import { browserPathFor, canAccessPath, defaultPathFor, logicalPathFromLocation, roleForPath } from './lib/access';
 
-const knownPaths = new Set(['/store/home', '/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/sales', '/hq/products', '/hq/openings', '/hq/stores', '/hq/leads', '/hq/audit', '/hq/accounts', '/hq/settings', '/driver/today', '/unauthorized']);
+const knownPaths = new Set(['/store/home', '/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/sales', '/hq/products', '/hq/openings', '/hq/stores', '/hq/design', '/hq/leads', '/hq/audit', '/hq/accounts', '/hq/settings', '/driver/today', '/unauthorized']);
 
 function initialPath() {
   const logicalPath = logicalPathFromLocation(window.location.pathname, import.meta.env.BASE_URL);
@@ -203,6 +204,7 @@ export default function App() {
       {path === '/hq/products' && <HqProductsPage data={data} notify={notify} />}
       {path === '/hq/openings' && <HqOpeningsPage data={data} notify={notify} />}
       {path === '/hq/stores' && <HqStoresPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}
+      {path === '/hq/design' && <HqDesignPage />}
       {path === '/hq/leads' && <HqLeadsPage data={data} notify={notify} />}
       {path === '/hq/audit' && <HqAuditPage data={data} notify={notify} />}
       {path === '/hq/accounts' && <HqAccountsPage data={data} notify={notify} onCurrentSessionRevoked={currentSessionRevoked} />}

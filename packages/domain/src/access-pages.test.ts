@@ -26,3 +26,10 @@ test("역할 기본 페이지는 기본 capability에 대표 권한이 포함된
   assert.ok(pages.includes("/hq/sales"));
   assert.ok(!pages.includes("/hq/reconciliation"), "reconcile 권한이 없으면 입금 대사 페이지는 기본 노출이 아니다");
 });
+
+test("디자인워크는 hq 영역 선택 후보이며 hq.design.read만 부여한다", () => {
+  assert.ok(selectablePagesForRole("hq_ops").some((page) => page.path === "/hq/design"));
+  assert.deepEqual(capabilitiesForPages("hq_master", ["/hq/design"]), ["hq.design.read"]);
+  assert.ok(defaultPagesForRole("hq_ops", ["hq.design.read"]).includes("/hq/design"));
+  assert.ok(!defaultPagesForRole("hq_finance", ["hq.pos.read"]).includes("/hq/design"), "권한 없는 역할 기본 노출에는 포함되지 않는다");
+});

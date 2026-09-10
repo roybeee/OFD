@@ -34,6 +34,18 @@ server {
     add_header Cache-Control "no-cache";
   }
 
+  # 디자인워크 아카이브 — 앱이 same-origin iframe으로 표시한다. 전역 CSP(frame-ancestors 'none')를
+  # 이 경로에만 'self'로 완화하고, 정적 아카이브 문서의 인라인 스타일·스크립트와 외부 이미지 로드를 허용한다.
+  # nginx add_header는 location에 하나라도 있으면 상위 것을 상속하지 않으므로 보안 헤더를 다시 명시한다.
+  location ^~ /design-archive/ {
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), geolocation=(), microphone=()" always;
+    add_header Content-Security-Policy "default-src 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data: https:; script-src 'unsafe-inline'; media-src 'self' data: blob: https:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'" always;
+    add_header Cache-Control "public, max-age=300" always;
+    try_files $uri =404;
+  }
+
   location / {
     try_files $uri $uri/ /index.html;
   }
