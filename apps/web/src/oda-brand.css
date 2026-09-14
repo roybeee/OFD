@@ -1,0 +1,18 @@
+html[data-brand="oda"] {
+ --ink:#222729; --muted:#636b70; --muted-2:#657076; --line:#e0e4e6; --line-strong:#cbd1d4;
+ --panel:#fff; --canvas:#f4f6f6; --orange:#c6442b; --orange-dark:#a92f20; --orange-soft:#fcebe6;
+ --orange-pale:#fff7f4; --shadow-sm:0 2px 8px #162a3310; --shadow-lg:0 24px 72px #162a3320;
+ color:var(--ink); background:var(--canvas);
+}
+[data-brand="oda"] .app-header {background:#fffffffa;backdrop-filter:none}
+[data-brand="oda"] .app-header::after {background:var(--orange);height:2px}
+[data-brand="oda"] .brand-mark {width:70px;height:auto}
+[data-brand="oda"] .oda-wordmark {font-size:32px;letter-spacing:-.08em;font-weight:950;color:var(--orange-dark)}
+[data-brand="oda"] .brand-copy strong {font-size:18px}
+[data-brand="oda"] .brand-copy small {font-size:12px;letter-spacing:.09em}
+[data-brand="oda"] .app-footer {font-size:12px}
+[data-brand="oda"] .auth-screen-intro {background:#f4f6f6}
+[data-brand="oda"] .auth-intro-dim {background:transparent}
+[data-brand="oda"] .auth-card-reveal {animation:none}
+[data-brand="oda"] .primary-nav button {font-size:14px}
+@media(max-width:700px){[data-brand="oda"] .brand-copy strong{font-size:16px}[data-brand="oda"] .brand-copy small{font-size:12px}[data-brand="oda"] .brand-mark{width:56px}}

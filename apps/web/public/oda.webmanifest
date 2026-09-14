@@ -1,0 +1,38 @@
+{
+  "name": "ODA 워크스테이션",
+  "short_name": "ODA",
+  "description": "매장 운영 · 월 손익 · 이익배분",
+  "lang": "ko-KR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f6",
+  "theme_color": "#b93825",
+  "icons": [
+    {
+      "src": "oda-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "oda-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "oda-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "월 손익·정산",
+      "url": "./store/oda-settlement"
+    },
+    {
+      "name": "발주·입고",
+      "url": "./store/orders"
+    }
+  ]
+}

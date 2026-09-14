@@ -1,0 +1,100 @@
+# ODA monthly settlement production profile; separate DB and runtime role on the shared host.
+# Evidence is stored in ODA PostgreSQL. External provider/email APIs are disabled.
+# No ODA worker is needed or allowed for this profile. Existing OFD resources are not managed here.
+services:
+- type: web
+  name: oda-web
+  branch: agent/oda-workstation-release
+  runtime: docker
+  plan: starter
+  region: singapore
+  dockerfilePath: ./infra/docker/oda-web.Dockerfile
+  dockerContext: .
+  dockerCommand: nginx -g 'daemon off;'
+  healthCheckPath: /readyz
+  autoDeployTrigger: 'off'
+  maxShutdownDelaySeconds: 30
+  envVars:
+  - key: API_UPSTREAM_HOSTPORT
+    fromService:
+      type: pserv
+      name: oda-api
+      property: hostport
+- type: pserv
+  name: oda-api
+  branch: agent/oda-workstation-release
+  runtime: docker
+  plan: standard
+  region: singapore
+  dockerfilePath: ./infra/docker/api.Dockerfile
+  dockerContext: .
+  dockerCommand: node infra/scripts/deploy/oda-shared-entry.mjs api
+  preDeployCommand: node infra/scripts/deploy/oda-shared-entry.mjs migrate
+  autoDeployTrigger: 'off'
+  maxShutdownDelaySeconds: 60
+  envVars:
+  - key: NODE_ENV
+    value: production
+  - key: WORKSTATION_BRAND
+    value: oda
+  - key: RECONCILIATION_ACCOUNT_ID
+    value: oda-main
+  - key: APP_MODE
+    value: production
+  - key: REPOSITORY_MODE
+    value: postgres
+  - key: SERVICE_ROLE
+    value: api
+  - key: API_HOST
+    value: 0.0.0.0
+  - key: API_PORT
+    value: '4100'
+  - key: LOG_LEVEL
+    value: info
+  - key: DATABASE_URL
+    sync: false
+  - key: RELEASE_SHA
+    fromService:
+      type: pserv
+      name: oda-api
+      envVarKey: RENDER_GIT_COMMIT
+  - key: SESSION_SECRET
+    sync: false
+  - key: ENCRYPTION_KEY
+    sync: false
+  - key: PUBLIC_APP_URL
+    sync: false
+  - key: WEB_ORIGIN
+    sync: false
+  - key: SESSION_COOKIE_SECURE
+    value: 'true'
+  - key: STORAGE_MODE
+    value: postgres
+  - key: EMAIL_PROVIDER
+    value: disabled
+  - key: PROVIDER_MODE
+    value: disabled
+  - key: CUTOVER_STORE_IDS
+    value: ''
+  - key: WRITE_FREEZE_STORE_IDS
+    value: ''
+  - key: ODA_SHARED_DATABASE
+    value: 'true'
+  - key: ODA_DB_NAME
+    value: oda_production
+  - key: ODA_DB_ROLE
+    value: oda_app
+  - key: ODA_PEER_DB_NAME
+    value: ofd_postgres
+  - key: DB_POOL_MAX
+    value: '3'
+  - key: ODA_PEER_DB_ROLES
+    sync: false
+  - key: ODA_PEER_WEB_ORIGIN
+    sync: false
+  - key: ODA_SETTLEMENT_ONLY
+    value: 'true'
+  - key: ODA_SETUP_TOKEN
+    sync: false
+  - key: ODA_SETUP_EXPIRES_AT
+    sync: false

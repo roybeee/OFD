@@ -1,3 +1,19 @@
+# ODA 워크스테이션 · 월 손익·정산
+
+OFD 기반 ODA 1차 개발 브랜치입니다. 계약 기반 월 손익, 증빙 업로드, 이익배분, 정산 확정과 지급 기록을 추가했습니다. 후속 개발로 최초 등록 화면, 로컬 영구 저장 실행 구성, 엑셀 정산서 출력을 포함합니다.
+
+- Mac 로컬 실행: Docker Desktop 준비 후 `Start-ODA.command`. [실행·종료·백업 안내](docs/oda-local.md)
+- 개발용 실행: `npm ci` 후 `npm run dev:oda` (테스트 전용 메모리 모드)
+- 운영 빌드: `npm run build:oda`
+- [매장 사용 흐름·계약 적용·배포](docs/oda-phase1.md)
+- [OFD·ODA 서버 자원 공용 검토](docs/oda-shared-hosting-review.md)
+- ODA 전용 인프라: `render.oda.yaml`
+- 기존 PostgreSQL 호스트 공용 배포안: `render.oda.shared.yaml`. [DB·계정 분리와 배포 절차](docs/oda-shared-deployment.md)
+
+빌드·자동 테스트 485개 통과. 실제 PostgreSQL 연결 테스트 2개는 DB 부재로 미실행했습니다. Docker 컨테이너·실제 브라우저 최종 검증과 온라인 배포는 완료하지 않았습니다. 이 저장소를 배포 완료된 서비스로 표현하지 않습니다.
+
+---
+
 # OFD 프랜차이즈 워크스테이션
 
 올드페리도넛(OFD) 가맹 사업 운영을 위한 통합 워크스테이션.

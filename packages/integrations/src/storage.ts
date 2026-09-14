@@ -37,7 +37,7 @@ export interface ImmutableObject extends ImmutableObjectMetadata {
 
 export interface StorageReadiness {
   ok: boolean;
-  mode: "mock" | "s3";
+  mode: "mock" | "s3" | "postgres";
   reachable: boolean;
   notRequired?: boolean;
   versioning: "Enabled" | "Suspended" | "Disabled" | "Unknown" | "NotRequired";

@@ -11,7 +11,8 @@ export function validateDeploymentEnv(env, requestedRole) {
   if (env.REPOSITORY_MODE !== 'postgres') errors.push('REPOSITORY_MODE must be postgres for a deployment');
   if (!ROLES.has(role)) errors.push('SERVICE_ROLE must be api, worker, or migrate');
   if (!/^postgres(ql)?:\/\//.test(String(env.DATABASE_URL ?? '').trim())) errors.push('DATABASE_URL must point to Postgres');
-  if (env.STORAGE_MODE !== 's3') errors.push('STORAGE_MODE must be s3 for a deployment');
+  if (env.ODA_SETTLEMENT_ONLY === 'true' && role === 'worker') errors.push('ODA settlement profile does not support a worker');
+  if (env.ODA_SETTLEMENT_ONLY !== 'true' && env.STORAGE_MODE !== 's3') errors.push('STORAGE_MODE must be s3 for a deployment');
   if (!/^[0-9a-f]{40}$/i.test(String(env.RELEASE_SHA ?? ''))) errors.push('RELEASE_SHA must be a 40-character Git commit SHA');
   if (role === 'api') {
     if (env.API_HOST !== '0.0.0.0') errors.push('API_HOST must be 0.0.0.0 in the API container');

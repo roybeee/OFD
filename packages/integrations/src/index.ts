@@ -3,6 +3,8 @@ export * from "./email.ts";
 export * from "./popbill.ts";
 export * from "./storage.ts";
 export * from "./tossplace.ts";
+export * from "./disabled-providers.ts";
+import { DisabledEmailProvider, DisabledPopbillProvider, RepositoryEvidenceOnlyStorage } from "./disabled-providers.ts";
 
 import type { EmailProvider } from "./email.ts";
 import { MockEmailProvider, SmtpEmailProvider } from "./email.ts";
@@ -19,15 +21,18 @@ export function createIntegrationProviders(config: ProviderConfig, popbillServic
 }
 
 export function createPopbillProvider(config: ProviderConfig, services?: PopbillSdkServices): PopbillProvider {
+  if (config.providerMode === "disabled") return new DisabledPopbillProvider();
   if (config.providerMode === "mock") return new MockPopbillProvider();
   if (!services) throw new Error("production Popbill SDK services가 주입되지 않았습니다.");
   return new ProductionPopbillProvider(config, services);
 }
 
 export function createObjectStorage(config: ProviderConfig): ObjectStorage {
+  if (config.storageMode === "postgres") return new RepositoryEvidenceOnlyStorage();
   return config.storageMode === "s3" ? new S3ObjectStorage(config) : new MockObjectStorage(config.uploadMaxBytes);
 }
 
 export function createEmailProvider(config: ProviderConfig): EmailProvider {
+  if (config.emailProvider === "disabled") return new DisabledEmailProvider();
   return config.emailProvider === "smtp" ? new SmtpEmailProvider() : new MockEmailProvider();
 }

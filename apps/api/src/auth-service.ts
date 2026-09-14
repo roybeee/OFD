@@ -42,7 +42,7 @@ export class AuthService {
   constructor(
     private readonly repository: StateRepository,
     private readonly secret: string,
-    private readonly appMode: "demo" | "test" | "production",
+    private readonly appMode: "demo" | "test" | "production" | "local",
     private readonly encryptionKey?: string,
   ) {}
 
@@ -363,13 +363,16 @@ export class AuthService {
 
   private async assertStoreAssignment(role: ProvisionableActorRole, rawStoreIds: string[]): Promise<void> {
     const storeIds = [...new Set(rawStoreIds)];
-    if (role === "store_owner" || role === "store_staff") {
-      invariant(storeIds.length > 0, "STORE_ASSIGNMENT_REQUIRED", "점주 및 매장 직원 계정에는 매장 배정이 필요합니다.");
+    const requiresStores = role === "store_owner" || role === "store_staff";
+    // Explicit finance assignments represent a scoped finance partner (ODA B).
+    // An empty list retains the existing headquarters-wide finance role.
+    if (requiresStores || role === "hq_finance") {
+      invariant(!requiresStores || storeIds.length > 0, "STORE_ASSIGNMENT_REQUIRED", "점주 및 매장 직원 계정에는 매장 배정이 필요합니다.");
       const stores = await Promise.all(storeIds.map((storeId) => this.repository.get<Store>("store", storeId)));
       invariant(stores.every((store) => store?.active), "INVALID_STORE_ASSIGNMENT", "운영 중인 매장만 배정할 수 있습니다.", 409);
       return;
     }
-    invariant(storeIds.length === 0, "STORE_ASSIGNMENT_NOT_ALLOWED", "본사·감사·배송 계정에는 매장을 배정할 수 없습니다.");
+    invariant(storeIds.length === 0, "STORE_ASSIGNMENT_NOT_ALLOWED", "재무 외 본사·감사·배송 계정에는 매장을 배정할 수 없습니다.");
   }
 }
 

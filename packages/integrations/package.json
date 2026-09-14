@@ -5,7 +5,13 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.864.0",
     "@aws-sdk/s3-request-presigner": "^3.864.0",
@@ -22,7 +28,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "pretest": "npm run build -w @ofd/domain",
-    "test": "tsx --test src/*.test.ts",
+    "test": "node --import tsx --test src/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }

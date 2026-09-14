@@ -1,0 +1,27 @@
+{
+  "headquarters": {
+    "businessNumber": "",
+    "legalName": "",
+    "representativeName": "",
+    "address": "",
+    "businessType": "",
+    "businessCategory": "",
+    "email": ""
+  },
+  "store": {
+    "code": "ODA-001",
+    "name": "ODA PIZZERIA",
+    "business": {
+      "businessNumber": "",
+      "legalName": "",
+      "representativeName": "",
+      "address": "서울시 동대문구 휘경동 377 107호",
+      "businessType": "음식점업",
+      "businessCategory": "피자",
+      "email": ""
+    }
+  },
+  "master": { "name": "", "email": "" },
+  "operatorA": { "name": "", "email": "" },
+  "partnerB": { "name": "", "email": "" }
+}

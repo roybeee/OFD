@@ -6,6 +6,7 @@ import { assertEncryptionKey, DomainError, parseHolidayCalendar } from "@ofd/dom
 import {
   createObjectStorage,
   readProviderConfig,
+  ODA_LOCAL_ORIGIN,
   type ObjectStorage,
   type StorageReadiness,
 } from "@ofd/integrations";
@@ -23,6 +24,8 @@ import { decryptPosSecret, encryptPosSecret, fetchTossDailyItems, verifyTossWebh
 import { randomUUID as posRandomUUID } from "node:crypto";
 import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipment, Store as PosStoreRecord, TaxInvoice, UserCredential } from "@ofd/domain";
 import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
+import { registerOdaRoutes } from "./oda-routes.ts";
+import { isOdaSetupEnabled, registerOdaSetup } from "./oda-setup.ts";
 import { audit as posAudit } from "./events.ts";
 
 export interface BuildAppOptions {
@@ -41,7 +44,8 @@ const provisionableRole = z.enum(["store_owner", "store_staff", "driver", "hq_op
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = options.env ?? process.env;
   const config = readProviderConfig(env);
-  const holidayCalendar = parseHolidayCalendar(env.KOREA_HOLIDAYS, config.appMode === "production");
+  const odaSettlementOnly = config.odaSettlementOnly === true;
+  const holidayCalendar = parseHolidayCalendar(env.KOREA_HOLIDAYS, config.appMode === "production" && !odaSettlementOnly);
   const repository = options.repository ?? createRepository(env);
   const requiredMigrations = await discoverMigrations();
   let storage = options.storage;
@@ -57,22 +61,59 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     config.providerMode, config.providerMode === "production" && config.taxInvoiceEnabled, () => new Date(), holidayCalendar);
   const sessionSecret = env.SESSION_SECRET ?? processSessionSecret;
   const authService = new AuthService(repository, sessionSecret, config.appMode, env.ENCRYPTION_KEY);
-  const app = Fastify({ logger: options.logger ?? env.LOG_LEVEL !== "silent", bodyLimit: config.uploadMaxBytes, trustProxy: true });
+  const logging = options.logger ?? env.LOG_LEVEL !== "silent";
+  const app = Fastify({ logger: logging ? { redact: {
+    paths: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-oda-setup-token"]', 'res.headers["set-cookie"]'],
+    censor: '[REDACTED]',
+  } } : false, bodyLimit: config.uploadMaxBytes, trustProxy: config.appMode !== "local" });
+
+  if (odaSettlementOnly) {
+    app.addHook("onRequest", async (request) => {
+      const path = request.url.split("?")[0] ?? "";
+      const allowed = ["/api/v2/health", "/api/v2/ready", "/api/v2/bootstrap", "/api/v2/admin/actors", "/api/v2/oda-setup",
+        "/api/v2/auth/login", "/api/v2/auth/logout", "/api/v2/auth/step-up", "/api/v2/auth/change-password"].includes(path)
+        || path.startsWith("/api/v2/oda/");
+      if (!allowed) throw new DomainError("ODA_ROUTE_UNAVAILABLE", "ODA 월정산과 계정 관리에서 지원하지 않는 기능입니다.", 404);
+      const origin = request.headers.origin;
+      if ((origin && origin !== env.WEB_ORIGIN) || request.headers["sec-fetch-site"] === "cross-site"
+        || (!["GET", "HEAD", "OPTIONS"].includes(request.method) && origin !== env.WEB_ORIGIN)) {
+        throw new DomainError("ODA_ORIGIN_REJECTED", "ODA 운영 화면에서 요청해 주세요.", 403);
+      }
+    });
+  }
 
   /* 웹훅 서명(HMAC)은 파싱 전 원문 바이트가 필요하다 — 기본 JSON 파서를 원문 보존형으로 교체 */
   app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
-    (request as { rawBody?: string }).rawBody = body as string;
+    if (request.url.split("?")[0] !== "/api/v2/oda-setup") (request as { rawBody?: string }).rawBody = body as string;
     if (!body) { done(null, null); return; }
     try { done(null, JSON.parse(body as string)); }
     catch { done(new DomainError("INVALID_JSON", "요청 본문 JSON을 해석할 수 없습니다.", 400)); }
   });
 
+  if (config.appMode === "local") {
+    app.addHook("onRequest", async (request) => {
+      const path = request.url.split("?")[0];
+      const healthCheck = (path === "/api/v2/health" || path === "/api/v2/ready") && ["GET", "HEAD"].includes(request.method);
+      const host = request.headers.host ?? "";
+      const allowedHost = host === "127.0.0.1:4175" || (healthCheck && /^(?:localhost|127\.0\.0\.1)(?::[0-9]+)?$/.test(host));
+      if (!allowedHost) throw new DomainError("LOCAL_HOST_REJECTED", "ODA 로컬 접속 주소로 열어 주세요.", 403);
+      const origin = request.headers.origin;
+      if ((origin && origin !== ODA_LOCAL_ORIGIN) || request.headers["sec-fetch-site"] === "cross-site"
+        || (!["GET", "HEAD", "OPTIONS"].includes(request.method) && origin !== ODA_LOCAL_ORIGIN)) {
+        throw new DomainError("LOCAL_ORIGIN_REJECTED", "ODA 로컬 화면에서 요청해 주세요.", 403);
+      }
+      const allowedPath = path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/bootstrap"
+        || path === "/api/v2/admin/actors" || path === "/api/v2/oda-setup"
+        || path?.startsWith("/api/v2/auth/") || path?.startsWith("/api/v2/oda/");
+      if (!allowedPath) throw new DomainError("LOCAL_UNAVAILABLE", "로컬 버전에서는 ODA 월 정산과 계정 관리만 사용할 수 있습니다.", 404);
+    });
+  }
   await app.register(cookie);
   await app.register(cors, {
-    origin: config.appMode === "production" ? (env.WEB_ORIGIN ?? "").split(",").map((value) => value.trim()).filter(Boolean) : true,
+    origin: config.appMode === "local" ? [ODA_LOCAL_ORIGIN] : config.appMode === "production" ? (env.WEB_ORIGIN ?? "").split(",").map((value) => value.trim()).filter(Boolean) : true,
     credentials: true,
-    allowedHeaders: ["authorization", "content-type", "idempotency-key", "x-api-key", "pb-webhook-mid", "pb-webhook-corpnum",
-      ...(config.appMode === "production" ? [] : ["x-demo-actor-id"])],
+    allowedHeaders: ["authorization", "content-type", "idempotency-key", "x-oda-setup-token", "x-api-key", "pb-webhook-mid", "pb-webhook-corpnum",
+      ...(["production", "local"].includes(config.appMode) ? [] : ["x-demo-actor-id"])],
   });
   app.addContentTypeParser(/^image\//, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
   app.addHook("onSend", async (_request, reply, payload) => {
@@ -83,6 +124,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   app.addHook("preHandler", async (request) => {
     const path = request.url.split("?")[0];
+    if (isOdaSetupEnabled(env) && path === "/api/v2/oda-setup") return;
     if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login"
       || path === "/api/v2/webhooks/popbill" || path === "/api/v2/webhooks/tossplace" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
     request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
@@ -108,19 +150,33 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     } catch {
       repositoryStatus = {
         ok: false,
-        database: { ok: false, mode: config.appMode === "production" ? "postgres" : "memory", code: "READINESS_CHECK_FAILED" },
+        database: { ok: false, mode: ["production", "local"].includes(config.appMode) ? "postgres" : "memory", code: "READINESS_CHECK_FAILED" },
         migrations: { ok: false, expected: expectedMigrations.length, applied: 0,
           missing: expectedMigrations.map((migration) => migration.version), drifted: [], unexpected: [], code: "READINESS_CHECK_FAILED" },
         worker: { ok: false, code: "READINESS_CHECK_FAILED" },
       };
     }
+    if (config.appMode === "local" || odaSettlementOnly) {
+      const durableDatabase = repositoryStatus.database.ok && repositoryStatus.database.mode === "postgres";
+      repositoryStatus = { ...repositoryStatus,
+        ok: durableDatabase && repositoryStatus.migrations.ok,
+        database: durableDatabase ? repositoryStatus.database : { ...repositoryStatus.database, ok: false,
+          code: repositoryStatus.database.code ?? (odaSettlementOnly ? "ODA_POSTGRES_REQUIRED" : "LOCAL_POSTGRES_REQUIRED") },
+        worker: { ok: true, notRequired: true },
+      };
+    }
     let storageStatus: StorageReadiness;
     try {
-      storageStatus = await storage.checkReadiness();
+      if (odaSettlementOnly) {
+        const evidence = await repository.checkOdaEvidenceReadiness?.();
+        const durable = repositoryStatus.database.ok && repositoryStatus.database.mode === "postgres";
+        storageStatus = { ok: durable && evidence?.ok === true, mode: "postgres", reachable: durable,
+          versioning: "NotRequired", ...(durable && evidence?.ok ? {} : { code: evidence?.code ?? "ODA_EVIDENCE_STORAGE_UNVERIFIED" }) };
+      } else storageStatus = await storage.checkReadiness();
     } catch {
       storageStatus = { ok: false, mode: config.storageMode, reachable: false, versioning: "Unknown", code: "STORAGE_READINESS_FAILED" };
     }
-    if (config.appMode === "production" && (storageStatus.mode !== "s3" || storageStatus.versioning !== "Enabled")) {
+    if (config.appMode === "production" && !odaSettlementOnly && (storageStatus.mode !== "s3" || storageStatus.versioning !== "Enabled")) {
       storageStatus = { ...storageStatus, ok: false, code: storageStatus.code ?? "S3_VERSIONING_NOT_ENABLED" };
     }
     const projections = { ok: true, mode: "synchronous" as const, lag: 0 };
@@ -162,7 +218,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
     return reply.code(204).send();
   });
-  app.get("/api/v2/bootstrap", async (request) => service.bootstrap(request.actor));
+  app.get("/api/v2/bootstrap", async (request) => {
+    const response = await service.bootstrap(request.actor);
+    if (!odaSettlementOnly) return response;
+    return { ...response,
+      meta: { ...(response.meta as Record<string, unknown>), odaSettlementOnly: true, evidenceStorage: "postgres", emailProvider: "disabled" },
+      capabilities: (response.capabilities as string[]).filter(capability =>
+        ["oda.settlement.read", "oda.finance.read", "hq.accounts.manage", "hq.actors.manage"].includes(capability)),
+    };
+  });
 
   /**
    * Identity administration contract (hq_master + recent step-up only):
@@ -178,6 +242,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       storeIds: z.array(z.string().min(1)).max(100).default([]),
       email: z.string().email().max(254), password: z.string().min(10).max(200),
     }).parse(request.body);
+    if ((config.appMode === "local" || odaSettlementOnly) && !["hq_master", "store_owner", "hq_finance", "auditor"].includes(body.role)) {
+      throw new DomainError(odaSettlementOnly ? "ODA_ROLE_UNAVAILABLE" : "LOCAL_ROLE_UNAVAILABLE", "월정산에서는 관리자·매장 운영자·지원 파트너·감사 계정만 등록할 수 있습니다.", 422);
+    }
     return idempotentMutation(request, reply, repository, request.actor, 201,
       (scoped) => new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY).provisionActor(request.actor, body));
   });
@@ -189,6 +256,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       z.object({ action: z.literal("role"), actorId: z.string().min(1), expectedVersion: z.number().int().positive(),
         role: provisionableRole, storeIds: z.array(z.string().min(1)).max(100).default([]) }),
     ]).parse(request.body);
+    if ((config.appMode === "local" || odaSettlementOnly) && body.action === "role" && !["hq_master", "store_owner", "hq_finance", "auditor"].includes(body.role)) {
+      throw new DomainError(odaSettlementOnly ? "ODA_ROLE_UNAVAILABLE" : "LOCAL_ROLE_UNAVAILABLE", "월정산에서 지원하지 않는 계정 역할입니다.", 422);
+    }
     return idempotentMutation(request, reply, repository, request.actor, 200, (scoped) => {
       const scopedAuth = new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY);
       if (body.action === "deactivate") return scopedAuth.deactivateActor(request.actor, body.actorId, body.expectedVersion);
@@ -402,8 +472,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   /* ── POS 수집 (V1 이식 1단계) ───────────────────────── */
   const posStore = createPosStore(env);
   app.addHook("onClose", async () => { await posStore.close(); });
-  const assertPosRole = (actor: { role?: string } | undefined) => {
+  const assertPosRole = (actor: { role?: string; storeIds?: string[] } | undefined) => {
     const role = actor?.role ?? "";
+    if (role === "hq_finance" && actor?.storeIds?.length) {
+      throw new PosDomainError("STORE_SCOPE_DENIED", "매장 전용 재무 계정은 전사 POS·오픈 관리에 접근할 수 없습니다.", 403);
+    }
     /* 실제 V2 역할은 hq_* 접두 — 접두 없는 값은 메모리 모드 테스트 하위호환 */
     if (!["hq_master", "hq_finance", "hq_ops", "master", "finance", "admin"].includes(role)) {
       throw new PosDomainError("FORBIDDEN", "POS 연동 권한이 없습니다.", 403);
@@ -469,13 +542,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
     const from = `${month}-01`;
     const to = `${month}-${String(monthEnd).padStart(2, "0")}`;
+    const storeScope = request.actor.storeIds.length > 0 ? request.actor.storeIds : undefined;
     const [stores, receipts, shipments, orders, settlements, invoices, posDaily, posProductQty] = await Promise.all([
-      repository.list<PosStoreRecord>("store"),
-      repository.list<GoodsReceipt>("receipt"),
-      repository.list<Shipment>("shipment"),
-      repository.list<PurchaseOrder>("order"),
-      repository.list<Settlement>("settlement"),
-      repository.list<TaxInvoice>("tax_invoice"),
+      repository.list<PosStoreRecord>("store", storeScope),
+      repository.list<GoodsReceipt>("receipt", storeScope),
+      repository.list<Shipment>("shipment", storeScope),
+      repository.list<PurchaseOrder>("order", storeScope),
+      repository.list<Settlement>("settlement", storeScope),
+      repository.list<TaxInvoice>("tax_invoice", storeScope),
       posStore.dailyTotals(from, to),
       posStore.productTotals(from, to),
     ]);
@@ -924,6 +998,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
     const query = request.query as { q?: string; from?: string; to?: string; noSched?: string; page?: string; limit?: string };
     const result = await repository.searchAudit({
+      ...(request.actor.storeIds.length > 0 ? { storeIds: request.actor.storeIds } : {}),
       ...(query.q ? { q: String(query.q) } : {}),
       ...(dateOnly.test(query.from ?? "") ? { from: query.from! } : {}),
       ...(dateOnly.test(query.to ?? "") ? { to: query.to! } : {}),
@@ -1026,6 +1101,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const result = await service.receivePopbillWebhook(mid, { headers: { mid, corpNum }, bodies });
     return reply.code(result.accepted ? 202 : 200).send(result);
   });
+
+  registerOdaRoutes(app, repository);
+  registerOdaSetup(app, repository, env);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {

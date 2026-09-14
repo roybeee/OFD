@@ -1,0 +1,11 @@
+{
+  "name": "oda-durable-test-engine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated test-only WASM PostgreSQL engine; never a production database dependency",
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-socket": "0.2.11"
+  }
+}

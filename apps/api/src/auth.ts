@@ -30,7 +30,7 @@ export async function resolveActor(request: FastifyRequest, repository: StateRep
   requireTestAuth = false): Promise<Actor> {
   let actorId: string;
   let mfaAtFromSession: string | undefined;
-  const sessionRequired = appMode === "production" || (appMode === "test" && requireTestAuth);
+  const sessionRequired = appMode === "production" || appMode === "local" || (appMode === "test" && requireTestAuth);
   if (!sessionRequired) {
     const requested = request.headers["x-demo-actor-id"];
     actorId = typeof requested === "string" && requested ? requested : DEMO_IDS.owner;

@@ -62,7 +62,7 @@ export function assertRole(actor: Actor, allowed: Actor["role"][]): void {
 }
 
 export function assertStoreScope(actor: Actor, storeId: string): void {
-  if (actor.role.startsWith("store_")) {
+  if (actor.role.startsWith("store_") || (actor.role === "hq_finance" && actor.storeIds.length > 0)) {
     invariant(actor.storeIds.includes(storeId), "STORE_SCOPE_DENIED", "다른 매장의 정보에는 접근할 수 없습니다.", 403);
   }
 }

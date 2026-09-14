@@ -1,3 +1,4 @@
+import { brandCode, isOdaBrand } from '../lib/brand';
 import { useEffect, useState } from 'react';
 import { Button } from './ui';
 import { X } from './icons';
@@ -5,7 +6,7 @@ import { X } from './icons';
 /** 안드로이드 Chrome이 설치 가능 시점에 던지는 이벤트(표준화 전 API라 타입을 직접 둔다). */
 type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }> };
 
-const DISMISS_KEY = 'ofd.install.dismissed';
+const DISMISS_KEY = `${brandCode}.install.dismissed`;
 
 /* 사파리 사생활 보호 모드·저장소 차단 환경에서는 localStorage 접근 자체가 던진다.
  * 설치 안내는 부가 기능이므로 실패해도 앱 동작을 막지 않는다. */
@@ -62,7 +63,7 @@ export function InstallPrompt() {
 
   return (
     <aside className="install-prompt" role="complementary" aria-label="앱 설치 안내" data-testid="install-prompt">
-      <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="" width={38} height={38} />
+      <img src={`${import.meta.env.BASE_URL}${isOdaBrand ? "oda-icon-192.png" : "icon-192.png"}`} alt="" width={38} height={38} />
       <div className="install-copy">
         <strong>홈 화면에 앱으로 추가</strong>
         {deferred

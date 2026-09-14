@@ -90,9 +90,9 @@ export class ProcurementService {
   constructor(
     private readonly repository: StateRepository,
     private readonly storage: ObjectStorage,
-    private readonly appMode: "demo" | "test" | "production",
+    private readonly appMode: "demo" | "test" | "production" | "local",
     private readonly approvedBankAccountId = "ofd-main",
-    private readonly providerMode: "mock" | "production" = "mock",
+    private readonly providerMode: "mock" | "production" | "disabled" = "mock",
     private readonly externalIssueEnabled = false,
     private readonly now: () => Date = () => new Date(),
     private readonly holidayCalendar: HolidayCalendar = () => false,
@@ -107,7 +107,8 @@ export class ProcurementService {
     const accessPolicy = await this.loadAccessPolicy();
     const isStoreActor = actor.role === "store_owner" || actor.role === "store_staff";
     const isDriver = actor.role === "driver";
-    const storeScope = isStoreActor ? actor.storeIds : undefined;
+    const isScopedFinance = actor.role === "hq_finance" && actor.storeIds.length > 0;
+    const storeScope = isStoreActor || isScopedFinance ? actor.storeIds : undefined;
     const today = operationalDateKst(this.now());
     let stores = await this.repository.list<Store>("store", storeScope);
     let orders = await this.repository.list<PurchaseOrder>("order", storeScope);
@@ -127,11 +128,12 @@ export class ProcurementService {
     const hqEntities = await this.repository.list<LegalEntitySnapshot & { id: string; isHeadquarters: boolean }>("legal_entity");
     const headquarters = hqEntities.find((entity) => entity.isHeadquarters);
     invariant(headquarters, "HQ_BUSINESS_MISSING", "본사 사업자 정보가 없습니다.", 503);
-    const bankTransactions = actor.role === "hq_finance" || actor.role === "hq_master" || actor.role === "auditor"
+    // Headquarters bank feeds are unscoped; ODA partners use their store's uploaded bank evidence.
+    const bankTransactions = (actor.role === "hq_finance" && !isScopedFinance) || actor.role === "hq_master" || actor.role === "auditor"
       ? await this.repository.list<BankTransaction>("bank_transaction") : [];
     const auditEvents = actor.role === "hq_master" || actor.role === "auditor" ? await this.repository.listAudit(30) : [];
     const allActors = await this.repository.list<Actor>("actor");
-    const availableActors = this.appMode !== "production" && !isDriver ? allActors.map(publicActorDto) : [];
+    const availableActors = (this.appMode === "demo" || this.appMode === "test") && !isDriver ? allActors.map(publicActorDto) : [];
     const driverDirectory = actor.role === "hq_ops" || actor.role === "hq_master"
       ? allActors.filter((candidate) => candidate.role === "driver" && candidate.active)
         .map(({ id, name }) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name, "ko"))
@@ -209,7 +211,9 @@ export class ProcurementService {
       meta: { apiVersion: "v2", appMode: this.appMode, providerMode: this.providerMode,
         externalIssueEnabled: this.externalIssueEnabled, generatedAt: this.now().toISOString(),
         operationalDate: today, timeZone: "Asia/Seoul" },
-      capabilities: capabilitiesFor(actor, accessPolicy),
+      capabilities: this.appMode === "local"
+        ? capabilitiesFor(actor, accessPolicy).filter((capability) => ["oda.settlement.read", "oda.finance.read", "hq.accounts.manage", "hq.actors.manage"].includes(capability))
+        : capabilitiesFor(actor, accessPolicy),
       menuOrder: accessPolicy.menuOrder ?? [],
       allowedDeliveryDates: allowedDeliveryDates(this.now()),
       currentActor: publicActorDto(actor),
@@ -642,6 +646,7 @@ export class ProcurementService {
 
   private async autoMatchPaymentsLocked(actor: Actor): Promise<{ paid: PaymentRequest[]; manualReview: PaymentRequest[]; unmatched: number }> {
     assertRole(actor, ["hq_finance"]);
+    assertHeadquartersBankAccess(actor);
     assertRecentStepUp(actor);
     const requests = (await this.repository.list<PaymentRequest>("payment_request"))
       .filter((request) => isPaymentMatchCandidate(request.status));
@@ -716,6 +721,7 @@ export class ProcurementService {
   private async manualMatchPaymentLocked(actor: Actor, paymentRequestId: string, bankTransactionId: string,
     expectedVersion: number): Promise<{ paymentRequest: PaymentRequest }> {
     assertRole(actor, ["hq_finance"]);
+    assertHeadquartersBankAccess(actor);
     assertRecentStepUp(actor);
     const request = await this.required<PaymentRequest>("payment_request", paymentRequestId, "PAYMENT_NOT_FOUND", "입금 요청을 찾을 수 없습니다.");
     const transaction = await this.required<BankTransaction>("bank_transaction", bankTransactionId, "BANK_TRANSACTION_NOT_FOUND", "입금 내역을 찾을 수 없습니다.");
@@ -746,6 +752,7 @@ export class ProcurementService {
   private async reversePaymentMatchLocked(actor: Actor, paymentRequestId: string, expectedVersion: number,
     reason: string): Promise<{ paymentRequest: PaymentRequest; bankTransaction: BankTransaction }> {
     assertRole(actor, ["hq_finance"]);
+    assertHeadquartersBankAccess(actor);
     assertRecentStepUp(actor);
     invariant(reason.trim().length >= 3, "REASON_REQUIRED", "대사 취소 사유를 3자 이상 입력해 주세요.");
     const request = await this.required<PaymentRequest>("payment_request", paymentRequestId, "PAYMENT_NOT_FOUND", "입금 요청을 찾을 수 없습니다.");
@@ -791,6 +798,7 @@ export class ProcurementService {
 
   async requestBankSync(actor: Actor, from: string, to: string): Promise<{ queued: true; from: string; to: string }> {
     assertRole(actor, ["hq_finance"]);
+    assertHeadquartersBankAccess(actor);
     assertRecentStepUp(actor);
     invariant(/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to,
       "INVALID_BANK_SYNC_PERIOD", "계좌조회 기간이 올바르지 않습니다.");
@@ -825,6 +833,7 @@ export class ProcurementService {
      * 재무 계정이 아직 없는 초기 구축 단계에서도 수명주기를 시작할 수 있어야 한다(V1 이식 요구). */
     assertRole(actor, ["hq_finance", "hq_master"]);
     assertRecentStepUp(actor);
+    assertStoreScope(actor, input.storeId);
     invariant(/^\d{4}-\d{2}-\d{2}$/.test(input.periodStart) && /^\d{4}-\d{2}-\d{2}$/.test(input.periodEnd) && input.periodStart <= input.periodEnd,
       "INVALID_PERIOD", "정산 기간이 올바르지 않습니다.");
     const store = await this.required<Store>("store", input.storeId, "STORE_NOT_FOUND", "매장을 찾을 수 없습니다.");
@@ -880,6 +889,7 @@ export class ProcurementService {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     const settlement = await this.required<Settlement>("settlement", settlementId, "SETTLEMENT_NOT_FOUND", "정산서를 찾을 수 없습니다.");
+    assertStoreScope(actor, settlement.storeId);
     assertVersion(settlement.version, expectedVersion);
     assertSettlementTransition(settlement.status, "reviewed");
     await this.assertSettlementPaymentGate(settlement);
@@ -912,6 +922,7 @@ export class ProcurementService {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     const settlement = await this.required<Settlement>("settlement", settlementId, "SETTLEMENT_NOT_FOUND", "정산서를 찾을 수 없습니다.");
+    assertStoreScope(actor, settlement.storeId);
     invariant(settlement.status === "approved", "SETTLEMENT_NOT_APPROVED", "승인된 정산서만 증빙을 작성할 수 있습니다.", 409);
     await this.assertSettlementPaymentGate(settlement);
     const existing = (await this.repository.list<TaxInvoice>("tax_invoice", [settlement.storeId])).find((invoice) => invoice.settlementId === settlement.id);
@@ -948,6 +959,7 @@ export class ProcurementService {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     const invoice = await this.required<TaxInvoice>("tax_invoice", invoiceId, "INVOICE_NOT_FOUND", "세금계산서를 찾을 수 없습니다.");
+    assertStoreScope(actor, invoice.storeId);
     assertVersion(invoice.version, expectedVersion);
     assertInvoiceTransition(invoice.status, "reviewed");
     const updated: TaxInvoice = { ...invoice, status: "reviewed", reviewedBy: actor.id,
@@ -965,6 +977,7 @@ export class ProcurementService {
     assertRole(actor, ["hq_finance"]);
     assertRecentStepUp(actor);
     const original = await this.required<TaxInvoice>("tax_invoice", originalInvoiceId, "INVOICE_NOT_FOUND", "원본 세금계산서를 찾을 수 없습니다.");
+    assertStoreScope(actor, original.storeId);
     invariant(original.status === "nts_success", "ORIGINAL_NOT_NTS_SUCCESS", "국세청 전송 성공 세금계산서만 수정할 수 있습니다.", 409);
     invariant(Boolean(original.serialNumber && /^\d{24}$/.test(original.serialNumber)), "ORIGINAL_NTS_NUMBER_REQUIRED", "원본의 24자리 국세청 승인번호가 필요합니다.", 409);
     invariant(original.issueType !== "internal_statement", "INTERNAL_STATEMENT_ONLY", "내부 거래명세서는 수정세금계산서 대상이 아닙니다.", 409);
@@ -998,6 +1011,7 @@ export class ProcurementService {
 
   async approveInvoice(actor: Actor, invoiceId: string, expectedVersion: number): Promise<{ invoice: TaxInvoice }> {
     const invoice = await this.required<TaxInvoice>("tax_invoice", invoiceId, "INVOICE_NOT_FOUND", "세금계산서를 찾을 수 없습니다.");
+    assertStoreScope(actor, invoice.storeId);
     this.assertExternalInvoiceIssuanceAllowed(invoice);
     assertVersion(invoice.version, expectedVersion);
     assertInvoiceTransition(invoice.status, "approved");
@@ -1019,6 +1033,7 @@ export class ProcurementService {
     assertRole(actor, ["hq_finance", "hq_master"]);
     assertRecentStepUp(actor);
     const invoice = await this.required<TaxInvoice>("tax_invoice", invoiceId, "INVOICE_NOT_FOUND", "세금계산서를 찾을 수 없습니다.");
+    assertStoreScope(actor, invoice.storeId);
     this.assertExternalInvoiceIssuanceAllowed(invoice);
     assertVersion(invoice.version, expectedVersion);
     invariant(invoice.status === "failed", "INVOICE_NOT_RETRYABLE", "실패 상태의 세금계산서만 재시도할 수 있습니다.", 409);
@@ -1161,15 +1176,15 @@ function inAutomaticMatchWindow(request: PaymentRequest, transaction: BankTransa
 
 export function baseCapabilitiesFor(role: Actor["role"]): string[] {
   const map: Record<Actor["role"], string[]> = {
-    store_owner: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
+    store_owner: ["oda.settlement.read", "store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
     store_staff: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.documents.read"],
     hq_ops: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request", "hq.shipments.manage", "hq.shipments.dispatch", "hq.drivers.read", "hq.pos.read",
       "hq.stores.manage", "hq.leads.manage", "hq.notices.manage", "hq.design.read"],
-    hq_finance: ["hq.payments.reconcile", "hq.settlements.manage", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read", "hq.audit.read"],
-    hq_master: ["hq.settlements.approve", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
+    hq_finance: ["oda.finance.read", "hq.payments.reconcile", "hq.settlements.manage", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read", "hq.audit.read"],
+    hq_master: ["oda.finance.read", "hq.settlements.approve", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
       "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.settings.manage", "hq.drivers.read", "hq.pos.read",
       "hq.stores.manage", "hq.leads.manage", "hq.notices.manage", "hq.audit.read", "hq.design.read"],
-    auditor: ["hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
+    auditor: ["oda.finance.read", "hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
     driver: ["driver.deliveries.read", "driver.deliveries.complete"],
     system: [],
   };
@@ -1206,7 +1221,15 @@ export function resolveVisiblePages(actor: Actor, policy?: AccessPolicyDocument)
 
 function capabilitiesFor(actor: Actor, policy?: AccessPolicyDocument): string[] {
   if (actor.role === "system") return [];
-  return capabilitiesForPages(actor.role, resolveVisiblePages(actor, policy));
+  const capabilities = capabilitiesForPages(actor.role, resolveVisiblePages(actor, policy));
+  return actor.role === "hq_finance" && actor.storeIds.length > 0
+    ? capabilities.filter((capability) => !["hq.payments.reconcile", "hq.pos.read"].includes(capability))
+    : capabilities;
+}
+
+function assertHeadquartersBankAccess(actor: Actor): void {
+  invariant(actor.role !== "hq_finance" || actor.storeIds.length === 0,
+    "STORE_SCOPE_DENIED", "배정 매장 재무 계정은 본사 전체 계좌를 조회하거나 대사할 수 없습니다.", 403);
 }
 
 /** 요청된 페이지 목록을 해당 역할의 영역 안 페이지로만 정제한다(중복·역할 밖 경로 제거). */

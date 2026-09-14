@@ -1,10 +1,11 @@
 import { createRepository } from "@ofd/db";
 import { parseHolidayCalendar } from "@ofd/domain";
-import { createIntegrationProviders, loadPopbillSdkServices, readProviderConfig } from "@ofd/integrations";
+import { assertWorkerProfile, createIntegrationProviders, loadPopbillSdkServices, readProviderConfig } from "@ofd/integrations";
 import { WorkerRuntime } from "./runtime.ts";
 import { OfdWorker } from "./worker.ts";
 
 const config = readProviderConfig(process.env);
+assertWorkerProfile(config);
 const repository = createRepository(process.env);
 const sdk = config.providerMode === "production" ? await loadPopbillSdkServices(config) : undefined;
 const providers = createIntegrationProviders(config, sdk);

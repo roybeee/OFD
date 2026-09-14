@@ -1,3 +1,10 @@
+# Render terminates TLS before forwarding to this container. Preserve its HTTPS
+# indication so the API can enforce secure online first-time registration.
+map $http_x_forwarded_proto $forwarded_proto {
+  default $scheme;
+  https https;
+}
+
 server {
   listen ${PORT};
   server_name _;
@@ -13,12 +20,13 @@ server {
   add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https://*.pstatic.net https://*.map.naver.net https://static.naver.net https://oapi.map.naver.com https://openapi.map.naver.com; connect-src 'self' https://*.pstatic.net https://*.map.naver.net https://oapi.map.naver.com https://openapi.map.naver.com https://naveropenapi.apigw.ntruss.com https://maps.apigw.ntruss.com https://kr-col-ext.nelo.navercorp.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://oapi.map.naver.com https://openapi.map.naver.com https://*.pstatic.net; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
 
   location /api/v2/ {
+    client_max_body_size 3m; # 2MB 원본의 JSON base64 업로드 허용
     proxy_pass http://${API_UPSTREAM_HOSTPORT};
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
     proxy_connect_timeout 5s;
     proxy_read_timeout 30s;
   }
@@ -30,6 +38,15 @@ server {
   }
 
   # 서비스워커는 캐시되면 새 버전이 안 잡힌다 — 항상 원본 확인
+  location = /oda.webmanifest {
+    default_type application/manifest+json;
+    add_header Cache-Control "public, max-age=3600";
+  }
+
+  location = /oda-sw.js {
+    add_header Cache-Control "no-cache";
+  }
+
   location = /sw.js {
     add_header Cache-Control "no-cache";
   }
@@ -61,7 +78,7 @@ server {
     proxy_pass http://${API_UPSTREAM_HOSTPORT}/api/v2/ready;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
     proxy_connect_timeout 3s;
     proxy_read_timeout 5s;
   }

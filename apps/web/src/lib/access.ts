@@ -1,6 +1,9 @@
+import { isOdaBrand } from './brand';
 import type { Role } from '../types';
 
 export const pathCapability: Record<string, string> = {
+  '/store/oda-settlement': 'oda.settlement.read',
+  '/hq/oda-settlement': 'oda.finance.read',
   // 점주 홈이 매장 계정의 첫 화면이다 — defaultPathFor가 삽입 순서를 따르므로 맨 앞에 둔다.
   '/store/home': 'store.orders.read',
   '/store/orders': 'store.orders.read',
@@ -45,7 +48,7 @@ export function canAccessPath(path: string, capabilities: string[]) {
 }
 
 export function defaultPathFor(capabilities: string[]) {
-  return Object.keys(pathCapability).find((path) => capabilities.includes(pathCapability[path])) ?? '/unauthorized';
+  return Object.keys(pathCapability).filter((path) => isOdaBrand || !path.includes('oda-settlement')).find((path) => capabilities.includes(pathCapability[path])) ?? '/unauthorized';
 }
 
 export function roleForActor(actorRole: string): Role {

@@ -17,7 +17,8 @@ export type AggregateType =
   | "upload_session"
   | "credential"
   | "admin_invariant"
-  | "access_policy";
+  | "access_policy"
+  | "oda_month";
 
 export interface AggregateChange<T = unknown> {
   type: AggregateType;
@@ -119,6 +120,8 @@ export interface StateRepository {
   recordWorkerHeartbeat(heartbeat: WorkerHeartbeat): Promise<void>;
   getWorkerHeartbeat(workerId: string): Promise<WorkerHeartbeat | undefined>;
   checkReadiness(requiredMigrations: readonly RequiredMigration[], now?: Date): Promise<RepositoryReadiness>;
+  /** Read-only verification of the tables, sequence and write permissions used by ODA evidence + audit commits. */
+  checkOdaEvidenceReadiness?(): Promise<{ ok: boolean; code?: string }>;
   receiveWebhook(record: WebhookRecord): Promise<boolean>;
   close(): Promise<void>;
 }

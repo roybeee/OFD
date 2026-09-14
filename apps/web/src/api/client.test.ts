@@ -51,6 +51,12 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('V2 bootstrap adapter', () => {
+  it('preserves only a boolean ODA settlement profile flag from the API', () => {
+    expect(normalizeBootstrap({ ...bootstrapPayload(), meta: { odaSettlementOnly: true } }).meta.odaSettlementOnly).toBe(true);
+    expect(normalizeBootstrap({ ...bootstrapPayload(), meta: { odaSettlementOnly: false } }).meta.odaSettlementOnly).toBe(false);
+    for (const value of ['true', 'false', 1, undefined])
+      expect(normalizeBootstrap({ ...bootstrapPayload(), meta: { odaSettlementOnly: value } }).meta.odaSettlementOnly).toBeUndefined();
+  });
   it('uses Web Crypto entropy when randomUUID is unavailable', () => {
     const getRandomValues = vi.fn((bytes: Uint8Array) => {
       bytes.fill(0xab);
@@ -317,6 +323,14 @@ describe('V2 bootstrap adapter', () => {
     expect(isAllowedApiAppMode('test', false, true)).toBe(false);
     expect(isAllowedApiAppMode('test', true, false)).toBe(false);
     expect(isAllowedApiAppMode('demo', true, true)).toBe(false);
+  });
+
+  it('accepts local PostgreSQL API only in the ODA app on the exact loopback origin', () => {
+    expect(isAllowedApiAppMode('local', false, false, true, 'http://127.0.0.1:4175')).toBe(true);
+    expect(isAllowedApiAppMode('local', false, false, false, 'http://127.0.0.1:4175')).toBe(false);
+    expect(isAllowedApiAppMode('local', false, false, true, 'http://localhost:4175')).toBe(false);
+    expect(isAllowedApiAppMode('local', false, false, true, 'https://oda.example')).toBe(false);
+    expect(isAllowedApiAppMode('demo', true, true, true, 'http://127.0.0.1:4175')).toBe(false);
   });
 
   it('adds the existing OFD session mutation guard header to every write', async () => {

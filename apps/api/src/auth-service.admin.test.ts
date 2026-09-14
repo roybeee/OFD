@@ -13,6 +13,33 @@ async function adminFixture() {
 }
 
 describe("AuthService actor administration", () => {
+  it("provisions an explicitly scoped finance partner and preserves headquarters-wide finance", async () => {
+    const { repository, master, auth } = await adminFixture();
+    const partner = await auth.provisionActor(master, {
+      name: "ODA 지원 파트너 B", role: "hq_finance", storeIds: [DEMO_IDS.storeDoksan, DEMO_IDS.storeDoksan],
+      email: "partner-b@oda.local", password: "ODA-partner-2026!",
+    });
+    expect(partner.actor.storeIds).toEqual([DEMO_IDS.storeDoksan]);
+    expect((await repository.get<Actor>("actor", partner.actor.id))?.storeIds).toEqual([DEMO_IDS.storeDoksan]);
+    const global = await auth.provisionActor(master, {
+      name: "전체 본사 재무", role: "hq_finance", storeIds: [],
+      email: "global-finance@oda.local", password: "ODA-finance-2026!",
+    });
+    expect(global.actor.storeIds).toEqual([]);
+    const changed = await auth.changeActorRole(master, global.actor.id, 1, "hq_finance", [DEMO_IDS.storeHapjeong]);
+    expect(changed.actor).toMatchObject({ version: 2, storeIds: [DEMO_IDS.storeHapjeong] });
+  });
+
+  it("rejects nonexistent finance assignments and assignments for other headquarters roles", async () => {
+    const { master, auth } = await adminFixture();
+    const input = { name: "지원 파트너", storeIds: ["missing-store"], email: "invalid@oda.local", password: "ODA-partner-2026!" };
+    await expect(auth.provisionActor(master, { ...input, role: "hq_finance" })).rejects.toMatchObject({ code: "INVALID_STORE_ASSIGNMENT" });
+    for (const role of ["hq_master", "hq_ops", "auditor", "driver"] as const) {
+      await expect(auth.provisionActor(master, { ...input, role, storeIds: [DEMO_IDS.storeDoksan] }))
+        .rejects.toMatchObject({ code: "STORE_ASSIGNMENT_NOT_ALLOWED" });
+    }
+  });
+
   it("requires an hq_master with a recent step-up before provisioning accounts", async () => {
     const { auth, master } = await adminFixture();
     const input: ProvisionActorInput = {

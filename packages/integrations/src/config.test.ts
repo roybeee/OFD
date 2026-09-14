@@ -41,3 +41,28 @@ test("Popbill 기능별 안전 조건을 독립적으로 강제한다", () => {
   assert.throws(() => readProviderConfig({ ...productionBase, POPBILL_SMS_ENABLED: "true" }), /SMS_SENDER/);
   assert.doesNotThrow(() => readProviderConfig(productionBase));
 });
+
+const localBase = {
+  NODE_ENV: "production", APP_MODE: "local", WORKSTATION_BRAND: "oda", REPOSITORY_MODE: "postgres", ODA_LOCAL_ENABLED: "true",
+  WEB_ORIGIN: "http://127.0.0.1:4175", PUBLIC_APP_URL: "http://127.0.0.1:4175",
+  SESSION_SECRET: "local-config-test-session-secret-32characters", ENCRYPTION_KEY: Buffer.alloc(32, 6).toString("base64"),
+};
+
+test("ODA local accepts a production build only with all durable loopback enablers", () => {
+  const config = readProviderConfig(localBase);
+  assert.equal(config.appMode, "local");
+  assert.equal(config.providerMode, "mock");
+  for (const field of ["WORKSTATION_BRAND", "REPOSITORY_MODE", "ODA_LOCAL_ENABLED", "WEB_ORIGIN", "PUBLIC_APP_URL", "SESSION_SECRET", "ENCRYPTION_KEY"]) {
+    assert.throws(() => readProviderConfig({ ...localBase, [field]: undefined }), field);
+  }
+});
+
+test("ODA local rejects exposure, demo persistence and external side effects", () => {
+  for (const changed of [
+    { WORKSTATION_BRAND: "ofd" }, { REPOSITORY_MODE: "memory" }, { ODA_LOCAL_ENABLED: "false" },
+    { WEB_ORIGIN: "http://localhost:4175" }, { PUBLIC_APP_URL: "https://oda.example" },
+    { SESSION_SECRET: "short" }, { ENCRYPTION_KEY: "invalid" }, { PROVIDER_MODE: "production" },
+    { STORAGE_MODE: "s3" }, { EMAIL_PROVIDER: "smtp" }, { POPBILL_TAX_INVOICE_ENABLED: "true" },
+    { POPBILL_BANK_SYNC_ENABLED: "true" }, { POPBILL_SMS_ENABLED: "true" }, { POPBILL_PRODUCTION_ENABLED: "true" },
+  ]) assert.throws(() => readProviderConfig({ ...localBase, ...changed }), JSON.stringify(changed));
+});

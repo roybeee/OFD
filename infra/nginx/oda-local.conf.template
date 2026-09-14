@@ -1,0 +1,48 @@
+# Local ODA only. Preserve :4175 for the API's loopback Host/Origin checks.
+server {
+  listen ${PORT};
+  server_name 127.0.0.1;
+  server_tokens off;
+  root /usr/share/nginx/html;
+  index index.html;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "no-referrer" always;
+  add_header Permissions-Policy "camera=(), geolocation=(), microphone=()" always;
+  add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
+
+  location /api/v2/ {
+    client_max_body_size 3m;
+    proxy_pass http://${API_UPSTREAM_HOSTPORT};
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 30s;
+  }
+
+  location = /oda.webmanifest {
+    default_type application/manifest+json;
+    add_header Cache-Control "no-cache";
+  }
+  location = /oda-sw.js {
+    add_header Cache-Control "no-cache";
+  }
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+  location = /healthz {
+    access_log off;
+    add_header Content-Type text/plain;
+    return 200 "ok\n";
+  }
+  location = /readyz {
+    access_log off;
+    proxy_pass http://${API_UPSTREAM_HOSTPORT}/api/v2/ready;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 5s;
+  }
+}

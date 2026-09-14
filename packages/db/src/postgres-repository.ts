@@ -395,6 +395,32 @@ export class PostgresRepository implements StateRepository {
     return { ok: migrations.ok && worker.ok, database: { ok: true, mode: "postgres" }, migrations, worker };
   }
 
+  async checkOdaEvidenceReadiness(): Promise<{ ok: boolean; code?: string }> {
+    try {
+      // Check actual privileges without reading customer evidence or performing probe writes.
+      // SELECT FOR UPDATE in commit() also requires UPDATE on audit_ledger.
+      const result = await this.query<{ ok: boolean }>(`SELECT
+        NOT pg_is_in_recovery() AND current_setting('transaction_read_only') = 'off'
+        AND has_schema_privilege(current_user, current_schema(), 'USAGE')
+        AND NOT EXISTS (
+          SELECT 1 FROM (VALUES
+            ('aggregate_snapshots', 'SELECT'), ('aggregate_snapshots', 'INSERT'), ('aggregate_snapshots', 'UPDATE'),
+            ('audit_ledger', 'SELECT'), ('audit_ledger', 'INSERT'), ('audit_ledger', 'UPDATE'),
+            ('idempotency_keys', 'SELECT'), ('idempotency_keys', 'INSERT'), ('idempotency_keys', 'UPDATE'), ('idempotency_keys', 'DELETE')
+          ) AS required(name, privilege)
+          WHERE NOT COALESCE(has_table_privilege(current_user, to_regclass(required.name), required.privilege), false)
+        )
+        AND COALESCE(has_sequence_privilege(current_user,
+          pg_get_serial_sequence('audit_ledger', 'sequence'), 'USAGE'), false)
+        AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('aggregate_snapshots')
+          AND attname = 'payload' AND atttypid = 'jsonb'::regtype AND NOT attisdropped)
+        AS ok`);
+      return result.rows[0]?.ok ? { ok: true } : { ok: false, code: 'ODA_EVIDENCE_STORAGE_NOT_WRITABLE' };
+    } catch {
+      return { ok: false, code: 'ODA_EVIDENCE_STORAGE_UNAVAILABLE' };
+    }
+  }
+
   async receiveWebhook(record: WebhookRecord): Promise<boolean> {
     const result = await this.query(
       `INSERT INTO webhook_inbox (provider,event_id,payload,status,received_at)

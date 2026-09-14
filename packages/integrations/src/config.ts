@@ -1,10 +1,11 @@
-import { DomainError } from "@ofd/domain";
+import { assertEncryptionKey, DomainError } from "@ofd/domain";
 
 export interface ProviderConfig {
-  appMode: "demo" | "production" | "test";
-  providerMode: "mock" | "production";
-  storageMode: "mock" | "s3";
-  emailProvider: "mock" | "smtp";
+  appMode: "demo" | "production" | "test" | "local";
+  providerMode: "mock" | "production" | "disabled";
+  odaSettlementOnly?: boolean;
+  storageMode: "mock" | "s3" | "postgres";
+  emailProvider: "mock" | "smtp" | "disabled";
   taxInvoiceEnabled: boolean;
   bankSyncEnabled: boolean;
   smsEnabled: boolean;
@@ -42,24 +43,31 @@ function boundedInteger(value: string | undefined, fallback: number, min: number
 }
 
 export function readProviderConfig(env: NodeJS.ProcessEnv = process.env): ProviderConfig {
-  const providerMode = env.PROVIDER_MODE === "production" ? "production" : "mock";
-  if (env.APP_MODE && !new Set(["demo", "test", "production"]).has(env.APP_MODE)) {
-    throw new DomainError("INVALID_APP_MODE", "APP_MODE는 demo, test, production 중 하나여야 합니다.", 503);
+  const odaSettlementOnly = env.ODA_SETTLEMENT_ONLY === "true";
+  if (odaSettlementOnly) assertOdaSettlementConfig(env);
+  if (!odaSettlementOnly && (env.PROVIDER_MODE === "disabled" || env.STORAGE_MODE === "postgres" || env.EMAIL_PROVIDER === "disabled")) {
+    throw new DomainError("ODA_PROFILE_REQUIRED", "DB 증빙·외부 처리 비활성화는 명시된 ODA 월정산 전용 운영 프로필에서만 사용할 수 있습니다.", 503);
   }
-  if (env.NODE_ENV === "production" && env.APP_MODE !== "production") {
+  const providerMode = odaSettlementOnly ? "disabled" : env.PROVIDER_MODE === "production" ? "production" : "mock";
+  if (env.APP_MODE && !new Set(["demo", "test", "production", "local"]).has(env.APP_MODE)) {
+    throw new DomainError("INVALID_APP_MODE", "APP_MODE는 demo, test, production, local 중 하나여야 합니다.", 503);
+  }
+  if (env.APP_MODE === "local") assertOdaLocalConfig(env);
+  if (env.NODE_ENV === "production" && env.APP_MODE !== "production" && env.APP_MODE !== "local") {
     throw new DomainError("APP_MODE_FAIL_CLOSED", "NODE_ENV=production에서는 APP_MODE=production을 명시해야 합니다.", 503);
   }
-  const appMode = env.APP_MODE === "production" ? "production" : env.APP_MODE === "test" ? "test" : "demo";
-  const storageMode = env.STORAGE_MODE === "s3" ? "s3" : "mock";
-  const emailProvider = env.EMAIL_PROVIDER === "smtp" ? "smtp" : "mock";
-  if (appMode === "production" && storageMode !== "s3") throw new DomainError("STORAGE_FAIL_CLOSED", "production에서는 STORAGE_MODE=s3가 필요합니다.", 503);
-  if (appMode === "production" && emailProvider !== "smtp") throw new DomainError("EMAIL_FAIL_CLOSED", "production에서는 EMAIL_PROVIDER=smtp가 필요합니다.", 503);
+  const appMode: ProviderConfig["appMode"] = env.APP_MODE === "local" ? "local" : env.APP_MODE === "production" ? "production" : env.APP_MODE === "test" ? "test" : "demo";
+  const storageMode = odaSettlementOnly ? "postgres" : env.STORAGE_MODE === "s3" ? "s3" : "mock";
+  const emailProvider = odaSettlementOnly ? "disabled" : env.EMAIL_PROVIDER === "smtp" ? "smtp" : "mock";
+  if (appMode === "production" && !odaSettlementOnly && storageMode !== "s3") throw new DomainError("STORAGE_FAIL_CLOSED", "production에서는 STORAGE_MODE=s3가 필요합니다.", 503);
+  if (appMode === "production" && !odaSettlementOnly && emailProvider !== "smtp") throw new DomainError("EMAIL_FAIL_CLOSED", "production에서는 EMAIL_PROVIDER=smtp가 필요합니다.", 503);
   const uploadMaxBytes = Number(env.UPLOAD_MAX_BYTES ?? 10 * 1024 * 1024);
   if (!Number.isSafeInteger(uploadMaxBytes) || uploadMaxBytes < 1 || uploadMaxBytes > 25 * 1024 * 1024) {
     throw new DomainError("INVALID_UPLOAD_LIMIT", "UPLOAD_MAX_BYTES는 1~25MB 범위의 정수여야 합니다.", 503);
   }
   const config: ProviderConfig = {
     appMode,
+    odaSettlementOnly,
     providerMode,
     storageMode,
     emailProvider,
@@ -128,4 +136,57 @@ export function assertProviderSafety(config: ProviderConfig): void {
       { missing },
     );
   }
+}
+
+/** Local ODA has durable data and real authentication, but no network service providers. */
+export const ODA_LOCAL_ORIGIN = "http://127.0.0.1:4175";
+export function assertOdaLocalConfig(env: NodeJS.ProcessEnv): void {
+  if (env.WORKSTATION_BRAND !== "oda" || env.REPOSITORY_MODE !== "postgres" || env.ODA_LOCAL_ENABLED !== "true") {
+    throw new DomainError("LOCAL_CONFIG_REQUIRED", "local 모드는 ODA 전용 PostgreSQL 및 ODA_LOCAL_ENABLED=true 설정이 필요합니다.", 503);
+  }
+  if (env.WEB_ORIGIN !== ODA_LOCAL_ORIGIN || env.PUBLIC_APP_URL !== ODA_LOCAL_ORIGIN) {
+    throw new DomainError("LOCAL_ORIGIN_REQUIRED", `local 접속 주소는 ${ODA_LOCAL_ORIGIN}이어야 합니다.`, 503);
+  }
+  if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) {
+    throw new DomainError("SESSION_CONFIG_ERROR", "local SESSION_SECRET은 고정된 32자 이상 비밀값이어야 합니다.", 503);
+  }
+  assertEncryptionKey(env.ENCRYPTION_KEY ?? "");
+  if (env.PROVIDER_MODE && env.PROVIDER_MODE !== "mock" || env.STORAGE_MODE && env.STORAGE_MODE !== "mock"
+    || env.EMAIL_PROVIDER && env.EMAIL_PROVIDER !== "mock"
+    || ["POPBILL_PRODUCTION_ENABLED", "POPBILL_TAX_INVOICE_ENABLED", "POPBILL_BANK_SYNC_ENABLED", "POPBILL_SMS_ENABLED"]
+      .some((key) => env[key] === "true")) {
+    throw new DomainError("LOCAL_EXTERNAL_DISABLED", "local 모드에서는 외부 발행·송금·알림 공급자를 사용할 수 없습니다.", 503);
+  }
+}
+
+/** A real, restricted production product. No mock provider or public local mode is used. */
+export function assertOdaSettlementConfig(env: NodeJS.ProcessEnv): void {
+  if (env.NODE_ENV !== "production" || env.APP_MODE !== "production" || env.WORKSTATION_BRAND !== "oda"
+    || env.REPOSITORY_MODE !== "postgres" || env.ODA_SETTLEMENT_ONLY !== "true") {
+    throw new DomainError("ODA_PROFILE_REQUIRED", "ODA 월정산 전용 운영은 production·ODA·PostgreSQL 명시 설정이 필요합니다.", 503);
+  }
+  if (env.PROVIDER_MODE !== "disabled" || env.STORAGE_MODE !== "postgres" || env.EMAIL_PROVIDER !== "disabled"
+    || ["POPBILL_PRODUCTION_ENABLED", "POPBILL_TAX_INVOICE_ENABLED", "POPBILL_BANK_SYNC_ENABLED", "POPBILL_SMS_ENABLED"]
+      .some(key => env[key] !== undefined && env[key] !== "false")) {
+    throw new DomainError("ODA_EXTERNAL_DISABLED", "ODA 월정산 전용 운영은 DB 증빙 저장과 외부 발행·메일·동기화 비활성화가 필요합니다.", 503);
+  }
+  if (env.SERVICE_ROLE === "worker") assertWorkerProfile({ odaSettlementOnly: true });
+  let database: URL;
+  let origin: URL;
+  try { database = new URL(env.DATABASE_URL ?? ""); origin = new URL(env.WEB_ORIGIN ?? ""); }
+  catch { throw new DomainError("ODA_CONFIG_REQUIRED", "ODA PostgreSQL 연결과 HTTPS 접속 주소가 필요합니다.", 503); }
+  if (!["postgres:", "postgresql:"].includes(database.protocol) || !database.hostname || !database.pathname.slice(1)
+    || origin.protocol !== "https:" || origin.origin !== env.WEB_ORIGIN || env.PUBLIC_APP_URL !== origin.origin
+    || env.SESSION_COOKIE_SECURE !== "true") {
+    throw new DomainError("ODA_CONFIG_REQUIRED", "ODA는 PostgreSQL·단일 HTTPS 주소·보안 쿠키를 요구합니다.", 503);
+  }
+  if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) {
+    throw new DomainError("SESSION_CONFIG_ERROR", "ODA 운영 SESSION_SECRET은 고정된 32자 이상 비밀값이어야 합니다.", 503);
+  }
+  assertEncryptionKey(env.ENCRYPTION_KEY ?? "");
+}
+
+/** Refuse a scheduler before creating providers, DB pools, heartbeats or jobs. */
+export function assertWorkerProfile(config: Pick<ProviderConfig, "odaSettlementOnly">): void {
+  if (config.odaSettlementOnly) throw new DomainError("ODA_WORKER_DISABLED", "ODA 월정산 전용 운영은 외부 작업 worker를 실행하지 않습니다.", 503);
 }

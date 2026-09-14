@@ -1,3 +1,4 @@
+import { isOdaBrand } from '../lib/brand';
 import type { AdminActorSummary, BankMatch, BankTransactionItem, BootstrapData, Delivery, DocumentItem, Invoice, ManualMatchCandidate, ModificationReasonCode, Order, PaymentRequestItem, PaymentRequestStatus, Product, ProvisionableActorRole, PublicActor, SettlementItem, SettlementStatus , MonthlySettlementSummary } from '../types';
 
 export type BootstrapResult = { data: BootstrapData; source: 'live' };
@@ -367,6 +368,7 @@ export function normalizeBootstrap(input: unknown): BootstrapData {
     routeDates,
     meta: {
       apiVersion: text(meta.apiVersion, 'v2'), appMode: text(meta.appMode), providerMode: text(meta.providerMode), externalIssueEnabled: Boolean(meta.externalIssueEnabled),
+      ...(typeof meta.odaSettlementOnly === 'boolean' ? { odaSettlementOnly: meta.odaSettlementOnly } : {}),
       ...(text(meta.operationalDate) ? { operationalDate: text(meta.operationalDate) } : {}),
       ...(text(meta.timeZone) ? { timeZone: text(meta.timeZone) } : {}),
     },
@@ -380,7 +382,10 @@ function actorName(actors: Dict[], id: string) { return text(actors.find((actor)
 function formatPeriod(value: string) { const match = value.match(/^(\d{4})-(\d{2})/); return match ? `${match[1]}년 ${Number(match[2])}월` : '정산 기간'; }
 function formatApiDate(value: string) { if (!value) return '시간 미상'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date); }
 
-export function isAllowedApiAppMode(appMode: string, devMode = !import.meta.env.PROD, allowTestApi = import.meta.env.VITE_ALLOW_TEST_API === 'true') {
+export function isAllowedApiAppMode(appMode: string, devMode = !import.meta.env.PROD,
+  allowTestApi = import.meta.env.VITE_ALLOW_TEST_API === 'true',
+  odaBuild = isOdaBrand, origin = window.location.origin) {
+  if (appMode === 'local') return odaBuild && origin === 'http://127.0.0.1:4175';
   return appMode === 'production' || (devMode && allowTestApi && appMode === 'test');
 }
 

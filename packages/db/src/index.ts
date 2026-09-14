@@ -1,3 +1,5 @@
+export * from "./oda-demo-seed.ts";
+import { createOdaDemoRepository } from "./oda-demo-seed.ts";
 export * from "./demo-seed.ts";
 export * from "./claims.ts";
 export * from "./memory-repository.ts";
@@ -15,6 +17,9 @@ export function createRepository(env: NodeJS.ProcessEnv = process.env): StateRep
   if (requestedMode && requestedMode !== "memory" && requestedMode !== "postgres") {
     throw new DomainError("INVALID_REPOSITORY_MODE", "REPOSITORY_MODE must be memory or postgres", 503);
   }
+  if (env.APP_MODE === "local" && (requestedMode !== "postgres" || env.WORKSTATION_BRAND !== "oda" || env.ODA_LOCAL_ENABLED !== "true")) {
+    throw new DomainError("REPOSITORY_FAIL_CLOSED", "Local ODA requires an explicitly enabled PostgreSQL repository", 503);
+  }
   if (env.APP_MODE === "production" && requestedMode === "memory") {
     throw new DomainError("REPOSITORY_FAIL_CLOSED", "Production requires the PostgreSQL repository", 503);
   }
@@ -22,7 +27,7 @@ export function createRepository(env: NodeJS.ProcessEnv = process.env): StateRep
   if (usePostgres && !env.DATABASE_URL) {
     throw new DomainError("DATABASE_URL_REQUIRED", "DATABASE_URL is required for the PostgreSQL repository", 503);
   }
-  if (!usePostgres) return createDemoRepository();
+  if (!usePostgres) return env.WORKSTATION_BRAND === "oda" ? createOdaDemoRepository() : createDemoRepository();
   return PostgresRepository.connect(env.DATABASE_URL!, env);
 }
 

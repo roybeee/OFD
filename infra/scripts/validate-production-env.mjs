@@ -24,17 +24,41 @@ function rejectPlaceholder(errors, env, name) {
   }
 }
 
+/** Explicit ODA-only product contract; all generic production protections still run. */
+export function validateOdaSettlementProfile(env) {
+  const errors = [];
+  for (const [key, value] of Object.entries({ ODA_SETTLEMENT_ONLY: 'true', NODE_ENV: 'production',
+    APP_MODE: 'production', WORKSTATION_BRAND: 'oda', REPOSITORY_MODE: 'postgres',
+    PROVIDER_MODE: 'disabled', STORAGE_MODE: 'postgres', EMAIL_PROVIDER: 'disabled', SESSION_COOKIE_SECURE: 'true' })) {
+    if (env[key] !== value) errors.push(`ODA settlement profile requires ${key}=${value}`);
+  }
+  for (const key of ['POPBILL_PRODUCTION_ENABLED', 'POPBILL_TAX_INVOICE_ENABLED', 'POPBILL_BANK_SYNC_ENABLED', 'POPBILL_SMS_ENABLED']) {
+    if (env[key] !== undefined && env[key] !== 'false') errors.push(`ODA settlement profile requires ${key}=false`);
+  }
+  if (env.SERVICE_ROLE === 'worker') errors.push('ODA settlement profile does not support a worker');
+  try {
+    const origin = new URL(env.WEB_ORIGIN);
+    if (origin.protocol !== 'https:' || origin.origin !== env.WEB_ORIGIN || env.PUBLIC_APP_URL !== origin.origin) throw new Error();
+  } catch { errors.push('ODA settlement profile requires one exact HTTPS WEB_ORIGIN and PUBLIC_APP_URL'); }
+  return errors;
+}
+
 export function validateProductionEnv(env) {
   const errors = [];
+  const odaOnly = env.ODA_SETTLEMENT_ONLY === 'true';
+  if (odaOnly) errors.push(...validateOdaSettlementProfile(env));
   if (env.NODE_ENV !== 'production') return errors;
 
+  if (!odaOnly && (env.PROVIDER_MODE === 'disabled' || env.STORAGE_MODE === 'postgres' || env.EMAIL_PROVIDER === 'disabled')) {
+    errors.push('ODA_SETTLEMENT_ONLY=true is required for the restricted ODA production profile');
+  }
   if (env.APP_MODE !== 'production') {
     errors.push('APP_MODE must be production when NODE_ENV=production');
   }
-  if (env.STORAGE_MODE !== 's3') {
+  if (!odaOnly && env.STORAGE_MODE !== 's3') {
     errors.push('STORAGE_MODE must be s3 when NODE_ENV=production');
   }
-  if (env.EMAIL_PROVIDER !== 'smtp') {
+  if (!odaOnly && env.EMAIL_PROVIDER !== 'smtp') {
     errors.push('EMAIL_PROVIDER must be smtp when NODE_ENV=production');
   }
 
@@ -44,14 +68,10 @@ export function validateProductionEnv(env) {
     'ENCRYPTION_KEY',
     'PUBLIC_APP_URL',
     'WEB_ORIGIN',
-    'S3_REGION',
-    'S3_BUCKET',
-    'S3_KMS_KEY_ID',
-    'SMTP_HOST',
-    'EMAIL_FROM'
+    ...(!odaOnly ? ['S3_REGION', 'S3_BUCKET', 'S3_KMS_KEY_ID', 'SMTP_HOST', 'EMAIL_FROM'] : [])
   ], 'production');
 
-  if (String(env.S3_ENDPOINT ?? '').trim()) {
+  if (!odaOnly && String(env.S3_ENDPOINT ?? '').trim()) {
     required(errors, env, ['S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'], 'S3-compatible endpoint');
   }
 

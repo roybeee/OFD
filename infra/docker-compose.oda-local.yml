@@ -1,0 +1,94 @@
+name: oda-workstation-local
+
+# This is a single-computer installation. Never publish API or PostgreSQL ports.
+# The launcher supplies an explicit generated env file; OFD .env is not read.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: oda_local
+      POSTGRES_USER: oda_local
+      POSTGRES_PASSWORD: ${ODA_LOCAL_DATABASE_PASSWORD:?Run Start-ODA.command first}
+    volumes:
+      - oda_local_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oda_local -d oda_local"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    networks: [oda_local]
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "-ec", "node packages/db/dist/migrate.js; exec node apps/api/dist/server.js"]
+    environment:
+      NODE_ENV: production
+      APP_MODE: local
+      WORKSTATION_BRAND: oda
+      ODA_LOCAL_ENABLED: "true"
+      REPOSITORY_MODE: postgres
+      SERVICE_ROLE: api
+      API_HOST: 0.0.0.0
+      API_PORT: "4100"
+      DATABASE_URL: postgresql://oda_local:${ODA_LOCAL_DATABASE_PASSWORD:?Local database password required}@postgres:5432/oda_local
+      SESSION_SECRET: ${ODA_LOCAL_SESSION_SECRET:?Local session secret required}
+      ENCRYPTION_KEY: ${ODA_LOCAL_ENCRYPTION_KEY:?Local encryption key required}
+      ODA_SETUP_TOKEN: ${ODA_LOCAL_SETUP_TOKEN:?Local setup token required}
+      PUBLIC_APP_URL: http://127.0.0.1:4175
+      WEB_ORIGIN: http://127.0.0.1:4175
+      SESSION_COOKIE_SECURE: "false"
+      STORAGE_MODE: mock
+      EMAIL_PROVIDER: mock
+      PROVIDER_MODE: mock
+      POPBILL_PRODUCTION_ENABLED: "false"
+      POPBILL_TAX_INVOICE_ENABLED: "false"
+      POPBILL_BANK_SYNC_ENABLED: "false"
+      POPBILL_SMS_ENABLED: "false"
+      LOG_LEVEL: warn
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [oda_local]
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/oda-web.Dockerfile
+      args:
+        VITE_ODA_LOCAL: "true"
+        NGINX_TEMPLATE: infra/nginx/oda-local.conf.template
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_UPSTREAM_HOSTPORT: api:4100
+      PORT: "10000"
+    ports:
+      - "127.0.0.1:4175:10000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:10000/readyz >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 6s
+      retries: 30
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    networks: [oda_local]
+
+networks:
+  oda_local:
+    internal: true
+
+volumes:
+  oda_local_postgres:

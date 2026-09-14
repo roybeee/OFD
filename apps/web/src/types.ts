@@ -4,6 +4,7 @@ export type ProviderMeta = {
   appMode: string;
   providerMode: 'disabled' | 'production' | string;
   externalIssueEnabled: boolean;
+  odaSettlementOnly?: boolean;
   operationalDate?: string;
   timeZone?: string;
 };

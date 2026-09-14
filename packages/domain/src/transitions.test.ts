@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertInvoiceApprovalSegregation, assertInvoiceTransition, assertOrderTransition, assertShipmentTransition } from "./transitions.ts";
+import { assertInvoiceApprovalSegregation, assertInvoiceTransition, assertOrderTransition, assertShipmentTransition, assertStoreScope } from "./transitions.ts";
+import type { Actor } from "./types.ts";
 import { popbillManagementKey } from "./policies.ts";
 
 test("주문은 점주 제출 후 본사 승인을 거친다", () => {
@@ -33,4 +34,11 @@ test("검토자와 MFA 승인자는 서로 달라야 한다", () => {
   assert.throws(() => assertInvoiceApprovalSegregation("master-1", {
     id: "master-1", name: "마스터", role: "hq_master", storeIds: [], active: true, authVersion: 1, mfaVerified: true, mfaVerifiedAt: new Date().toISOString(),
   }), /서로 달라야/);
+});
+
+test("매장이 배정된 재무는 해당 매장만 접근하고 전체 본사 재무는 기존 범위를 유지한다", () => {
+  const partner: Actor = { id: "partner-b", name: "지원 파트너 B", role: "hq_finance", storeIds: ["oda-1"], active: true, authVersion: 1 };
+  assert.doesNotThrow(() => assertStoreScope(partner, "oda-1"));
+  assert.throws(() => assertStoreScope(partner, "oda-2"), { code: "STORE_SCOPE_DENIED" });
+  assert.doesNotThrow(() => assertStoreScope({ ...partner, storeIds: [] }, "oda-2"));
 });

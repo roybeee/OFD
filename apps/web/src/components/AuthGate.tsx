@@ -1,3 +1,4 @@
+import { isOdaBrand, workstationName, brandCode } from '../lib/brand';
 import { useEffect, useRef, useState, type FormEvent, type SyntheticEvent } from 'react';
 import { ApiError, loginV2 } from '../api/client';
 import type { PublicActor } from '../types';
@@ -30,8 +31,8 @@ function introVideoSrc() {
   return portrait ? INTRO_VIDEO_PORTRAIT_SRC : INTRO_VIDEO_SRC;
 }
 
-const SAVED_EMAIL_KEY = 'ofd.login.saved-email';
-const AUTO_LOGIN_KEY = 'ofd.login.auto-login';
+const SAVED_EMAIL_KEY = `${brandCode}.login.saved-email`;
+const AUTO_LOGIN_KEY = `${brandCode}.login.auto-login`;
 
 /* localStorage는 프라이빗 모드 등에서 접근 자체가 던질 수 있어 항상 감싼다. 비밀번호는 절대 저장하지 않는다. */
 function readLoginPrefs() {
@@ -66,7 +67,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
   const [error, setError] = useState('');
   const emailRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [introDone, setIntroDone] = useState(prefersReducedMotion);
+  const [introDone, setIntroDone] = useState(() => isOdaBrand || prefersReducedMotion());
   const [introSrc] = useState(introVideoSrc);
   /* 재생이 실제로 시작되기 전에는 영상을 숨긴다 — 인앱 브라우저(카카오톡 등)가
      일시정지 상태에서 그리는 기본 재생 버튼 오버레이가 잠깐 노출되는 것을 막는다. */
@@ -116,10 +117,11 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
 
   return (
     <main className="auth-screen auth-screen-intro" id="main-content">
-      <video ref={videoRef} className={`auth-intro-video${introPlaying ? ' playing' : ''}`} src={introSrc}
+      {!isOdaBrand && <video ref={videoRef} className={`auth-intro-video${introPlaying ? ' playing' : ''}`} src={introSrc}
         muted playsInline autoPlay preload="auto" aria-hidden="true" tabIndex={-1}
         onPlaying={() => setIntroPlaying(true)} onTimeUpdate={handleIntroProgress}
         onEnded={() => setIntroDone(true)} onError={() => setIntroDone(true)} />
+      }
       <div className={`auth-intro-dim${introDone ? ' visible' : ''}`} aria-hidden="true" />
       {!introDone && (
         <button type="button" className="auth-intro-skip" onClick={() => setIntroDone(true)}>건너뛰고 로그인</button>
@@ -127,9 +129,10 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
       {introDone && (
         <section className="auth-card auth-card-reveal" aria-labelledby="auth-title">
           <span className="auth-symbol" aria-hidden="true"><LockKeyhole size={28} /></span>
-          <p className="eyebrow"><span /> SECURE OFD WORKSPACE</p>
-          <h1 id="auth-title">OFD 워크스테이션 로그인</h1>
-          <p>점주·매장 직원·배송기사·본사 담당자 계정으로 로그인해 주세요.</p>
+          <p className="eyebrow"><span /> {isOdaBrand ? "ODA PIZZERIA" : "SECURE OFD WORKSPACE"}</p>
+          <h1 id="auth-title">{workstationName} 로그인</h1>
+          <p>{isOdaBrand ? "매장 운영자 A·운영 지원자 B·관리자 계정으로 로그인해 주세요." : "점주·매장 직원·배송기사·본사 담당자 계정으로 로그인해 주세요."}</p>
+          {isOdaBrand && window.location.origin === 'http://127.0.0.1:4175' && <p className="oda-local-login-note">이 컴퓨터에 저장 · 외부 공유 안 됨</p>}
 
           <form onSubmit={submitLogin} noValidate>
             <label htmlFor="login-email">이메일
@@ -157,7 +160,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
               </label>
             </div>
           </form>
-          <small>비밀번호는 OFD 운영 담당자도 확인할 수 없습니다.</small>
+          <small>비밀번호는 운영 담당자도 확인할 수 없습니다.</small>
         </section>
       )}
     </main>

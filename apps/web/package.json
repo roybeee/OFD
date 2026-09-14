@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev:oda": "vite --mode oda --host 127.0.0.1",
+    "build:oda": "tsc --noEmit -p tsconfig.json && vite build --mode oda"
   },
   "dependencies": {
     "react": "19.2.5",

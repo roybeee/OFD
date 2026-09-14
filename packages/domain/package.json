@@ -5,11 +5,19 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test src/*.test.ts",
+    "test": "node --import tsx --test src/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "devDependencies": { "tsx": "^4.20.3" }
+  "devDependencies": {
+    "tsx": "^4.20.3"
+  }
 }

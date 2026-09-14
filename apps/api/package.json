@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@fastify/cors": "^11.1.0",
     "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.1.0",
     "@ofd/db": "2.0.0",
     "@ofd/domain": "2.0.0",
     "@ofd/integrations": "2.0.0",
+    "exceljs": "^4.4.0",
     "fastify": "^5.5.0",
     "zod": "^4.0.14"
   },
@@ -17,8 +18,8 @@
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-    ,"bootstrap-admin": "tsx src/bootstrap-admin.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "bootstrap-admin": "tsx src/bootstrap-admin.ts"
   },
   "devDependencies": {
     "tsx": "^4.20.3",

@@ -16,6 +16,7 @@ import { LockKeyhole, RefreshCcw, ShieldCheck, UserRound, UserRoundPlus, X } fro
 import { useAccessibleDialog } from '../components/useAccessibleDialog';
 import { Button } from '../components/ui';
 import type { AdminActorSummary, BootstrapData, ProvisionableActorRole } from '../types';
+import { isOdaBrand } from '../lib/brand';
 
 const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|');
 
@@ -26,11 +27,12 @@ const roles: Array<{ value: ProvisionableActorRole; label: string }> = [
   { value: 'store_staff', label: '매장 직원' },
   { value: 'driver', label: '배송기사' },
   { value: 'hq_ops', label: '본사 운영' },
-  { value: 'hq_finance', label: '본사 재무' },
+  { value: 'hq_finance', label: isOdaBrand ? '지원 파트너 B (재무)' : '본사 재무' },
   { value: 'hq_master', label: '본사 최고관리자' },
   { value: 'auditor', label: '감사자' },
 ];
 const storeRoles = new Set<ProvisionableActorRole>(['store_owner', 'store_staff']);
+const requiresStoreAssignment = (role: ProvisionableActorRole) => storeRoles.has(role) || (isOdaBrand && role === 'hq_finance');
 const hqRoles = new Set<ProvisionableActorRole>(['hq_ops', 'hq_finance', 'hq_master', 'auditor']);
 
 function roleLabel(role: string) {
@@ -46,6 +48,8 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   notify: Notify;
   onCurrentSessionRevoked?: () => void;
 }) {
+  const local = isOdaBrand && data.meta.appMode === 'local';
+  const settlementAccounts = local || (isOdaBrand && data.meta.appMode === 'production' && data.meta.odaSettlementOnly === true);
   const [actors, setActors] = useState<AdminActorSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -64,7 +68,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
     setLoading(true);
     setLoadError('');
     try {
-      const [result, accessResult] = await Promise.all([listActorAccountsV2(), loadAccessSettingsV2()]);
+      const [result, accessResult] = await Promise.all([listActorAccountsV2(), settlementAccounts ? Promise.resolve(null) : loadAccessSettingsV2()]);
       setActors(result.actors);
       setAccess(accessResult);
     } catch (error) {
@@ -75,19 +79,20 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   }
 
   async function refreshAccess() {
+    if (settlementAccounts) return;
     try { setAccess(await loadAccessSettingsV2()); } catch { /* 목록만 유지 */ }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [settlementAccounts]);
 
-  const storesRequired = storeRoles.has(role);
+  const storesRequired = requiresStoreAssignment(role);
   const canSubmit = name.trim().length >= 2 && email.trim() && password.length >= 10
     && (!storesRequired || storeIds.length > 0);
 
   function changeRole(nextRole: ProvisionableActorRole) {
     setRole(nextRole);
     setFormError('');
-    if (!storeRoles.has(nextRole)) setStoreIds([]);
+    if (!requiresStoreAssignment(nextRole)) setStoreIds([]);
   }
 
   function toggleStore(storeId: string) {
@@ -140,7 +145,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
   return (
     <main id="main-content" className="page page-hq accounts-page" tabIndex={-1}>
       <section className="page-heading hq-heading">
-        <div><p className="eyebrow"><span /> HQ IDENTITY</p><h1>계정 관리</h1><p>점주·매장 직원·배송기사·본사 계정을 안전하게 생성하고 관리합니다.</p></div>
+        <div><p className="eyebrow"><span /> HQ IDENTITY</p><h1>계정 관리</h1><p>{local ? "이 컴퓨터에서 사용하는 매장 운영자 A·지원자 B·관리자 계정을 관리합니다." : settlementAccounts ? "ODA 온라인 정산의 매장 운영자 A·지원자 B·관리자 계정을 관리합니다." : "점주·매장 직원·배송기사·본사 계정을 안전하게 생성하고 관리합니다."}</p></div>
         <div className="heading-tools"><Button variant="secondary" type="button" onClick={() => void load()} disabled={loading}><RefreshCcw size={17} /> 새로고침</Button></div>
       </section>
 
@@ -156,7 +161,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
           <form onSubmit={createAccount} noValidate>
             <label htmlFor="account-role">계정 유형
               <select id="account-role" value={role} onChange={(event) => changeRole(event.target.value as ProvisionableActorRole)}>
-                {roles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                {roles.filter((item) => !settlementAccounts || ['store_owner', 'hq_finance', 'hq_master', 'auditor'].includes(item.value)).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </label>
             <label htmlFor="account-name">이름
@@ -172,7 +177,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
             {storesRequired && (
               <fieldset className="store-assignment">
                 <legend>배정 매장 <span aria-hidden="true">*</span></legend>
-                <p>하나 이상의 운영 매장을 선택하세요.</p>
+                <p>{role === 'hq_finance' ? '계약상 지원하는 매장을 선택하세요. 선택한 매장의 정산만 확인·수정할 수 있습니다.' : '하나 이상의 운영 매장을 선택하세요.'}</p>
                 <div>{data.stores.map((store) => (
                   <label key={store.id} htmlFor={`account-store-${store.id}`}>
                     <input id={`account-store-${store.id}`} type="checkbox" checked={storeIds.includes(store.id)} onChange={() => toggleStore(store.id)} />
@@ -198,12 +203,12 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
                 return (
                 <li key={actor.id} className={!actor.active ? 'inactive' : ''}>
                   <span className="account-avatar" aria-hidden="true">{actor.name.slice(0, 1)}</span>
-                  <button type="button" className="account-identity account-open" aria-label={`${actor.name} 상세 설정`} onClick={() => setDetailTarget(actor)}>
+                  <button type="button" disabled={settlementAccounts} className="account-identity account-open" aria-label={`${actor.name} 상세 설정`} onClick={() => setDetailTarget(actor)}>
                     <strong>{actor.name}</strong><span>{actor.email}</span><small>{actor.storeIds.map((id) => data.stores.find((store) => store.id === id)?.name ?? id).join(', ') || '매장 배정 없음'}</small>
                   </button>
                   <div className="account-security"><span className={`account-status ${actor.active ? 'active' : 'inactive'}`}>{actor.active ? '활성' : '비활성'}</span><small>{roleLabel(actor.role)}{custom ? ' · 개별 페이지' : ''}</small>{actor.lockedUntil && <em>로그인 잠김</em>}</div>
                   <div className="account-actions">
-                    <Button type="button" variant="secondary" aria-label={`${actor.name} 상세 설정 열기`} onClick={() => setDetailTarget(actor)}>상세 설정</Button>
+                    {!settlementAccounts && <Button type="button" variant="secondary" aria-label={`${actor.name} 상세 설정 열기`} onClick={() => setDetailTarget(actor)}>상세 설정</Button>}
                     <Button type="button" variant="secondary" aria-label={`${actor.name} 비밀번호 재설정`} onClick={() => setResetTarget(actor)}>비밀번호 재설정</Button>
                     <Button type="button" variant="danger" aria-label={`${actor.name} 계정 비활성화`} disabled={!actor.active || actor.id === data.actor.id} onClick={() => void deactivate(actor)}>비활성화</Button>
                   </div>
@@ -215,7 +220,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
         </section>
       </div>
 
-      {access && <RolePagesPanel access={access} notify={notify} onSaved={refreshAccess} />}
+      {!settlementAccounts && access && <RolePagesPanel access={access} notify={notify} onSaved={refreshAccess} />}
 
       <ChangeMyPasswordPanel notify={notify} onChanged={onCurrentSessionRevoked} />
 
@@ -226,7 +231,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
         if (updated.id === data.actor.id) onCurrentSessionRevoked?.();
         else notify(`${updated.name} 자격정보를 재설정했습니다.`, 'success');
       }} />}
-      {detailTarget && access && <AccountDetailDialog actor={detailTarget} access={access} data={data} notify={notify}
+      {!settlementAccounts && detailTarget && access && <AccountDetailDialog actor={detailTarget} access={access} data={data} notify={notify}
         onClose={() => setDetailTarget(null)}
         onReset={() => { setResetTarget(detailTarget); setDetailTarget(null); }}
         onDeactivate={() => { void deactivate(detailTarget); setDetailTarget(null); }}
@@ -414,7 +419,7 @@ function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, on
   const [busy, setBusy] = useState(false);
   const [nextRole, setNextRole] = useState<ProvisionableActorRole>(actor.role as ProvisionableActorRole);
   const [nextStoreIds, setNextStoreIds] = useState<string[]>(actor.storeIds);
-  const roleStoresRequired = storeRoles.has(nextRole);
+  const roleStoresRequired = requiresStoreAssignment(nextRole);
   const roleDirty = nextRole !== actor.role || !sameSet(nextStoreIds, actor.storeIds);
   const roleSavable = roleDirty && (!roleStoresRequired || nextStoreIds.length > 0) && actor.id !== data.actor.id;
 
@@ -469,7 +474,7 @@ function AccountDetailDialog({ actor, access, data, notify, onClose, onReset, on
               onChange={(event) => {
                 const value = event.target.value as ProvisionableActorRole;
                 setNextRole(value);
-                if (!storeRoles.has(value)) setNextStoreIds([]);
+                if (!requiresStoreAssignment(value)) setNextStoreIds([]);
               }}>
               {roles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
