@@ -1,16 +1,18 @@
 # ODA 워크스테이션 · 월 손익·정산
 
-OFD 기반 ODA 1차 개발 브랜치입니다. 계약 기반 월 손익, 증빙 업로드, 이익배분, 정산 확정과 지급 기록을 추가했습니다. 후속 개발로 최초 등록 화면, 로컬 영구 저장 실행 구성, 엑셀 정산서 출력을 포함합니다.
+OFD 기반 ODA 월 정산 서비스입니다. 계약 기반 월 손익, 증빙 업로드, 이익배분, 정산 확정·지급 기록, 엑셀 정산서를 제공합니다. 공용 PostgreSQL 호스트에서 OFD와 ODA의 데이터베이스·운영 계정을 분리하며, 온라인 최초 등록 화면에서 실제 매장과 관리자·A·B 계정을 입력합니다.
 
+- 온라인 주소: [ODA 워크스테이션](https://oda-web-wpts.onrender.com). 웹/API 배포와 외부 접속 확인을 완료했습니다. [운영 배포 기록](docs/oda-shared-deployment.md)
+- 온라인 첫 설정: Render의 `oda-production-secrets` 그룹에 보관된 `ODA_SETUP_TOKEN`을 첫 설정 화면에 입력합니다. 키 값과 실제 사업자·계정 정보는 소스에 저장하지 않습니다. [최초 등록 안내](docs/oda-phase1.md#oda-첫-매장과-ab-계정-등록)
 - Mac 로컬 실행: Docker Desktop 준비 후 `Start-ODA.command`. [실행·종료·백업 안내](docs/oda-local.md)
 - 개발용 실행: `npm ci` 후 `npm run dev:oda` (테스트 전용 메모리 모드)
 - 운영 빌드: `npm run build:oda`
 - [매장 사용 흐름·계약 적용·배포](docs/oda-phase1.md)
 - [OFD·ODA 서버 자원 공용 검토](docs/oda-shared-hosting-review.md)
-- ODA 전용 인프라: `render.oda.yaml`
-- 기존 PostgreSQL 호스트 공용 배포안: `render.oda.shared.yaml`. [DB·계정 분리와 배포 절차](docs/oda-shared-deployment.md)
+- 현재 온라인 구성: `render.oda.shared.yaml` — ODA 전용 DB·운영 계정과 웹/API를 사용합니다. 정산 원본은 ODA DB에 저장하며 별도 ODA worker와 외부 발행·메일 공급자는 사용하지 않습니다.
+- 독립 인프라 대안: `render.oda.yaml`. [DB·계정 분리와 배포 절차](docs/oda-shared-deployment.md)
 
-빌드·자동 테스트 485개 통과. 실제 PostgreSQL 연결 테스트 2개는 DB 부재로 미실행했습니다. Docker 컨테이너·실제 브라우저 최종 검증과 온라인 배포는 완료하지 않았습니다. 이 저장소를 배포 완료된 서비스로 표현하지 않습니다.
+배포 브랜치 `agent/oda-workstation-release`를 GitHub에 업로드했습니다. 앱 커밋 `60ea2ec`의 [V2 검사 실행 34900598013](https://github.com/roybeee/OFD/actions/runs/34900598013)에서 자동 테스트 514개 통과·ODA 네이티브 통합 검사 1개 건너뛰기, 실제 PostgreSQL smoke, 브라우저 안전 검사 3개·매장 흐름 검사 3개 통과를 확인했습니다. 실제 서버에서도 OFD·ODA의 상대 DB 접근 거절(SQLSTATE 42501), OFD API·worker의 분리 계정 운영, ODA API의 마이그레이션 11개 적용과 live 상태를 확인했습니다. 웹을 포함한 최신 적용 결과와 남은 실기기 검증 범위는 [배포 기록](docs/oda-shared-deployment.md)과 [1차 검증 범위](docs/oda-phase1.md#이번-개발본-검증-범위)를 따릅니다.
 
 ---
 

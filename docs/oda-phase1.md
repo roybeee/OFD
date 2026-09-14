@@ -22,7 +22,9 @@ OFD V2의 React PWA, Fastify 로그인·역할 권한, PostgreSQL 저장소, 감
 
 ## 실행과 배포
 
-Mac에서 전용 PostgreSQL에 저장하는 로컬 실행 구성을 추가했다. Docker Desktop 준비 후 `Start-ODA.command`를 열면 최초 등록 화면에서 실제 사업자와 관리자·A·B 계정을 입력할 수 있다. 종료는 `Stop-ODA.command`, 백업은 `Backup-ODA.command`다. 자세한 전제조건과 범위는 [로컬 실행 안내](oda-local.md)를 따른다. 실제 Docker 기동·재시작·백업 복구의 최종 검증은 아직 완료하지 않았다.
+기본 사용 환경은 [온라인 ODA 워크스테이션](https://oda-web-wpts.onrender.com)이다. 현재 구성은 `render.oda.shared.yaml`이며, OFD와 같은 PostgreSQL 호스트에서 `oda_production` DB와 `oda_app` 운영 계정을 별도로 사용한다. 웹 최종 배포·접속 확인을 포함한 최신 운영 상태는 [공용 서버 배포 기록](oda-shared-deployment.md)을 따른다. 첫 설정 화면에 일회성 키와 실제 사업자·매장·관리자·A·B 정보를 등록한 뒤 각자 계정으로 로그인한다.
+
+Mac에서 전용 PostgreSQL에 저장하는 로컬 실행도 별도 선택할 수 있다. Docker Desktop 준비 후 `Start-ODA.command`를 열면 최초 등록 화면에서 실제 사업자와 관리자·A·B 계정을 입력할 수 있다. 종료는 `Stop-ODA.command`, 백업은 `Backup-ODA.command`다. 자세한 전제조건과 범위는 [로컬 실행 안내](oda-local.md)를 따른다. Mac 실기기의 Docker Desktop 기동·재시작·백업 복구 최종 검증은 아직 완료하지 않았다.
 
 아래 개발 명령은 로컬 저장 실행기와 별개인 메모리 테스트 모드다.
 
@@ -31,17 +33,17 @@ npm ci
 npm run dev:oda
 ```
 
-개발 화면은 `http://localhost:5173/store/oda-settlement`. 명확히 표시되는 테스트 모드이며 종료하면 초기화된다. 실제 매장 자료 입력용이 아니다. 운영 배포는 별도 PostgreSQL이 필수이며 메모리 저장·테스트 인증을 허용하지 않는다.
+개발 화면은 `http://localhost:5173/store/oda-settlement`. 명확히 표시되는 테스트 모드이며 종료하면 초기화된다. 실제 매장 자료 입력용이 아니다. 운영 배포는 ODA 전용 PostgreSQL 데이터베이스가 필수이며 메모리 저장·테스트 인증을 허용하지 않는다.
 
 ```bash
 npm run build:oda
 ```
 
-- ODA 전용 Render Blueprint: `render.oda.yaml`. 웹·API·worker·PostgreSQL을 OFD와 별도로 생성한다.
-- OFD와 인프라 자원을 공용으로 쓰는 대안은 [공용 운영 검토](oda-shared-hosting-review.md)를 참고한다. 현재 Blueprint는 독립 구성이고, 공용 DB 인스턴스에 ODA 전용 DB를 추가하는 안은 실사용량·접근 권한 검증 후 별도로 적용해야 한다.
-- 웹은 `infra/docker/oda-web.Dockerfile`, API·worker는 기존 검증된 컨테이너 구조를 사용한다.
-- 환경 설정/인증/백업/마이그레이션은 `docs/deployment-v2.md`를 따른다. 반드시 ODA 전용 DB, 저장소, 세션 키, 도메인을 지정한다. 기존 OFD DB를 연결하지 않는다.
-- 운영 환경에는 실제 A·B 계정을 등록하고 ODA 매장에 배정한다. 최초 사업자·매장·계정 등록은 아래 ODA 초기화 스크립트를 사용하고, 이후 계정 관리는 관리자 화면에서 진행한다.
+- 현재 공용 구성은 `render.oda.shared.yaml`이다. ODA 웹·API만 생성하며, 원본 증빙은 ODA DB에 보존한다. `ODA_SETTLEMENT_ONLY=true` 프로필은 외부 공급자·메일·worker를 비활성화하고 지원하지 않는 API를 차단한다.
+- PostgreSQL의 실제 역할 분리 검사 후 `ofd_app/ofd_postgres`와 `oda_app/oda_production`의 자기 DB 연결 및 상대 DB 연결 거절을 확인했다. 공용 호스트의 용량·장애까지 독립적인 것은 아니다. [공용 운영 검토](oda-shared-hosting-review.md)와 [적용 기록](oda-shared-deployment.md)을 참고한다.
+- 웹은 `infra/docker/oda-web.Dockerfile`, API는 `infra/docker/api.Dockerfile`을 사용한다. ODA 전용 세션·암호화 키와 HTTPS 주소를 설정한다.
+- 독립 인프라 대안 `render.oda.yaml`은 웹·API·worker·PostgreSQL을 별도로 구성하는 기존 전체 운영안이다. 현재 월 정산 전용 온라인 프로필과 구분하며, 전체 운영안의 공급자·저장소 요건은 `docs/deployment-v2.md`를 따른다.
+- 운영 환경에는 실제 A·B 계정을 등록하고 ODA 매장에 배정한다. 최초 사업자·매장·계정 등록은 온라인 첫 설정 화면을 사용하고, 이후 계정 관리는 관리자 화면에서 진행한다. 운영자용 CLI 대안은 아래에 별도로 안내한다.
 - 외부 POS·배달·은행 계정의 실시간 연결을 새로 완료한 것은 아니다. 1차의 입력 방법은 파일 업로드다. 실제 업체별 파일의 열 이름이 다르면 업로드 미리보기의 열 매핑을 사용한다.
 - 자동 이체·전자세금계산서 발급은 이 월 정산 기능에서 실행하지 않는다. 계산/증빙/확정/지급 기록을 제공한다.
 
@@ -51,7 +53,19 @@ npm run build:oda
 
 ### ODA 첫 매장과 A·B 계정 등록
 
-운영 마이그레이션 후 비어 있는 ODA 전용 DB에 `infra/oda-setup.example.json`을 복사하여 실제 본사·A 사업자 정보와 관리자/A/B의 이름·이메일을 입력한다. 계약서의 당사자란은 공란이므로 회사명·당사자를 앱이 추정하지 않는다. 개인정보가 들어간 실제 설정 파일은 Git에 저장하지 않는다.
+온라인 첫 설정 화면이 기본 등록 방법이다.
+
+1. 운영 관리자가 Render의 `oda-production-secrets` 환경그룹에서 `ODA_SETUP_TOKEN`을 확인하고, ODA 첫 설정 화면의 비밀번호 형태 입력란에 입력한다. 키 값은 문서·Git·채팅에 기록하지 않는다.
+2. 실제 매장 이름·코드·개점일, 운영 본부와 매장의 사업자 정보, 관리자·A·B의 이름·서로 다른 이메일·초기 비밀번호를 입력한다. 화면은 실제 값을 임의로 채우지 않는다.
+3. ODA 전용 온라인 저장 안내와 입력 내용을 확인한 뒤 등록한다. 서버는 설정 키·만료·정확한 HTTPS 출처·비어 있는 DB를 검사하고 동시 중복 등록을 막는다. 등록한 각 계정은 처음 로그인할 때 초기 비밀번호를 변경한다.
+
+현재 발급한 설정 키의 사용 기한은 **2026-09-16 21:48 UTC(한국 시간 9월 17일 06:48)**다. 키가 갱신되면 Render의 `ODA_SETUP_EXPIRES_AT`와 화면의 기한을 기준으로 한다. 만료되면 운영자가 새 키를 발급해야 하며, 이미 초기화한 DB에는 같은 키를 재사용할 수 없다. 초기 등록 완료 후 설정 키를 제거해도 기존 계정의 로그인과 서버 재시작은 정상 동작한다. 설정 키는 요청 헤더로만 전달하며, 설정 링크의 fragment로 받은 경우에도 화면이 즉시 주소에서 제거한다.
+
+계약서의 당사자란은 공란이므로 회사명·당사자를 앱이 추정하지 않는다. 실제 사업자·계정 정보는 사용자가 입력하며, 운영 서버에 가짜 매장·가짜 담당자를 생성하지 않는다.
+
+#### 운영자용 CLI 대안
+
+온라인 화면을 대신해 운영자가 직접 초기화해야 할 때만 사용한다. 운영 마이그레이션 후 비어 있는 ODA 전용 DB를 대상으로 `infra/oda-setup.example.json`을 복사하여 실제 본사·A 사업자 정보와 관리자/A/B의 이름·이메일을 입력한다. 개인정보가 들어간 실제 설정 파일은 Git에 저장하지 않는다.
 
 서버 비밀값에 `ODA_MASTER_PASSWORD`, `ODA_OPERATOR_PASSWORD`, `ODA_PARTNER_PASSWORD`를 각각 12자 이상, 숫자·특수문자를 포함해 설정하고, 운영 컨테이너에서 `node apps/api/dist/bootstrap-oda.js /보안경로/oda-setup.json`을 한 번 실행한다. 이후 세 비밀값을 제거한다. 기존 데이터가 하나라도 있으면 이 스크립트는 중단한다. A와 B는 서로 다른 계정이며 모두 해당 매장에 배정된다. 최초 로그인 시 초기 비밀번호 변경이 필수다. 이미 초기화한 환경은 계정 관리에서 매장 배정이 가능한 지원 파트너 B(재무) 계정을 추가한다.
 
@@ -59,12 +73,14 @@ npm run build:oda
 
 ## 이번 개발본 검증 범위
 
-- 최초 등록·로컬 저장 실행·XLSX 출력과 이전 전달본의 업로드 개선·계산 오류 수정을 병합했다. ODA 빌드 통과, 자동 테스트 485개 통과(API 132, 웹 137, worker 22, 모듈 156, 스크립트 38).
-- 실제 PostgreSQL 통합 테스트 2개는 연결할 테스트 DB가 없어 건너뛰었다. 새 ODA 테스트는 원본 파일·정책·확정본·지급 정보의 연결 종료 후 복원, 독립 연결의 동시 수정 충돌, 감사 체인을 검사하도록 작성했다. 실제 PostgreSQL에서의 통과를 주장하지 않는다.
+- GitHub 배포 브랜치 `agent/oda-workstation-release`의 앱 커밋 `60ea2ec`를 업로드했다. [V2 검사 실행 34900598013](https://github.com/roybeee/OFD/actions/runs/34900598013)의 quality gate에서 자동 테스트 514개 통과, ODA 전용 네이티브 통합 검사 1개 건너뛰기를 확인했다. 건너뛴 검사는 통과한 것으로 세지 않는다.
+- 같은 CI에서 실제 PostgreSQL smoke와 브라우저 E2E 안전 검사 3개·매장 흐름 검사 3개가 모두 통과했다. 초기 등록·업로드·정산·계정·격리 관련 로컬 검사와 ODA 빌드도 수행했다.
+- 배포 전에 실제 PostgreSQL의 임시 DB·역할로 소유권·ACL 분리 검사를 통과했고 임시 자원을 정리했다. 운영 서버에서는 OFD·ODA 각각 자기 DB 접속 성공과 상대 DB 접속 거절(SQLSTATE 42501)을 확인했다. 이 검사는 별도로 건너뛴 ODA 네이티브 통합 검사를 대체했다고 표현하지 않는다.
+- OFD API와 worker가 새 분리 운영 역할로 배포되어 live 상태임을 확인했다. ODA API도 live이며 마이그레이션 11개 적용을 확인했다. ODA 웹의 최종 배포·외부 접속 확인과 이후 변경 사항은 [공용 서버 적용 기록](oda-shared-deployment.md)에 기록한다.
 - 이전 개발본에 포함된 PGlite PostgreSQL WASM 지속성 검증 도구도 보존했다. 이전 기록의 정상 종료·재시작 검증은 네이티브 PostgreSQL 동시성·TLS·장애복구·운영 백업 검증을 대체하지 않는다. 재현 방법은 `infra/testing/pglite/README.md`를 따른다.
-- 실제 Docker 기동·재시작·백업 복구와 브라우저 시각 검증은 미완료다. HTTP·컴포넌트 테스트를 실기기 사용 검증으로 표시하지 않는다.
+- Mac 실기기의 Docker Desktop 설치·기동·재시작·백업 복구와 매장 담당자의 실제 기기 사용 검증은 미완료다. CI 브라우저 검사를 전체 실기기 검증으로 표시하지 않는다.
 - 실제 POS·배달·은행 업체의 원본 파일 호환성은 대상 매장 자료로 추가 확인해야 한다.
-- GitHub 원격 업로드·CI 실행·운영 배포는 완료하지 않았다. Render 연결 상태는 확인했으나 현재 실행에 서비스 조회·배포 기능이 노출되지 않았다.
+- 앱 소스 업로드·기존 GitHub CI 실행·Render 서비스 조회와 배포를 실제 수행했다. 추가 ODA 전용 workflow 업로드는 Workflows 쓰기 권한 부족으로 보류했으며, 이를 기존 V2 CI 실행 여부와 구분한다.
 
 ODA 기능만 재검증할 때는 `npm run test:oda`를 실행한다. 전체 자동 테스트는 `npm test`, ODA 빌드는 `npm run build:oda`다.
 
@@ -79,4 +95,4 @@ ODA 기능만 재검증할 때는 `npm run test:oda`를 실행한다. 전체 자
 - 제외한 통장 입출금·플랫폼 예정입금은 대사 합계에서도 빠진다.
 - 제외한 플랫폼 수수료·예정입금은 제외 전 유형·분류로 복원되어 매출로 잘못 더해지지 않는다.
 - 개발용 `npm run dev:oda`는 API 준비 후 화면을 실행하며, 포트 충돌과 실행 실패를 알린다. 테스트 실행이 운영 DB를 선택하지 않도록 분리한다. `Start-ODA.command`는 이번 개발에서 전용 PostgreSQL 로컬 저장 실행으로 전환했다.
-- ODA 전용 CI `.github/workflows/oda.yml`와 배포 브랜치 설정을 보존했다. 실행 결과를 확인한 원격 CI나 배포를 뜻하지 않는다.
+- 작업 브랜치에는 ODA 전용 CI `.github/workflows/oda.yml` 제안을 보존했다. 배포 브랜치는 기존 GitHub workflow를 유지하며, 확인한 원격 검사 결과는 위 V2 실행 기록을 기준으로 한다.

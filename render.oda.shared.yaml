@@ -10,7 +10,7 @@ services:
   region: singapore
   dockerfilePath: ./infra/docker/oda-web.Dockerfile
   dockerContext: .
-  dockerCommand: nginx -g 'daemon off;'
+  dockerCommand: /bin/sh /usr/local/bin/ofd-web-entrypoint nginx -g 'daemon off;'
   healthCheckPath: /readyz
   autoDeployTrigger: 'off'
   maxShutdownDelaySeconds: 30

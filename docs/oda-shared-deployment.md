@@ -59,3 +59,19 @@
 2026-09-14 21:44 UTC: 실제 PostgreSQL 임시 DB 검증이 통과했고 생성 자원을 모두 정리했다. 이후 운영 DB 분리 작업 `job-dak6l9ff3r2c73c9p6i0`가 성공했다. `ofd_app/ofd_postgres`, `oda_app/oda_production` 각각 접속 확인, 상대 DB 접속은 양쪽 모두 SQLSTATE 42501로 거절됐다. OFD 업무 관계 객체 50개와 함수 2개의 소유권 및 기존 모니터링 접근을 보존했다. 이 단계에서 기존 OFD readiness는 여전히 HTTP 200이었다. 서비스 실행 계정 전환과 ODA 배포는 별도 후속 단계다.
 
 GitHub의 첫 배포 브랜치 업로드는 성공했다. 기존 V2 검사에서 발견한 nodemailer 고위험 의존성은 9.1.1로 갱신했고 로컬 high 감사 및 관련 integration 검사가 통과했다. 새 workflow 파일은 업로드하지 않았다.
+
+## 최종 온라인 적용 결과 — 2026-09-14 UTC
+
+- 접속: https://oda-web-wpts.onrender.com
+- 앱 소스: `60ea2ecb25fb7bf4bb23df75dcc0503326868221`, `agent/oda-workstation-release`. 이후 문서·웹 실행 명령 보정만 소스에 추가했다.
+- ODA API `srv-dak6mdm1egvs739an23g` / 배포 `dep-dak6nip42hec739op7m0`: live.
+- ODA web `srv-dak6mj61egvs739anm1g` / 배포 `dep-dak6plnjopgc73cp8dtg`: live. Render의 Docker 실행 명령에 `/bin/sh /usr/local/bin/ofd-web-entrypoint`를 명시해 nginx 설정 생성을 보장했다.
+- OFD API `dep-dak6m5bl550s73a45dk0`, worker `dep-dak6na3l550s73a49cu0`: 기존 main 앱 그대로 `ofd_app` 계정으로 전환한 배포가 live. 전환용 암호 환경변수 3개는 제거했다.
+- 21:58 UTC 외부 확인: ODA `/` 및 `/readyz` HTTP 200. 운영 PostgreSQL, migration 11/11, PostgreSQL 원본 저장 준비 모두 정상. ODA 정산 전용 프로필은 worker를 요구하지 않는다.
+- 같은 시각 기존 OFD `/readyz` HTTP 200, worker heartbeat 정상, S3 버전 관리 Enabled 유지.
+- 온라인 최초 등록 조회: enabled=true, initialized=false, setupMode=online. 실제 매장·사업자·관리자/A/B 등록은 아직 하지 않았으며 가짜 운영 계정을 만들지 않았다.
+- 외부 요청으로 비로그인 bootstrap 401, 지원하지 않는 API 404, 설정 키 누락 403, OFD origin의 ODA 등록 요청 403을 확인했다. 올바른 ODA origin은 토큰 검증 단계까지 도달해 nginx의 HTTPS 전달도 확인했다.
+- 설정 키는 Render `oda-production-secrets` 환경그룹의 `ODA_SETUP_TOKEN`에만 보관한다. 현재 키 기한은 2026-09-16 21:48 UTC(한국 시간 9월 17일 06:48)이다. 최초 등록 화면에 키와 실제 정보를 입력한다.
+- [GitHub 검사 34900598013](https://github.com/roybeee/OFD/actions/runs/34900598013): quality 및 E2E 성공. 자동 테스트 514개 통과, ODA 전용 네이티브 통합 검사 1개 건너뛰기. 별도 실제 PostgreSQL smoke와 브라우저 검사 통과. 건너뛴 검사를 통과로 계산하지 않는다.
+
+같은 PostgreSQL 호스트를 사용하지만 데이터베이스·소유 역할·앱 서비스·세션 비밀값은 분리했다. `ofd_app`은 OFD DB에만, `oda_app`은 ODA DB에만 CONNECT가 허용되며 두 역할 모두 SUPERUSER/CREATEDB/CREATEROLE 권한이 없다. 공유 호스트의 CPU·메모리·디스크 자원은 공동 사용하므로 데이터 접근 격리와 자원 경쟁은 구별한다.
