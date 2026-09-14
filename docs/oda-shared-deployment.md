@@ -43,7 +43,7 @@
 - API 시작·마이그레이션 전에 `oda-shared-entry.mjs`가 운영 설정과 DB 양방향 격리를 검사한다.
 - 운영 프로필: ODA_SETTLEMENT_ONLY=true, STORAGE_MODE=postgres, EMAIL_PROVIDER=disabled, PROVIDER_MODE=disabled. 기존 OFD production은 계속 S3와 worker를 요구한다.
 - ODA readiness는 실제 PostgreSQL 연결, 적용 migration, 원본·감사·중복방지 저장 권한을 확인한다.
-- WEB_ORIGIN과 PUBLIC_APP_URL은 ODA의 실제 HTTPS origin과 같아야 한다. OFD origin은 실제 설정의 `https://ofd-workstation.onrender.com`이다.
+- WEB_ORIGIN과 PUBLIC_APP_URL은 ODA의 실제 HTTPS origin과 같아야 한다. 기존 OFD 웹은 `https://ofd-web.onrender.com`, 별도 기존 워크스테이션은 `https://ofd-workstation.onrender.com`이다.
 - 최초 등록에는 무작위 일회성 ODA_SETUP_TOKEN과 UTC 만료시각 ODA_SETUP_EXPIRES_AT가 필요하다. 토큰은 앱의 비밀번호 입력란 또는 URL fragment에서 받아 즉시 URL에서 지우고 헤더로만 보낸다.
 - 운영자가 실제 매장·사업자·관리자·A·B 정보를 입력한다. 중복·동시 등록은 DB에서 막고 등록 후 토큰을 다시 사용할 수 없다. 초기화가 끝나면 토큰을 제거해도 정상 로그인·재시작이 가능하다.
 - Render의 TLS 종료 지점을 고려해 nginx가 HTTPS 전달 정보를 API에 보존한다.
@@ -55,3 +55,7 @@
 2026-09-14 UTC 확인: 기존 OFD DB는 PostgreSQL 16/basic_256mb/1 GB다. API·worker는 기존 관리 역할 ofd_postgres_user를 사용했고 CREATEDB·CREATEROLE 권한이 있었다. 기존 연결 역할 primaryuser·datadog·postgres의 접근도 보존 대상이다. 원래 OFD ready는 HTTP 200, migration 11/11, worker heartbeat 정상, S3 버전 관리 Enabled였다. PostgreSQL 복구 상태 AVAILABLE를 확인했다.
 
 이 문서의 구성과 준비 완료는 실제 배포 완료를 뜻하지 않는다. 최종 적용 결과는 실행 체크포인트와 Render 배포 상태, 실제 health·격리 결과로 확인한다.
+
+2026-09-14 21:44 UTC: 실제 PostgreSQL 임시 DB 검증이 통과했고 생성 자원을 모두 정리했다. 이후 운영 DB 분리 작업 `job-dak6l9ff3r2c73c9p6i0`가 성공했다. `ofd_app/ofd_postgres`, `oda_app/oda_production` 각각 접속 확인, 상대 DB 접속은 양쪽 모두 SQLSTATE 42501로 거절됐다. OFD 업무 관계 객체 50개와 함수 2개의 소유권 및 기존 모니터링 접근을 보존했다. 이 단계에서 기존 OFD readiness는 여전히 HTTP 200이었다. 서비스 실행 계정 전환과 ODA 배포는 별도 후속 단계다.
+
+GitHub의 첫 배포 브랜치 업로드는 성공했다. 기존 V2 검사에서 발견한 nodemailer 고위험 의존성은 9.1.1로 갱신했고 로컬 high 감사 및 관련 integration 검사가 통과했다. 새 workflow 파일은 업로드하지 않았다.

@@ -28,7 +28,10 @@ export function prepareFixtureSource(source, names) {
     ODA_ROLE: ['oda_app', names.odaRole],
   };
   for (const [constant, [original, replacement]] of Object.entries(constants)) {
-    assert(/^oda_probe_[a-f0-9]{12}_[a-z_]+$/.test(replacement), 'FIXTURE_NAME_INVALID');
+    if (!/^oda_probe_[a-f0-9]{12}_[a-z_]+$/.test(replacement)) {
+      throw Object.assign(new Error('FIXTURE_NAME_INVALID'), { safeCode: 'FIXTURE_NAME_INVALID',
+        safeDetails: { constant, generatedFixtureName: String(replacement).slice(0, 90) } });
+    }
     const declaration = `const ${constant} = '${original}';`;
     assert(source.split(declaration).length === 2, 'PROVISION_CONSTANT_MATCH_FAILED');
     source = source.replace(declaration, `const ${constant} = '${replacement}';`);
@@ -44,9 +47,28 @@ export function prepareFixtureSource(source, names) {
 
 export async function runNativeCheck(source, databaseUrl, options = {}) {
   const log = options.log ?? ((value) => process.stdout.write(`${JSON.stringify(value)}\n`));
+  let stage = 'initialization';
+  try {
+    return await runNativeCheckImpl(source, databaseUrl, { ...options, log,
+      recordStage: (value) => { stage = value; } });
+  } catch (error) {
+    const rawCode = error.safeCode ?? error.code ?? 'NATIVE_CHECK_UNEXPECTED_FAILURE';
+    const code = /^[A-Z0-9_]{1,100}$/.test(rawCode) ? rawCode : 'NATIVE_CHECK_UNEXPECTED_FAILURE';
+    // Never emit message/stack: URL parsers and module errors may include inputs.
+    log({ nativeCheck: 'stopped', stage, code,
+      errorType: ['Error','TypeError','SyntaxError','ReferenceError','URIError'].includes(error.name)
+        ? error.name : 'Error',
+      fixtureNameDiagnostic: code === 'FIXTURE_NAME_INVALID' ? error.safeDetails : undefined });
+    throw Object.assign(new Error(code), { safeCode: code });
+  }
+}
+
+async function runNativeCheckImpl(source, databaseUrl, options = {}) {
+  const log = options.log ?? ((value) => process.stdout.write(`${JSON.stringify(value)}\n`));
   const prefix = `oda_probe_${randomBytes(6).toString('hex')}`;
   const names = { admin: `${prefix}_admin`, ofdRole: `${prefix}_ofd_app`,
     odaRole: `${prefix}_oda_app`, ofdDb: `${prefix}_ofd`, odaDb: `${prefix}_oda` };
+  options.recordStage('prepare_fixture_source');
   const fixtureSource = prepareFixtureSource(source, names);
   const allowedRoles = new Set([names.admin, names.ofdRole, names.odaRole]);
   const allowedDbs = new Set([names.ofdDb, names.odaDb]);
@@ -62,6 +84,7 @@ export async function runNativeCheck(source, databaseUrl, options = {}) {
   let completed = false;
   const cleanupErrors = [];
   let base;
+  options.recordStage('validate_managed_connection_input');
   try { base = new URL(databaseUrl); } catch { assert(false, 'MANAGED_URL_REQUIRED'); }
   assert(['postgres:', 'postgresql:'].includes(base.protocol)
     && decodeURIComponent(base.username) === 'ofd_postgres_user'
@@ -121,10 +144,13 @@ export async function runNativeCheck(source, databaseUrl, options = {}) {
     deadlineExpired = true;
     for (const client of activeClients) void client.end().catch(() => {});
   }, 65_000);
+  options.recordStage('create_managed_client');
   const manager = makeClient(base.href, true);
   let oldAdmin;
   try {
+    options.recordStage('connect_managed_database');
     await manager.connect();
+    options.recordStage('verify_managed_identity_and_fixture_names');
     const identity = (await manager.query(`SELECT current_user AS role,
       r.rolcreatedb,r.rolcreaterole,r.rolsuper FROM pg_roles r WHERE r.rolname=current_user`)).rows[0];
     assert(identity?.role === 'ofd_postgres_user' && identity.rolcreatedb
@@ -136,17 +162,28 @@ export async function runNativeCheck(source, databaseUrl, options = {}) {
     assert(collisions.length === 0, 'FIXTURE_NAMES_ALREADY_EXIST');
     log({ nativeCheck: 'started', prefix, fixtureDatabases: [...allowedDbs], fixtureRoles: [...allowedRoles] });
 
+    options.recordStage('create_fixture_admin_and_database');
     await manager.query('BEGIN');
+    options.recordStage('create_fixture_admin_role');
     await manager.query(`CREATE ROLE ${quote(names.admin)} NOLOGIN NOSUPERUSER CREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS`);
+    options.recordStage('bind_fixture_admin_password');
     await manager.query("SELECT set_config('oda_native.role',$1,true),set_config('oda_native.password',$2,true)",
       [names.admin, secrets.admin]);
+    options.recordStage('set_fixture_admin_password');
     await manager.query(`DO $native$ BEGIN EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L',
       current_setting('oda_native.role'),current_setting('oda_native.password')); END $native$`);
-    await manager.query(`GRANT ${quote(names.admin)} TO ${quote(managedUser)} WITH ADMIN TRUE, INHERIT TRUE, SET TRUE`);
+    options.recordStage('grant_fixture_admin_inherit_and_set');
+    // ADMIN was already granted automatically by PostgreSQL's bootstrap role.
+    // A self-grant of ADMIN would form a circular grant dependency (0LP01).
+    await manager.query(`GRANT ${quote(names.admin)} TO ${quote(managedUser)} WITH INHERIT TRUE, SET TRUE`);
+    options.recordStage('commit_fixture_admin_role');
     await manager.query('COMMIT');
+    options.recordStage('create_fixture_ofd_database');
     await manager.query(`CREATE DATABASE ${quote(names.ofdDb)} OWNER ${quote(names.admin)}`);
+    options.recordStage('connect_fixture_admin');
     oldAdmin = makeClient(urlFor(names.ofdDb, names.admin, secrets.admin));
     await oldAdmin.connect();
+    options.recordStage('create_fixture_schema');
     await oldAdmin.query(`CREATE TABLE schema_migrations(version text PRIMARY KEY,checksum_sha256 text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now())`);
     await oldAdmin.query(`CREATE TABLE native_audit(sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -157,6 +194,7 @@ export async function runNativeCheck(source, databaseUrl, options = {}) {
       FOR EACH ROW EXECUTE FUNCTION native_immutable()`);
     await oldAdmin.query("INSERT INTO native_audit(label) VALUES ('fixture-before')");
 
+    options.recordStage('load_and_run_fixture_provision_module');
     scratch = await mkdtemp(join(tmpdir(), `${prefix}-`));
     const modulePath = join(scratch, 'provision-fixture.mjs');
     await writeFile(modulePath, fixtureSource, { mode: 0o600 });
@@ -174,6 +212,7 @@ export async function runNativeCheck(source, databaseUrl, options = {}) {
     checks.push('native_role_creation_and_owner_transfer', 'both_cross_database_connections_rejected',
       'existing_platform_connect_privileges_preserved');
 
+    options.recordStage('verify_fixture_dml_and_migration_compatibility');
     // The admin connection opened before ownership changed must still support
     // normal operations, matching the live OFD rolling deployment window.
     await oldAdmin.query("INSERT INTO native_audit(label) VALUES ('fixture-old-admin-after')");

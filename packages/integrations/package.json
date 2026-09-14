@@ -16,7 +16,7 @@
     "@aws-sdk/client-s3": "^3.864.0",
     "@aws-sdk/s3-request-presigner": "^3.864.0",
     "@ofd/domain": "2.0.0",
-    "nodemailer": "^9.0.3"
+    "nodemailer": "^9.1.1"
   },
   "optionalDependencies": {
     "popbill": "1.64.2"

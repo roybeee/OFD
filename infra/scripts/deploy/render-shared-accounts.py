@@ -131,8 +131,11 @@ def main():
             raise OperationError("PROVISION_STAGE_MISMATCH")
         script = Path(__file__).with_name("oda-shared-provision.mjs").read_text()
         script += "\nawait provisionSharedDatabase().catch(() => { process.exitCode = 1; });\n"
+        script = script.replace("import pg from 'pg';", "import {createRequire as runtimeRequire} from 'node:module'; const pg = runtimeRequire('/app/package.json')('pg');", 1)
+        encoded = base64.b64encode(script.encode()).decode()
+        loader = "import{writeFileSync}from'node:fs';writeFileSync('/tmp/oda-provision-job.mjs',Buffer.from('" + encoded + "','base64'));await import('/tmp/oda-provision-job.mjs');"
         result = call(f"/services/{WORKER}/jobs", "POST", {
-            "startCommand": "node --input-type=module -e " + shlex.quote(script), "planId": "plan-srv-006"})
+            "startCommand": "node --input-type=module -e " + shlex.quote(loader), "planId": "plan-srv-006"})
         state["provisionJob"] = result["id"]
         state["stage"] = "provision_job_started"
         save()

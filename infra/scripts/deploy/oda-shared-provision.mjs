@@ -314,8 +314,11 @@ export async function provisionSharedDatabase(env = process.env, options = {}) {
       END $provision$`);
       // This direction preserves the administrator's old/live OFD connections.
       // Application roles must never be members of the managed admin role.
+      // PostgreSQL 16 already gives a CREATEROLE creator ADMIN via the bootstrap
+      // grantor. Re-granting ADMIN to oneself creates a circular grant and fails
+      // with 0LP01; add only the documented INHERIT/SET self-membership instead.
       for (const role of [OFD_ROLE, ODA_ROLE]) {
-        await client.query(`GRANT ${quote(role)} TO ${quote(ADMIN_ROLE)} WITH ADMIN TRUE, INHERIT TRUE, SET TRUE`);
+        await client.query(`GRANT ${quote(role)} TO ${quote(ADMIN_ROLE)} WITH INHERIT TRUE, SET TRUE`);
       }
     });
     stage = 'dedicated_roles_created';
