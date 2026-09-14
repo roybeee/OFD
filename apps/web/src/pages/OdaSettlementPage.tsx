@@ -40,13 +40,15 @@ export function odaSettlementLocation(search: string, stores: ReadonlyArray<{ id
   const value = params.get('tab');
   const tab: Tab = value === 'transactions' || value === 'policy' || value === 'history' ? value : 'overview';
   const storeId = params.get('store') ?? '';
-  return { tab, storeId: stores.some(store => store.id === storeId) ? storeId : '' };
+  const month = params.get('month') ?? '';
+  return { tab, storeId: stores.some(store => store.id === storeId) ? storeId : '',
+    ...(/^(19|[2-9]\d)\d{2}-(0[1-9]|1[0-2])$/.test(month) ? { month } : {}) };
 }
 
 export function OdaSettlementPage({ data, notify }: Props) {
   const location = odaSettlementLocation(window.location.search, data.stores);
   const [storeId, setStoreId] = useState(location.storeId || data.store.id || data.stores[0]?.id || '');
-  const [month, setMonth] = useState((data.meta.operationalDate || today()).slice(0, 7));
+  const [month, setMonth] = useState(location.month || (data.meta.operationalDate || today()).slice(0, 7));
   const [state, setState] = useState<OdaResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

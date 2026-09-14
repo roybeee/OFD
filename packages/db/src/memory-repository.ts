@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
 import { outboxRetryDelayMs,
-  type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type OdaOverviewMonth, type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
   type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
@@ -59,6 +59,20 @@ export class MemoryRepository implements StateRepository {
     return [...this.records.entries()]
       .filter(([key, entry]) => key.startsWith(prefix) && (!storeIds || (Boolean(entry.storeId) && storeIds.includes(entry.storeId!))))
       .map(([, entry]) => clone(entry.value as T));
+  }
+
+  async listOdaOverviewMonths(month: string, storeIds: string[]): Promise<OdaOverviewMonth[]> {
+    if (!storeIds.length) return [];
+    const rows: OdaOverviewMonth[] = [];
+    for (const [key, entry] of this.records) {
+      if (!key.startsWith("oda_month:") || !entry.storeId || !storeIds.includes(entry.storeId)) continue;
+      const record = entry.value as import("@ofd/domain").OdaMonth;
+      if (record.month !== month) continue;
+      const { id, storeId, version, status, lines, sources, policy, updatedAt } = record;
+      const frozenSummary = [...record.history].reverse().find(item => item.reason === "월 정산 확정" && item.version <= version)?.summary ?? null;
+      rows.push(clone({ id, storeId, month, version, status, lines, sources, policy, updatedAt, frozenSummary }));
+    }
+    return rows;
   }
 
   async commit(request: CommitRequest): Promise<void> {

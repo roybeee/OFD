@@ -1,4 +1,4 @@
-import type { AuditEvent, OutboxEvent } from "@ofd/domain";
+import type { AuditEvent, OutboxEvent, OdaMonth, OdaSummary } from "@ofd/domain";
 
 export type AggregateType =
   | "actor"
@@ -100,7 +100,11 @@ export interface AuditSearchInput {
   limit?: number;
 }
 
+export type OdaOverviewMonth = Pick<OdaMonth, "id" | "storeId" | "month" | "version" | "status" | "lines" | "sources" | "policy" | "updatedAt"> & { frozenSummary: OdaSummary | null };
+
 export interface StateRepository {
+  /** Month-scoped projection: never returns original file bytes or historical transaction copies. */
+  listOdaOverviewMonths(month: string, storeIds: string[]): Promise<OdaOverviewMonth[]>;
   get<T>(type: AggregateType, id: string): Promise<T | undefined>;
   list<T>(type: AggregateType, storeIds?: string[]): Promise<T[]>;
   commit(request: CommitRequest): Promise<void>;

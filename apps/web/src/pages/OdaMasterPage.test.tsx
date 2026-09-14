@@ -8,8 +8,8 @@ import { canAccessPath, defaultPathFor } from '../lib/access';
 import { OdaMasterPage, OdaStoresPage, odaMasterSettlementPath } from './OdaMasterPage';
 import { OdaSettlementPage, odaSettlementLocation } from './OdaSettlementPage';
 vi.mock('../lib/brand', () => ({ isOdaBrand: true, workstationName: 'ODA 워크스테이션' }));
-const mocks = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock('../api/oda-client', async original => ({ ...await original<typeof import('../api/oda-client')>(), getOdaMonth: mocks.get }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), overview: vi.fn() }));
+vi.mock('../api/oda-client', async original => ({ ...await original<typeof import('../api/oda-client')>(), getOdaMonth: mocks.get, getOdaOverview: mocks.overview }));
 
 const data = () => normalizeBootstrap({ currentActor: { id: 'master-1', name: '황관리', role: 'hq_master' },
   stores: [{ id: 'workspace-1', name: 'ODA 기본 작업공간', business: {} }],
@@ -19,7 +19,7 @@ const emptyBusiness = { businessNumber: '', legalName: '', representativeName: '
 const store = { id: 'workspace-1', name: 'ODA 기본 작업공간', code: 'oda-workspace', active: true, version: 1, odaWorkspace: true, business: emptyBusiness };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 let root: Root; let container: HTMLDivElement;
-beforeEach(() => { vi.clearAllMocks(); window.history.replaceState({}, '', '/'); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
+beforeEach(() => { vi.clearAllMocks(); mocks.overview.mockResolvedValue({ month: '2026-08', page: 1, pageSize: 20, total: 0, rows: [] }); window.history.replaceState({}, '', '/'); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); });
 async function click(text: string) { await act(async () => {
   const button = [...container.querySelectorAll('button')].find(item => item.textContent?.includes(text)); expect(button, text).toBeTruthy(); button!.click();
@@ -36,7 +36,7 @@ describe('ODA master workspace', () => {
     expect(container.textContent).toContain('황관리님의 작업공간');
     expect(container.querySelector<HTMLSelectElement>('#oda-master-store')!.value).toBe('workspace-1');
     expect(container.textContent).toContain('사업자 정보는 나중에 등록해도 됩니다.');
-    await click('자료 넣고 시작'); expect(navigate).toHaveBeenLastCalledWith('/hq/oda-settlement?tab=transactions&store=workspace-1');
+    await click('이번 달 자료 넣기'); expect(navigate).toHaveBeenLastCalledWith('/hq/oda-settlement?tab=transactions&store=workspace-1');
     for (const [label, target] of [
       ['월 손익계산서', '/hq/oda-settlement?tab=overview&store=workspace-1'],
       ['정산서 내려받기', '/hq/oda-settlement?tab=overview&store=workspace-1#oda-exports'],
@@ -62,7 +62,7 @@ describe('ODA master workspace', () => {
       capabilities: ['oda.master.manage', 'oda.finance.read'], meta: { appMode: 'production' } });
     const navigate = vi.fn(); await act(async () => root.render(<OdaMasterPage data={inactiveFirst} onNavigate={navigate} />));
     expect([...container.querySelectorAll('option')].map(option => option.value)).toEqual(['live']);
-    await click('자료 넣고 시작'); expect(navigate).toHaveBeenLastCalledWith('/hq/oda-settlement?tab=transactions&store=live');
+    await click('이번 달 자료 넣기'); expect(navigate).toHaveBeenLastCalledWith('/hq/oda-settlement?tab=transactions&store=live');
   });
 
   it('opens the real requested settlement tab and only selects authorized stores', async () => {

@@ -5,6 +5,7 @@ import { ArrowDownToLine, ArrowRight, CircleDollarSign, FileCheck2, Plus, Receip
 import { Button } from '../components/ui';
 import type { BootstrapData } from '../types';
 import './OdaMasterPage.css';
+import { OdaOverviewPanel } from './OdaOverviewPanel';
 
 type Props = { data: BootstrapData; onNavigate: (path: string) => void };
 type Notify = (message: string, tone?: 'success' | 'info' | 'warning') => void;
@@ -17,19 +18,17 @@ const shortcuts = [
   { title: '변경 기록', description: '확정본과 수정 사유, 담당자별 확인 기록을 봅니다.', tab: 'history', icon: RefreshCcw },
 ];
 
-export function odaMasterSettlementPath(storeId: string, tab = 'overview', anchor = '') {
-  const params = new URLSearchParams({ tab });
-  if (storeId) params.set('store', storeId);
-  return `/hq/oda-settlement?${params}${anchor ? `#${anchor}` : ''}`;
-}
+export { odaMasterSettlementPath } from '../lib/oda-navigation';
+import { odaMasterSettlementPath } from '../lib/oda-navigation';
 
 export function OdaMasterPage({ data, onNavigate }: Props) {
   const stores = data.stores.filter(store => store.active !== false);
   const [storeId, setStoreId] = useState(stores.find(store => store.id === data.store.id)?.id || stores[0]?.id || '');
   return <main id="main-content" className="page oda-master-page" tabIndex={-1}>
     <header className="oda-master-heading"><div><p className="oda-master-kicker">ODA · MASTER WORKSPACE</p><h1>{data.actor.name}님의 작업공간</h1><p>정산부터 계정·매장 관리까지, 필요한 업무를 바로 시작하세요.</p></div><span className="oda-master-badge"><ShieldCheck size={17} /> 마스터 계정</span></header>
-    <section className="oda-master-start" aria-labelledby="oda-master-start-title"><div><p className="oda-master-kicker">바로 시작하기</p><h2 id="oda-master-start-title">자료를 넣으면 월 손익이 정리됩니다</h2><p>사업자 정보는 나중에 등록해도 됩니다. 기본 작업공간에서 시작하고 실제 매장 이름으로 바꿀 수 있습니다.</p></div><div className="oda-master-start-actions">{stores.length ? <><label htmlFor="oda-master-store">작업할 매장<select id="oda-master-store" value={storeId} onChange={event => setStoreId(event.target.value)}>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label><Button onClick={() => onNavigate(odaMasterSettlementPath(storeId, 'transactions'))}>자료 넣고 시작 <ArrowRight size={17} /></Button></> : <Button onClick={() => onNavigate('/hq/oda-stores')}>작업공간 만들기 <Plus size={17} /></Button>}</div></section>
-    <section aria-labelledby="oda-master-functions"><div className="oda-master-section-heading"><h2 id="oda-master-functions">정산 업무</h2><p>정산 확정에는 실제 증빙과 A·B의 기준 확인이 필요합니다.</p></div><div className="oda-master-grid">{shortcuts.map(item => {
+    <section className="oda-master-start" aria-labelledby="oda-master-start-title"><div><p className="oda-master-kicker">바로 시작하기</p><h2 id="oda-master-start-title">자료를 넣으면 월 손익이 정리됩니다</h2><p>사업자 정보는 나중에 등록해도 됩니다. 기본 작업공간에서 시작하고 실제 매장 이름으로 바꿀 수 있습니다.</p></div><div className="oda-master-start-actions">{stores.length ? <><label htmlFor="oda-master-store">작업할 매장<select id="oda-master-store" value={storeId} onChange={event => setStoreId(event.target.value)}>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label><Button onClick={() => onNavigate(odaMasterSettlementPath(storeId, 'transactions'))}>이번 달 자료 넣기 <ArrowRight size={17} /></Button></> : <Button onClick={() => onNavigate('/hq/oda-stores')}>작업공간 만들기 <Plus size={17} /></Button>}</div></section>
+    <OdaOverviewPanel operationalDate={data.meta.operationalDate} onNavigate={onNavigate} />
+    <section aria-labelledby="oda-master-functions"><div className="oda-master-section-heading"><h2 id="oda-master-functions">이번 달 정산 업무</h2><p>정산 확정에는 실제 증빙과 A·B의 기준 확인이 필요합니다.</p></div><div className="oda-master-grid">{shortcuts.map(item => {
       const Icon = item.icon;
       return <button type="button" className="oda-master-shortcut" key={item.title} onClick={() => onNavigate(stores.length ? odaMasterSettlementPath(storeId, item.tab, item.anchor) : '/hq/oda-stores')}><Icon size={23} /><strong>{item.title}</strong><span>{item.description}</span><ArrowRight size={18} className="oda-shortcut-arrow" /></button>;
     })}</div></section>

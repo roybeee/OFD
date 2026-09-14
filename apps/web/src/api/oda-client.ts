@@ -52,3 +52,18 @@ export function downloadOdaText(filename: string, contents: string, mediaType = 
   anchor.href = url; anchor.download = filename; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+export type OdaOverviewRow = { storeId: string; storeName: string; month: string; amountBasis: string; updatedAt: string | null;
+  status: 'not_started' | 'draft' | 'ready' | 'finalized' | 'paid' | 'error'; revenue: number | null;
+  expenses: number | null; profit: number | null; payableB: number | null; sourceCount: number;
+  reviewCount: number; blockerCount: number; overdue: boolean; dueDate: string | null; nextAction: string; tab: string; anchor: string };
+export type OdaOverview = { month: string; page: number; pageSize: number; total: number; rows: OdaOverviewRow[] };
+export async function getOdaOverview(month: string, page = 1, signal?: AbortSignal): Promise<OdaOverview> {
+  const query = new URLSearchParams({ month, page: String(page) });
+  const response = await fetch(`${import.meta.env.VITE_API_BASE ?? '/api/v2'}/oda/overview?${query}`, { credentials: 'same-origin', signal, headers: { Accept: 'application/json' } });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, payload.error?.code || 'ODA_OVERVIEW_FAILED', payload.error?.message || '정산 현황을 불러오지 못했습니다.');
+  }
+  return response.json();
+}

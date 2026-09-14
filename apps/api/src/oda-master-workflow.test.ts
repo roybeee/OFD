@@ -49,6 +49,10 @@ it('registers only a master and uses real production authentication, settlement,
   const imported = await app.inject({ method: 'POST', url: `${base}/import`, headers,
     payload: { expectedVersion: 0, filename: 'master-sales.csv', kind: 'pos', content } });
   expect(imported.statusCode, imported.body).toBe(200);
+  const overview = await app.inject({ method: 'GET', url: '/api/v2/oda/overview?month=2026-08', headers });
+  expect(overview.statusCode, overview.body).toBe(200);
+  expect(overview.json().rows[0]).toMatchObject({ storeId: workspace.id, month: '2026-08', sourceCount: 1 });
+  expect(overview.body).not.toContain(content);
   const source = imported.json().evidence[0];
   const evidence = await app.inject({ method: 'GET', url: `${base}/evidence/${source.id}`, headers });
   expect(evidence.statusCode).toBe(200); expect(evidence.body).toBe(content);

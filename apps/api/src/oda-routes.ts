@@ -59,7 +59,7 @@ function result(record: OdaRecord, actor: Actor) {
     evidence: record.sources, history: record.history, capabilities: capabilities(actor, record.storeId),
     payment: record.paymentDate ? { date: record.paymentDate, amount: record.paymentAmount, reference: record.paymentReference } : null };
 }
-function monthSummary(record: OdaMonth) {
+export function monthSummary(record: OdaMonth) {
   const summary = calculateOdaMonth(record);
   const currentMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
   if (record.month >= currentMonth) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { createOdaMonth, calculateOdaMonth } from "@ofd/domain";
 import { createRepository, PostgresRepository } from "./index.ts";
 import { discoverMigrations, runMigrations } from "./migration-runner.ts";
 
@@ -25,6 +26,22 @@ test("PostgreSQL repository applies and exercises the complete durable contract"
   const repository = createRepository({ APP_MODE: "test", REPOSITORY_MODE: "postgres", DATABASE_URL: databaseUrl });
   assert.ok(repository instanceof PostgresRepository, "REPOSITORY_MODE=postgres must select PostgreSQL even in tests");
   try {
+    const odaStore = randomUUID();
+    const odaMonth = { ...createOdaMonth(odaStore, "2026-08"), version: 1 };
+    const frozen = { ...calculateOdaMonth(odaMonth), revenue: 1234567 };
+    odaMonth.history.push({ id: randomUUID(), version: 1, reason: "월 정산 확정", summary: frozen,
+      at: new Date().toISOString(), actorId: "test", actorName: "test", lines: [], sources: [], policy: odaMonth.policy });
+    await repository.commit({ changes: [{ type: "oda_month", id: odaMonth.id, storeId: odaStore, expectedVersion: null,
+      value: { ...odaMonth, evidenceBytes: { private: "original-file-must-not-be-selected" } } }] });
+    const overview = await repository.listOdaOverviewMonths("2026-08", [odaStore]);
+    assert.equal(overview.length, 1);
+    assert.equal(overview[0]?.frozenSummary?.revenue, 1234567);
+    assert.equal("history" in overview[0]!, false);
+    assert.equal("evidenceBytes" in overview[0]!, false);
+    assert.deepEqual(await repository.listOdaOverviewMonths("2026-07", [odaStore]), []);
+    assert.deepEqual(await repository.listOdaOverviewMonths("2026-08", [randomUUID()]), []);
+    assert.deepEqual(await repository.listOdaOverviewMonths("2026-08", []), []);
+
     const aggregateId = randomUUID();
     await repository.commit({ changes: [{ type: "product", id: aggregateId, expectedVersion: null,
       value: { id: aggregateId, name: "integration product", version: 1 } }] });

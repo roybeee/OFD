@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
 import pg from "pg";
 import { deterministicOutboxJitter, outboxRetryDelayMs,
-  type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type OdaOverviewMonth, type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
   type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
@@ -41,6 +41,22 @@ export class PostgresRepository implements StateRepository {
         [type],
       );
     return result.rows.map((row) => row.payload);
+  }
+
+  async listOdaOverviewMonths(month: string, storeIds: string[]): Promise<OdaOverviewMonth[]> {
+    if (!storeIds.length) return [];
+    const result = await this.query<{ payload: OdaOverviewMonth }>(`
+      SELECT jsonb_build_object(
+        'id', payload->'id', 'storeId', payload->'storeId', 'month', payload->'month',
+        'version', payload->'version', 'status', payload->'status', 'lines', payload->'lines',
+        'sources', payload->'sources', 'policy', payload->'policy', 'updatedAt', payload->'updatedAt',
+        'frozenSummary', (SELECT h.value->'summary'
+          FROM jsonb_array_elements(COALESCE(payload->'history', '[]'::jsonb)) WITH ORDINALITY AS h(value, n)
+          WHERE h.value->>'reason' = '월 정산 확정' AND (h.value->>'version')::bigint <= (payload->>'version')::bigint
+          ORDER BY h.n DESC LIMIT 1)
+      ) AS payload FROM aggregate_snapshots
+      WHERE aggregate_type = 'oda_month' AND store_id = ANY($1::text[]) AND payload->>'month' = $2`, [storeIds, month]);
+    return result.rows.map(row => row.payload);
   }
 
   async commit(request: CommitRequest): Promise<void> {
