@@ -103,12 +103,16 @@ export class ProcurementService {
       this.externalIssueEnabled, this.now, this.holidayCalendar);
   }
 
-  async bootstrap(actor: Actor): Promise<Record<string, unknown>> {
+  async bootstrap(actor: Actor, options: { odaWorkspace?: boolean } = {}): Promise<Record<string, unknown>> {
     const accessPolicy = await this.loadAccessPolicy();
     const isStoreActor = actor.role === "store_owner" || actor.role === "store_staff";
     const isDriver = actor.role === "driver";
     const isScopedFinance = actor.role === "hq_finance" && actor.storeIds.length > 0;
-    const storeScope = isStoreActor || isScopedFinance ? actor.storeIds : undefined;
+    // Match the ODA month routes for legacy/imported HQ accounts with explicit
+    // store assignments, without changing OFD's existing HQ access policy.
+    const isScopedOdaHq = options.odaWorkspace === true && actor.storeIds.length > 0
+      && (actor.role === "hq_master" || actor.role === "auditor");
+    const storeScope = isStoreActor || isScopedFinance || isScopedOdaHq ? actor.storeIds : undefined;
     const today = operationalDateKst(this.now());
     let stores = await this.repository.list<Store>("store", storeScope);
     let orders = await this.repository.list<PurchaseOrder>("order", storeScope);
@@ -127,14 +131,15 @@ export class ProcurementService {
     let products = isDriver ? [] : await this.repository.list<Product>("product");
     const hqEntities = await this.repository.list<LegalEntitySnapshot & { id: string; isHeadquarters: boolean }>("legal_entity");
     const headquarters = hqEntities.find((entity) => entity.isHeadquarters);
-    invariant(headquarters, "HQ_BUSINESS_MISSING", "본사 사업자 정보가 없습니다.", 503);
+    invariant(headquarters || options.odaWorkspace, "HQ_BUSINESS_MISSING", "본사 사업자 정보가 없습니다.", 503);
     // Headquarters bank feeds are unscoped; ODA partners use their store's uploaded bank evidence.
-    const bankTransactions = (actor.role === "hq_finance" && !isScopedFinance) || actor.role === "hq_master" || actor.role === "auditor"
+    const bankTransactions = !isScopedOdaHq && ((actor.role === "hq_finance" && !isScopedFinance) || actor.role === "hq_master" || actor.role === "auditor")
       ? await this.repository.list<BankTransaction>("bank_transaction") : [];
-    const auditEvents = actor.role === "hq_master" || actor.role === "auditor" ? await this.repository.listAudit(30) : [];
+    const auditEvents = actor.role === "hq_master" || actor.role === "auditor"
+      ? await this.repository.listAudit(30, isScopedOdaHq ? actor.storeIds : undefined) : [];
     const allActors = await this.repository.list<Actor>("actor");
     const availableActors = (this.appMode === "demo" || this.appMode === "test") && !isDriver ? allActors.map(publicActorDto) : [];
-    const driverDirectory = actor.role === "hq_ops" || actor.role === "hq_master"
+    const driverDirectory = !isScopedOdaHq && (actor.role === "hq_ops" || actor.role === "hq_master")
       ? allActors.filter((candidate) => candidate.role === "driver" && candidate.active)
         .map(({ id, name }) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name, "ko"))
       : [];
@@ -221,7 +226,7 @@ export class ProcurementService {
       driverDirectory,
       actorDirectory,
       routeDates,
-      headquarters: isDriver ? null : headquarters,
+      headquarters: isDriver ? null : headquarters ?? null,
       stores: isDriver ? [] : stores,
       products,
       orders: isDriver ? [] : orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),

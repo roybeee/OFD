@@ -14,7 +14,7 @@ export function usesOnlineOdaSetup(origin: string, odaBrand = isOdaBrand) {
   catch { return false; }
 }
 
-/** The launch token lives only in a ref and the request body; remove it before requesting status. */
+/** The launch token stays in memory and the setup request; remove it before requesting status. */
 export function consumeSetupFragment(location: Pick<Location, 'hash' | 'pathname' | 'search'>, history: Pick<History, 'replaceState' | 'state'>) {
   const params = new URLSearchParams(location.hash.slice(1));
   if (!params.has('setup')) return '';
@@ -26,6 +26,8 @@ export function consumeSetupFragment(location: Pick<Location, 'hash' | 'pathname
 }
 
 type GateStatus = 'checking' | 'ready' | 'setup' | 'error' | 'created';
+type EnrollmentMode = 'master-only' | 'full';
+type CreatedSetup = { storeName: string; setupMode: EnrollmentMode; masterName?: string };
 export function OdaSetupGate({ children }: { children: ReactNode }) {
   const local = usesLocalOdaSetup(window.location.origin);
   const online = usesOnlineOdaSetup(window.location.origin);
@@ -33,7 +35,7 @@ export function OdaSetupGate({ children }: { children: ReactNode }) {
   const tokenRef = useRef('');
   const [status, setStatus] = useState<GateStatus>(enabled ? 'checking' : 'ready');
   const [retry, setRetry] = useState(0);
-  const [storeName, setStoreName] = useState('');
+  const [createdSetup, setCreatedSetup] = useState<CreatedSetup | null>(null);
   const [expiresAt, setExpiresAt] = useState('');
   const [expired, setExpired] = useState(false);
   useLayoutEffect(() => {
@@ -60,8 +62,8 @@ export function OdaSetupGate({ children }: { children: ReactNode }) {
   if (status === 'ready') return children;
   if (status === 'checking') return <SkeletonScreen />;
   if (status === 'error') return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card"><p className="oda-setup-kicker">ODA · {online ? '온라인 매장 정산' : '이 컴퓨터에서 시작'}</p><h1>설정 상태를 확인하지 못했습니다</h1><p role="alert">{online ? '서버 연결을 확인한 뒤 다시 시도해 주세요.' : 'ODA 실행 창이 열려 있는지 확인한 뒤 다시 시도해 주세요.'} 저장된 매장 정보가 있는지 확인하기 전에는 새로 만들지 않습니다.</p><Button onClick={() => setRetry((value) => value + 1)}>다시 확인</Button></section></main>;
-  if (status === 'created') return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card"><p className="oda-setup-kicker">ODA · 준비 완료</p><h1>{storeName} 등록이 끝났습니다</h1><p>등록한 관리자 또는 A·B 계정으로 로그인해 주세요. 각 계정은 첫 로그인 후 비밀번호를 변경합니다.</p><StorageNotice online={online} /><Button onClick={() => setStatus('ready')}>로그인으로 이동</Button></section></main>;
-  return <OdaSetup initialToken={tokenRef.current} online={online} expiresAt={expiresAt} expired={expired} onCreated={(name) => { tokenRef.current = ''; setStoreName(name); setStatus('created'); }} />;
+  if (status === 'created') return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card"><p className="oda-setup-kicker">ODA · 준비 완료</p><h1>{createdSetup?.setupMode === 'master-only' ? `${createdSetup.masterName}님, 관리자 계정이 준비됐습니다` : `${createdSetup?.storeName} 등록이 끝났습니다`}</h1><p>{createdSetup?.setupMode === 'master-only' ? '방금 등록한 본인 이메일과 비밀번호로 로그인해 주세요. 사업자·매장 정보와 다른 담당자는 로그인 후 등록할 수 있습니다.' : '등록한 관리자 또는 A·B 계정으로 로그인해 주세요. 각 계정은 첫 로그인 후 비밀번호를 변경합니다.'}</p><StorageNotice online={online} /><Button onClick={() => setStatus('ready')}>로그인으로 이동</Button></section></main>;
+  return <OdaSetup initialToken={tokenRef.current} online={online} expiresAt={expiresAt} expired={expired} onCreated={(result) => { tokenRef.current = ''; setCreatedSetup(result); setStatus('created'); }} />;
 }
 
 function StorageNotice({ online }: { online: boolean }) {
@@ -82,6 +84,11 @@ const blankBusiness = (): Business => ({ businessNumber: '', legalName: '', repr
 const blankAccount = (): Account => ({ name: '', email: '', password: '' });
 const emptyForm = (): OdaSetupForm => ({ headquarters: blankBusiness(), store: { code: '', name: '', openDate: '', business: blankBusiness() }, master: blankAccount(), operatorA: blankAccount(), partnerB: blankAccount() });
 const emailValid = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+const accountError = (account: Account, title: string) => {
+  if (account.name.trim().length < 2 || !emailValid(account.email)) return `${title}의 이름과 이메일을 확인해 주세요.`;
+  if (account.password.length < 12 || account.password.length > 200 || !/\d/.test(account.password) || !/[^A-Za-z0-9\s]/.test(account.password)) return `${title} 비밀번호는 숫자·특수문자를 포함해 12~200자로 입력해 주세요.`;
+  return '';
+};
 const accountRoles: Array<{ key: AccountKey; title: string; hint: string }> = [
   { key: 'master', title: '관리자', hint: '계정을 관리하고 정산을 확인합니다.' },
   { key: 'operatorA', title: '매장 운영자 A', hint: '자료를 올리고 매월 정산을 확정합니다.' },
@@ -111,9 +118,8 @@ export function setupStepError(form: OdaSetupForm, step: number): string {
   }
   if (step === 2) {
     for (const { key, title } of accountRoles) {
-      const account = form[key];
-      if (account.name.trim().length < 2 || !emailValid(account.email)) return `${title}의 이름과 이메일을 확인해 주세요.`;
-      if (account.password.length < 12 || account.password.length > 200 || !/\d/.test(account.password) || !/[^A-Za-z0-9\s]/.test(account.password)) return `${title} 비밀번호는 숫자·특수문자를 포함해 12~200자로 입력해 주세요.`;
+      const error = accountError(form[key], title);
+      if (error) return error;
     }
     if (new Set(accountRoles.map(({ key }) => form[key].email.trim().toLowerCase())).size !== 3) return '관리자·A·B는 서로 다른 이메일을 사용해 주세요.';
   }
@@ -121,9 +127,11 @@ export function setupStepError(form: OdaSetupForm, step: number): string {
 }
 
 export function OdaSetup({ initialToken, onCreated, online = false, expiresAt = '', expired = false }: {
-  initialToken: string; onCreated: (storeName: string) => void; online?: boolean; expiresAt?: string; expired?: boolean;
+  initialToken: string; onCreated: (result: CreatedSetup) => void; online?: boolean; expiresAt?: string; expired?: boolean;
 }) {
   const [form, setForm] = useState(emptyForm);
+  const [mode, setMode] = useState<EnrollmentMode>('master-only');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [step, setStep] = useState(0);
   const [token, setToken] = useState(initialToken);
   const [tokenEntered, setTokenEntered] = useState(Boolean(initialToken));
@@ -132,7 +140,8 @@ export function OdaSetup({ initialToken, onCreated, online = false, expiresAt = 
   const [error, setError] = useState('');
   const headingRef = useRef<HTMLHeadingElement>(null);
   const steps = ['매장', '사업자', '계정', '확인'];
-  useEffect(() => { headingRef.current?.focus(); }, [step]);
+  useEffect(() => { headingRef.current?.focus(); }, [step, mode, tokenEntered]);
+  const changeMode = (next: EnrollmentMode) => { setMode(next); setStep(0); setError(''); setConfirmed(false); setPasswordConfirmation(''); };
   const updateStore = (key: 'name' | 'code' | 'openDate', value: string) => setForm((current) => ({ ...current, store: { ...current.store, [key]: value } }));
   const updateBusiness = (target: 'headquarters' | 'store', key: keyof Business, value: string) => setForm((current) => target === 'headquarters'
     ? { ...current, headquarters: { ...current.headquarters, [key]: value } }
@@ -142,41 +151,57 @@ export function OdaSetup({ initialToken, onCreated, online = false, expiresAt = 
     event.preventDefault();
     if (busy) return;
     setError('');
-    const validation = step < 3 ? setupStepError(form, step) : [0, 1, 2].map((index) => setupStepError(form, index)).find(Boolean);
+    const validation = mode === 'master-only' ? accountError(form.master, '관리자') : step < 3 ? setupStepError(form, step) : [0, 1, 2].map((index) => setupStepError(form, index)).find(Boolean);
     if (validation) { setError(validation); return; }
-    if (step < 3) { setStep((value) => value + 1); return; }
-    if (!confirmed) { setError('등록할 정보와 저장 위치를 확인해 주세요.'); return; }
+    if (mode === 'master-only' && form.master.password !== passwordConfirmation) { setError('비밀번호 확인이 일치하지 않습니다. 다시 입력해 주세요.'); return; }
+    if (mode === 'full' && step < 3) { setStep((value) => value + 1); return; }
+    if (mode === 'full' && !confirmed) { setError('등록할 정보와 저장 위치를 확인해 주세요.'); return; }
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) { setError(online ? '운영 관리자가 발급한 일회성 설정 키를 입력해 주세요.' : 'Start-ODA.command를 다시 열어 자동으로 열린 화면에서 설정을 계속하세요.'); return; }
     if (online ? !usesOnlineOdaSetup(window.location.origin) : !usesLocalOdaSetup(window.location.origin)) { setError(online ? '등록된 HTTPS ODA 주소에서 다시 열어 주세요.' : 'ODA 실행 파일로 이 컴퓨터에서 다시 열어 주세요.'); return; }
-    if (online && (expired || !expiresAt || Date.now() >= Date.parse(expiresAt))) { setError('설정 키가 만료됐습니다. 운영 관리자에게 새 설정 키를 요청해 주세요.'); return; }
+    if (online && (expired || !Number.isFinite(Date.parse(expiresAt)) || Date.now() >= Date.parse(expiresAt))) { setError('설정 키가 만료됐습니다. 운영 관리자에게 새 설정 키를 요청해 주세요.'); return; }
     setBusy(true);
     try {
       const cleanBusiness = (value: Business) => Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, key === 'businessNumber' ? entry.replace(/[-\s]/g, '') : entry.trim()])) as Business;
       const cleanAccount = (value: Account) => ({ name: value.name.trim(), email: value.email.trim().toLowerCase(), password: value.password });
-      const response = await fetch(SETUP_PATH, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', ...(online ? { 'x-oda-setup-token': token } : {}) }, body: JSON.stringify({
-        ...(online ? {} : { token }), headquarters: cleanBusiness(form.headquarters), store: { code: form.store.code.trim(), name: form.store.name.trim(), ...(form.store.openDate ? { openDate: form.store.openDate } : {}), business: cleanBusiness(form.store.business) },
+      const payload = mode === 'master-only' ? { mode: 'master-only', master: cleanAccount(form.master) } : {
+        headquarters: cleanBusiness(form.headquarters), store: { code: form.store.code.trim(), name: form.store.name.trim(), ...(form.store.openDate ? { openDate: form.store.openDate } : {}), business: cleanBusiness(form.store.business) },
         master: cleanAccount(form.master), operatorA: cleanAccount(form.operatorA), partnerB: cleanAccount(form.partnerB),
-      }) });
-      const result = await response.json().catch(() => null) as { created?: boolean; storeName?: string; error?: { code?: string; message?: string } } | null;
+      };
+      const response = await fetch(SETUP_PATH, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', ...(online ? { 'x-oda-setup-token': token } : {}) }, body: JSON.stringify({ ...(online ? {} : { token }), ...payload }) });
+      const result = await response.json().catch(() => null) as { created?: boolean; storeName?: string; masterName?: string; error?: { code?: string; message?: string } } | null;
       if (!response.ok || result?.created !== true) {
-        if (response.status === 409) throw new Error('이미 등록된 매장이 있습니다. 화면을 새로고침한 뒤 로그인해 주세요.');
+        if (response.status === 409) throw new Error('이미 등록된 계정 또는 매장이 있습니다. 화면을 새로고침한 뒤 로그인해 주세요.');
         if (result?.error?.code === 'ODA_SETUP_EXPIRED') throw new Error('설정 키가 만료됐습니다. 운영 관리자에게 새 설정 키를 요청해 주세요.');
         if (response.status === 401 || response.status === 403) throw new Error(online ? '설정 키 또는 접속 주소를 확인해 주세요. 운영 관리자가 발급한 일회성 설정 키가 필요합니다.' : '설정 연결을 확인할 수 없습니다. Start-ODA.command를 다시 열어 자동으로 열린 화면에서 설정을 계속하세요.');
         throw new Error(result?.error?.message || (online ? '등록을 완료하지 못했습니다. 서버 연결을 확인하고 다시 시도해 주세요.' : '등록을 완료하지 못했습니다. 실행 창을 확인하고 다시 시도해 주세요.'));
       }
-      const name = result.storeName || form.store.name;
-      setToken(''); setForm(emptyForm());
-      onCreated(name);
+      const created = { storeName: result.storeName || form.store.name, setupMode: mode, masterName: result.masterName || form.master.name.trim() };
+      setToken(''); setForm(emptyForm()); setPasswordConfirmation('');
+      onCreated(created);
     } catch (caught) { setError(caught instanceof Error ? caught.message : '등록을 완료하지 못했습니다. 다시 시도해 주세요.'); }
     finally { setBusy(false); }
   }
   if (online && expired) return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card"><p className="oda-setup-kicker">ODA · 온라인 첫 설정</p><h1>설정 키가 만료됐습니다</h1><p role="alert">운영 관리자에게 새 일회성 설정 키를 요청해 주세요. 매장이나 계정은 등록하지 않았습니다.</p></section></main>;
-  if (!tokenEntered && online) return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card"><p className="oda-setup-kicker">ODA · 온라인 첫 설정</p><h1>일회성 설정 키를 입력해 주세요</h1><p>운영 관리자가 발급한 키가 있어야 첫 매장과 계정을 등록할 수 있습니다.</p><form onSubmit={(event) => {
+  if (!tokenEntered && online) return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card"><p className="oda-setup-kicker">ODA · 온라인 첫 설정</p><h1>일회성 설정 키를 입력해 주세요</h1><p>운영 관리자가 발급한 키가 있어야 첫 관리자 계정을 등록할 수 있습니다.</p><form onSubmit={(event) => {
     event.preventDefault();
     if (!/^[A-Za-z0-9_-]{43,256}$/.test(token)) { setError('발급받은 설정 키 전체를 입력해 주세요.'); return; }
     setError(''); setTokenEntered(true);
   }}><label htmlFor="setup-token">일회성 설정 키<input id="setup-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} minLength={43} maxLength={256} autoComplete="off" autoCapitalize="off" spellCheck={false} required /></label><p className="oda-setup-help">설정 키는 이 화면에서만 사용하며, 등록이 끝나면 다시 사용할 수 없습니다.</p>{expiresAt && <p>사용 기한: {new Date(expiresAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (한국 시간)</p>}{error && <p className="form-alert" role="alert">{error}</p>}<footer className="oda-setup-actions"><Button type="submit">첫 설정 시작</Button></footer></form></section></main>;
   if (!tokenEntered) return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card"><p className="oda-setup-kicker">ODA · 첫 실행 설정</p><h1>ODA 실행 파일에서 시작해 주세요</h1><p>Start-ODA.command를 다시 열어 자동으로 열린 화면에서 설정을 계속하세요.</p><p className="oda-setup-notice">설정 중 화면을 새로고침하거나 주소를 직접 입력하면 최초 설정 연결이 끊어질 수 있습니다. 실행 파일을 다시 열면 저장된 자료는 유지됩니다.</p></section></main>;
+  if (mode === 'master-only') return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card">
+    <header><p className="oda-setup-kicker">ODA · 첫 설정</p><h1 ref={headingRef} tabIndex={-1}>내 관리자 계정으로 시작하기</h1><p>본인 계정만 만들면 바로 시작할 수 있습니다. 사업자·매장 정보와 다른 담당자는 로그인 후 등록해 주세요.</p></header>
+    <form onSubmit={submit} noValidate>
+      <div className="oda-setup-fields">
+        <label htmlFor="setup-master-name">이름<input id="setup-master-name" autoComplete="name" required maxLength={100} value={form.master.name} onChange={(event) => updateAccount('master', 'name', event.target.value)} /></label>
+        <label htmlFor="setup-master-email">로그인 이메일<input id="setup-master-email" type="email" autoComplete="username" autoCapitalize="off" spellCheck={false} required value={form.master.email} onChange={(event) => updateAccount('master', 'email', event.target.value)} /></label>
+        <label htmlFor="setup-master-password">비밀번호<input id="setup-master-password" type="password" autoComplete="new-password" minLength={12} maxLength={200} required value={form.master.password} onChange={(event) => updateAccount('master', 'password', event.target.value)} /><small>숫자·특수문자를 포함한 12자 이상</small></label>
+        <label htmlFor="setup-master-password-confirm">비밀번호 확인<input id="setup-master-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={200} required value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} /></label>
+      </div>
+      <StorageNotice online={online} />
+      {error && <p className="form-alert" role="alert">{error}</p>}
+      <footer className="oda-setup-actions"><Button type="button" variant="secondary" disabled={busy} onClick={() => changeMode('full')}>사업자·매장 함께 등록</Button><Button type="submit" disabled={busy}>{busy ? '등록하는 중…' : '관리자 계정 만들기'}</Button></footer>
+    </form>
+  </section></main>;
   return <main className="oda-setup-shell" id="main-content"><section className="oda-setup-card">
     <header><p className="oda-setup-kicker">ODA · 첫 실행 설정</p><h1>매장 정산을 시작할 준비</h1><p>사업자 정보와 담당 계정을 한 번 등록하면, 다음부터 로그인 후 바로 월 정산을 시작합니다.</p></header>
     <ol className="oda-setup-progress" aria-label="설정 진행 단계">{steps.map((title, index) => <li key={title} className={step === index ? 'current' : step > index ? 'done' : ''} aria-current={step === index ? 'step' : undefined}><span>{index + 1}</span>{title}</li>)}</ol>
@@ -194,7 +219,7 @@ export function OdaSetup({ initialToken, onCreated, online = false, expiresAt = 
         <label className="oda-setup-check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />사업자·담당자 정보를 확인했고, {online ? 'ODA 전용 온라인 공간' : '이 컴퓨터'}에 자료가 저장됨을 이해했습니다.</label>
       </>}
       {error && <p className="form-alert" role="alert">{error}</p>}
-      <footer className="oda-setup-actions">{step > 0 && <Button type="button" variant="secondary" disabled={busy} onClick={() => { setStep((value) => value - 1); setError(''); }}>이전</Button>}<Button type="submit" disabled={busy || (step === 3 && !confirmed)}>{busy ? '등록하는 중…' : step === 3 ? '매장과 계정 등록' : '다음'}</Button></footer>
+      <footer className="oda-setup-actions"><Button type="button" variant="secondary" disabled={busy} onClick={() => changeMode('master-only')}>관리자 계정만 먼저 만들기</Button>{step > 0 && <Button type="button" variant="secondary" disabled={busy} onClick={() => { setStep((value) => value - 1); setError(''); }}>이전</Button>}<Button type="submit" disabled={busy || (step === 3 && !confirmed)}>{busy ? '등록하는 중…' : step === 3 ? '매장과 계정 등록' : '다음'}</Button></footer>
     </form>
   </section></main>;
 }

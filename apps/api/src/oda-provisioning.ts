@@ -4,24 +4,33 @@ import type { StateRepository } from '@ofd/db';
 import { z } from 'zod';
 import { audit } from './events.ts';
 
-const business = z.object({
+export const odaBusinessSchema = z.object({
   businessNumber: z.string().trim().regex(/^\d{10}$/, '사업자등록번호는 숫자 10자리입니다.'),
   legalName: z.string().trim().min(1).max(200), representativeName: z.string().trim().min(1).max(100),
   address: z.string().trim().min(1).max(500), businessType: z.string().trim().min(1).max(100),
   businessCategory: z.string().trim().min(1).max(100), email: z.string().trim().email().max(254),
 }).strict();
 const person = z.object({ name: z.string().trim().min(2).max(100), email: z.string().trim().email().max(254) }).strict();
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+export const odaOpenDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
   const parsed = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }, '실제 개업일을 확인해 주세요.');
 export const odaProvisionSchema = z.object({
-  headquarters: business,
-  store: z.object({ code: z.string().trim().min(1).max(40), name: z.string().trim().min(1).max(200), business, openDate: date.optional() }).strict(),
+  headquarters: odaBusinessSchema,
+  store: z.object({ code: z.string().trim().min(1).max(40), name: z.string().trim().min(1).max(200), business: odaBusinessSchema, openDate: odaOpenDateSchema.optional() }).strict(),
   master: person, operatorA: person, partnerB: person,
 }).strict().refine(config => new Set([config.master.email, config.operatorA.email, config.partnerB.email].map(x => x.toLowerCase())).size === 3,
   '관리자, A, B는 서로 다른 이메일의 본인 계정이어야 합니다.');
 export type OdaProvisionInput = z.infer<typeof odaProvisionSchema>;
+
+export function emptyOdaBusiness(): Store['business'] {
+  return { businessNumber: '', legalName: '', representativeName: '', address: '', businessType: '', businessCategory: '', email: '' };
+}
+
+function requireInitialPasswords(passwords: readonly string[], count: number) {
+  if (passwords.length !== count || passwords.some(password => typeof password !== 'string' || password.length < 12 || password.length > 200 || !/\d/.test(password) || !/[^A-Za-z0-9\s]/.test(password)))
+    throw new DomainError('ODA_PASSWORD_REQUIRED', '계정마다 숫자·특수문자가 포함된 12자 이상의 비밀번호가 필요합니다.', 422);
+}
 
 export async function odaAlreadyInitialized(repository: StateRepository): Promise<boolean> {
   const types = ['store', 'actor', 'legal_entity', 'credential'] as const;
@@ -31,8 +40,7 @@ export async function odaAlreadyInitialized(repository: StateRepository): Promis
 
 export async function provisionOda(repository: StateRepository, input: unknown, passwords: readonly string[]) {
   const config = odaProvisionSchema.parse(input);
-  if (passwords.length !== 3 || passwords.some(password => typeof password !== 'string' || password.length < 12 || password.length > 200 || !/\d/.test(password) || !/[^A-Za-z0-9\s]/.test(password)))
-    throw new DomainError('ODA_PASSWORD_REQUIRED', '계정마다 숫자·특수문자가 포함된 12자 이상의 비밀번호가 필요합니다.', 422);
+  requireInitialPasswords(passwords, 3);
   // Hash before obtaining the database lock; weak passwords cannot create partial accounts.
   const hashes = passwords.map(password => hashPassword(password));
   return repository.exclusiveTransaction('oda:initial-provisioning', async tx => {
@@ -55,5 +63,28 @@ export async function provisionOda(repository: StateRepository, input: unknown, 
     ], audits: [audit(actors[0]!, 'system', store.id, 'oda.initial_provisioning', store.id, undefined,
       { storeId: store.id, actorIds: actors.map(actor => actor.id) })] });
     return { created: true as const, storeName: store.name };
+  });
+}
+
+/** Self-registration creates only the named master and a clearly marked logical workspace. */
+export async function provisionMasterOda(repository: StateRepository, input: unknown, password: string) {
+  const master = person.parse(input);
+  requireInitialPasswords([password], 1);
+  const passwordHash = hashPassword(password);
+  return repository.exclusiveTransaction('oda:initial-provisioning', async tx => {
+    if (await odaAlreadyInitialized(tx)) throw new DomainError('ODA_ALREADY_INITIALIZED', '이미 등록된 워크스테이션입니다. 기존 자료와 계정을 유지합니다.', 409);
+    const store: Store = { id: randomUUID(), code: `ODA_WORKSPACE_${randomUUID().slice(0, 8).toUpperCase()}`,
+      name: 'ODA 기본 작업공간', odaWorkspace: true, business: emptyOdaBusiness(), billingCycle: 'monthly',
+      paymentMethod: 'monthly_credit', notificationPhone: '', active: true, version: 1 };
+    const actor: Actor = { id: randomUUID(), name: master.name, role: 'hq_master', storeIds: [], active: true, authVersion: 1 };
+    const credential: UserCredential = { id: randomUUID(), actorId: actor.id, email: master.email.toLowerCase(), passwordHash,
+      failedAttempts: 0, mustChangePassword: false, version: 1 };
+    await tx.commit({ changes: [
+      { type: 'store', id: store.id, storeId: store.id, expectedVersion: null, value: store },
+      { type: 'actor', id: actor.id, expectedVersion: null, value: actor },
+      { type: 'credential', id: credential.id, expectedVersion: null, value: credential },
+    ], audits: [audit(actor, 'system', store.id, 'oda.master_initial_provisioning', store.id, undefined,
+      { setupMode: 'master-only', storeId: store.id, actorIds: [actor.id], odaWorkspace: true })] });
+    return { created: true as const, setupMode: 'master-only' as const, storeName: store.name, masterName: actor.name };
   });
 }

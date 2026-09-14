@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from './app.ts';
 import { registerOdaSetup, isOdaSetupEnabled } from './oda-setup.ts';
+import { provisionMasterOda, provisionOda } from './oda-provisioning.ts';
 
 const origin = 'http://127.0.0.1:4175';
 const token = 'setup-key-for-isolated-tests-01234567890123456789';
@@ -30,6 +31,55 @@ async function setup() {
 afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())); vi.restoreAllMocks(); });
 
 describe('ODA one-time local setup', () => {
+  it('self-registers only the master without business details and provides a blank logical workspace', async () => {
+    const { app, repository } = await setup();
+    const response = await app.inject({ method: 'POST', url: '/api/v2/oda-setup', headers,
+      payload: { token, mode: 'master-only', master: payload().master } });
+    expect(response.statusCode, response.body).toBe(201);
+    expect(response.json()).toEqual({ created: true, setupMode: 'master-only', storeName: 'ODA 기본 작업공간', masterName: '관리자' });
+    expect(await repository.list('legal_entity')).toHaveLength(0);
+    const actors = await repository.list<Actor>('actor');
+    expect(actors).toHaveLength(1);
+    expect(actors[0]).toMatchObject({ role: 'hq_master', storeIds: [], active: true });
+    const [store] = await repository.list<Store>('store');
+    expect(store).toMatchObject({ name: 'ODA 기본 작업공간', odaWorkspace: true, version: 1 });
+    expect(store?.code).toMatch(/^ODA_WORKSPACE_/);
+    expect(Object.values(store!.business).every(value => value === '')).toBe(true);
+    const credentials = await repository.list<UserCredential>('credential');
+    expect(credentials).toHaveLength(1);
+    expect(credentials[0]!.mustChangePassword).toBe(false);
+    expect(credentials[0]!.passwordHash).not.toBe(password);
+    const login = await app.inject({ method: 'POST', url: '/api/v2/auth/login', headers, payload: { email: 'master@example.test', password } });
+    expect(login.statusCode, login.body).toBe(200);
+    expect(login.json().mustChangePassword).toBe(false);
+    const cookie = String(login.headers['set-cookie']).split(';')[0]!;
+    const bootstrap = await app.inject({ method: 'GET', url: '/api/v2/bootstrap', headers: { ...headers, cookie } });
+    expect(bootstrap.statusCode, bootstrap.body).toBe(200);
+    expect(bootstrap.json().stores).toHaveLength(1);
+    expect(bootstrap.body).not.toContain(password);
+    const reused = await app.inject({ method: 'POST', url: '/api/v2/oda-setup', headers,
+      payload: { token, mode: 'master-only', master: payload().master } });
+    expect(reused.statusCode).toBe(409);
+  });
+
+  it('shares the same atomic first-registration lock across master-only and full setup', async () => {
+    const repository = new MemoryRepository();
+    const { token: _token, master, operatorA, partnerB, ...details } = payload();
+    const { password: _masterPassword, ...masterPerson } = master;
+    const { password: _operatorPassword, ...operatorPerson } = operatorA;
+    const { password: _partnerPassword, ...partnerPerson } = partnerB;
+    const results = await Promise.allSettled([
+      provisionMasterOda(repository, masterPerson, password),
+      provisionOda(repository, { ...details, master: masterPerson, operatorA: operatorPerson, partnerB: partnerPerson }, [password, password, password]),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'ODA_ALREADY_INITIALIZED' } });
+    expect(await repository.list('store')).toHaveLength(1);
+    const actorCount = (await repository.list('actor')).length;
+    expect([1, 3]).toContain(actorCount);
+    expect(await repository.list('credential')).toHaveLength(actorCount);
+    expect(await repository.list('legal_entity')).toHaveLength(actorCount === 1 ? 0 : 1);
+  });
   it('provisions distinct parties atomically and requires real login plus first password change', async () => {
     const { app, repository } = await setup();
     const initial = await app.inject({ method: 'GET', url: '/api/v2/oda-setup', headers });
@@ -144,6 +194,26 @@ describe('ODA authenticated online first setup', () => {
       { ...cloudEnv, WEB_ORIGIN: 'http://oda.example.test', PUBLIC_APP_URL: 'http://oda.example.test' },
       { ...cloudEnv, PUBLIC_APP_URL: 'https://other.example.test' }, { ...cloudEnv, WEB_ORIGIN: `${cloudOrigin}/path` }])
       expect(() => cloudSetup(config)).toThrow();
+  });
+
+  it('applies the same online token and expiry protection to master-only registration', async () => {
+    const { app, repository } = cloudSetup();
+    const input = { mode: 'master-only', master: payload().master };
+    const { 'x-oda-setup-token': _token, ...withoutToken } = cloudHeaders;
+    const unauthorized = await app.inject({ method: 'POST', url: '/api/v2/oda-setup', headers: withoutToken, payload: input });
+    expect(unauthorized.statusCode).toBe(403);
+    const invalid = await app.inject({ method: 'POST', url: '/api/v2/oda-setup', headers: cloudHeaders,
+      payload: { ...input, master: { ...input.master, password: 'weakpasswordonly' } } });
+    expect(invalid.statusCode).toBe(422);
+    expect(await repository.list('actor')).toHaveLength(0);
+    const created = await app.inject({ method: 'POST', url: '/api/v2/oda-setup', headers: cloudHeaders, payload: input });
+    expect(created.statusCode).toBe(201);
+    expect(await repository.list('actor')).toHaveLength(1);
+    expect(await repository.list('legal_entity')).toHaveLength(0);
+    const expired = cloudSetup({ ...cloudEnv, ODA_SETUP_EXPIRES_AT: '2001-01-01T00:00:00Z' });
+    const denied = await expired.app.inject({ method: 'POST', url: '/api/v2/oda-setup', headers: cloudHeaders, payload: input });
+    expect(denied.json().error.code).toBe('ODA_SETUP_EXPIRED');
+    expect(await expired.repository.list('actor')).toHaveLength(0);
   });
 
   it('requires the secret header, HTTPS and exact origin; body and URL tokens cannot authorize setup', async () => {

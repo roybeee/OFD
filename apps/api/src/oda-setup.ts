@@ -3,12 +3,18 @@ import { DomainError } from '@ofd/domain';
 import type { StateRepository } from '@ofd/db';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { odaAlreadyInitialized, provisionOda } from './oda-provisioning.ts';
+import { odaAlreadyInitialized, provisionMasterOda, provisionOda } from './oda-provisioning.ts';
 
 const initialAccount = z.object({ name: z.string(), email: z.string(), password: z.string().min(12).max(200) }).strict();
 const detailsSchema = z.object({ headquarters: z.unknown(), store: z.unknown(),
   master: initialAccount, operatorA: initialAccount, partnerB: initialAccount }).strict();
-const localRequestSchema = detailsSchema.extend({ token: z.string().min(32).max(256) }).strict();
+const masterOnlySchema = z.object({ mode: z.literal('master-only'), master: initialAccount }).strict();
+const setupDetailsSchema = z.union([detailsSchema, masterOnlySchema]);
+const localTokenSchema = z.object({ token: z.string().min(32).max(256) });
+const localRequestSchema = z.union([
+  detailsSchema.extend({ token: z.string().min(32).max(256) }).strict(),
+  masterOnlySchema.extend({ token: z.string().min(32).max(256) }).strict(),
+]);
 const digest = (value: string) => createHash('sha256').update(value).digest();
 const setupPath = '/api/v2/oda-setup';
 const setupHeader = 'x-oda-setup-token';
@@ -53,7 +59,7 @@ export function registerOdaSetup(app: FastifyInstance, repository: StateReposito
     if (request.headers.origin !== env.WEB_ORIGIN || (online && request.protocol !== 'https'))
       throw new DomainError('ODA_SETUP_ORIGIN', online ? '등록된 HTTPS ODA 화면에서 설정해 주세요.' : '이 컴퓨터의 ODA 화면에서 등록해 주세요.', 403);
     if (request.url.includes('?')) throw new DomainError('ODA_SETUP_URL', '설정 키는 주소의 쿼리 문자열로 전달할 수 없습니다.', 400);
-    const providedToken = online ? request.headers[setupHeader] : localRequestSchema.parse(request.body).token;
+    const providedToken = online ? request.headers[setupHeader] : localTokenSchema.parse(request.body).token;
     // Online secrets never enter the URL, parsed request body, error details, or persistent state.
     delete request.headers[setupHeader];
     if (typeof providedToken !== 'string' || providedToken.length > 256 || !timingSafeEqual(digest(token), digest(providedToken)))
@@ -61,8 +67,12 @@ export function registerOdaSetup(app: FastifyInstance, repository: StateReposito
     if (await odaAlreadyInitialized(repository)) throw new DomainError('ODA_ALREADY_INITIALIZED', '이미 등록된 워크스테이션입니다. 등록한 계정으로 로그인해 주세요.', 409);
     if (configuration && Date.now() >= configuration.expires)
       throw new DomainError('ODA_SETUP_EXPIRED', '설정 키가 만료됐습니다. 운영 관리자에게 새 설정 키를 요청해 주세요.', 403);
-    const body = online ? detailsSchema.parse(request.body) : localRequestSchema.parse(request.body);
+    const body = online ? setupDetailsSchema.parse(request.body) : localRequestSchema.parse(request.body);
     const { password: masterPassword, ...master } = body.master;
+    if ('mode' in body) {
+      const result = await provisionMasterOda(repository, master, masterPassword);
+      return reply.code(201).send(result);
+    }
     const { password: operatorPassword, ...operatorA } = body.operatorA;
     const { password: partnerPassword, ...partnerB } = body.partnerB;
     const result = await provisionOda(repository, { headquarters: body.headquarters, store: body.store, master, operatorA, partnerB },

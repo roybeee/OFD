@@ -49,9 +49,10 @@ function publicMonth(record: OdaRecord): OdaMonth {
   return data;
 }
 function capabilities(actor: Actor, storeId?: string) {
+  const canOperate = actor.role === "store_owner" || actor.role === "hq_master";
   return { edit: ["store_owner", "hq_finance", "hq_master"].includes(actor.role),
     confirmParty: actor.role === "store_owner" ? "A" as const : ["hq_finance", "hq_master"].includes(actor.role) && !!storeId && actor.storeIds.includes(storeId) ? "B" as const : null,
-    finalize: actor.role === "store_owner", pay: actor.role === "store_owner", reopen: actor.role === "store_owner" };
+    finalize: canOperate, pay: canOperate, reopen: canOperate };
 }
 function result(record: OdaRecord, actor: Actor) {
   return { data: publicMonth(record), summary: monthSummary(record), version: record.version,
@@ -71,7 +72,7 @@ async function scope(repository: StateRepository, actor: Actor, storeId: string,
   if (!actor.active || !["store_owner", "hq_finance", "hq_master", "auditor"].includes(actor.role)
     || (actor.role === "store_owner" && !actor.storeIds.includes(storeId))
     || (actor.role !== "store_owner" && actor.storeIds.length > 0 && !actor.storeIds.includes(storeId))
-    || (edit && !capabilities(actor).edit) || (owner && actor.role !== "store_owner")) {
+    || (edit && !capabilities(actor).edit) || (owner && !["store_owner", "hq_master"].includes(actor.role))) {
     throw new DomainError("ODA_FORBIDDEN", "이 매장의 월 정산을 처리할 권한이 없습니다.", 403);
   }
   if (!(await repository.get<Store>("store", storeId))?.active) throw new DomainError("ODA_STORE_NOT_FOUND", "운영 중인 매장을 찾을 수 없습니다.", 404);

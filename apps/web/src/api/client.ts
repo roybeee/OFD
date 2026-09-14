@@ -425,6 +425,26 @@ export async function mutateV2<T>(path: string, body: Record<string, unknown>, o
   }, true);
 }
 
+export type OdaBusinessDetails = {
+  businessNumber: string; legalName: string; representativeName: string; address: string;
+  businessType: string; businessCategory: string; email: string;
+};
+export type OdaAdminStore = { id: string; name: string; code: string; version: number; active: boolean;
+  odaWorkspace?: boolean; openDate?: string | null; business: OdaBusinessDetails };
+export type OdaStoreInput = { name: string; code?: string; openDate?: string | null; business?: OdaBusinessDetails };
+export function loadOdaAdminStores() {
+  return apiRequest<{ stores: OdaAdminStore[] }>('/oda/admin/stores', { method: 'GET', headers: { Accept: 'application/json' } }, true);
+}
+export function createOdaAdminStore(input: OdaStoreInput, idempotencyKey: string) {
+  return mutateV2<{ store: OdaAdminStore }>('/oda/admin/stores', input, { idempotencyKey });
+}
+export function updateOdaAdminStore(input: Partial<OdaStoreInput> & { id: string; expectedVersion: number; active?: boolean }, idempotencyKey: string) {
+  return apiRequest<{ store: OdaAdminStore }>('/oda/admin/stores', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, 'X-OFD': '1' },
+    body: JSON.stringify(input),
+  }, true);
+}
+
 async function apiRequest<T>(path: string, init: RequestInit, allowStepUp: boolean, observedGeneration = stepUpGeneration): Promise<T> {
   const response = await fetch(`${import.meta.env.VITE_API_BASE ?? '/api/v2'}${path}`, { credentials: 'same-origin', ...init });
   if (response.ok) {

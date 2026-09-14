@@ -1,9 +1,10 @@
 # ODA 워크스테이션 · 월 손익·정산
 
-OFD 기반 ODA 월 정산 서비스입니다. 계약 기반 월 손익, 증빙 업로드, 이익배분, 정산 확정·지급 기록, 엑셀 정산서를 제공합니다. 공용 PostgreSQL 호스트에서 OFD와 ODA의 데이터베이스·운영 계정을 분리하며, 온라인 최초 등록 화면에서 실제 매장과 관리자·A·B 계정을 입력합니다.
+OFD 기반 ODA 월 정산 서비스입니다. 계약 기반 월 손익, 증빙 업로드, 이익배분, 정산 확정·지급 기록, 엑셀 정산서를 제공합니다. 공용 PostgreSQL 호스트에서 OFD와 ODA의 데이터베이스·운영 계정을 분리합니다. **처음에는 사업자 정보나 A·B 계정 없이 마스터 계정만 등록해 시작합니다.**
 
 - 온라인 주소: [ODA 워크스테이션](https://oda-web-wpts.onrender.com). 웹/API 배포와 외부 접속 확인을 완료했습니다. [운영 배포 기록](docs/oda-shared-deployment.md)
-- 온라인 첫 설정: Render의 `oda-production-secrets` 그룹에 보관된 `ODA_SETUP_TOKEN`을 첫 설정 화면에 입력합니다. 키 값과 실제 사업자·계정 정보는 소스에 저장하지 않습니다. [최초 등록 안내](docs/oda-phase1.md#oda-첫-매장과-ab-계정-등록)
+- 온라인 첫 설정: Render의 `oda-production-secrets` 그룹에 보관된 일회성 `ODA_SETUP_TOKEN`과 본인의 이름·이메일·비밀번호를 입력합니다. 본인이 정한 마스터 비밀번호는 첫 로그인 때 다시 변경할 필요가 없습니다. 키 값과 실제 계정 정보는 소스에 저장하지 않습니다. [최초 등록 안내](docs/oda-phase1.md#oda-첫-매장과-ab-계정-등록)
+- 마스터 홈: 사업자 정보가 비어 있는 `ODA 기본 작업공간`에서 월 정산·증빙·정산서·매장·계정 관리를 시작합니다. 실제 매장·사업자 정보와 A·B 계정은 나중에 추가할 수 있습니다. 마스터의 정산 확정·지급 기록 권한과 실제 A·B의 개별 기준 확인은 구분합니다.
 - Mac 로컬 실행: Docker Desktop 준비 후 `Start-ODA.command`. [실행·종료·백업 안내](docs/oda-local.md)
 - 개발용 실행: `npm ci` 후 `npm run dev:oda` (테스트 전용 메모리 모드)
 - 운영 빌드: `npm run build:oda`
@@ -12,7 +13,7 @@ OFD 기반 ODA 월 정산 서비스입니다. 계약 기반 월 손익, 증빙 �
 - 현재 온라인 구성: `render.oda.shared.yaml` — ODA 전용 DB·운영 계정과 웹/API를 사용합니다. 정산 원본은 ODA DB에 저장하며 별도 ODA worker와 외부 발행·메일 공급자는 사용하지 않습니다.
 - 독립 인프라 대안: `render.oda.yaml`. [DB·계정 분리와 배포 절차](docs/oda-shared-deployment.md)
 
-배포 브랜치 `agent/oda-workstation-release`를 GitHub에 업로드했습니다. 앱 커밋 `60ea2ec`의 [V2 검사 실행 34900598013](https://github.com/roybeee/OFD/actions/runs/34900598013)에서 자동 테스트 514개 통과·ODA 네이티브 통합 검사 1개 건너뛰기, 실제 PostgreSQL smoke, 브라우저 안전 검사 3개·매장 흐름 검사 3개 통과를 확인했습니다. 실제 서버에서도 OFD·ODA의 상대 DB 접근 거절(SQLSTATE 42501), OFD API·worker의 분리 계정 운영, ODA API의 마이그레이션 11개 적용과 live 상태를 확인했습니다. 웹을 포함한 최신 적용 결과와 남은 실기기 검증 범위는 [배포 기록](docs/oda-shared-deployment.md)과 [1차 검증 범위](docs/oda-phase1.md#이번-개발본-검증-범위)를 따릅니다.
+배포 브랜치 `agent/oda-workstation-release`를 GitHub에 업로드했습니다. 선행 배포본 앱 커밋 `60ea2ec`의 [V2 검사 실행 34900598013](https://github.com/roybeee/OFD/actions/runs/34900598013)에서 자동 테스트 514개 통과·ODA 네이티브 통합 검사 1개 건너뛰기, 실제 PostgreSQL smoke, 브라우저 안전 검사 3개·매장 흐름 검사 3개 통과를 확인했습니다. 실제 서버에서도 OFD·ODA의 상대 DB 접근 거절(SQLSTATE 42501), OFD API·worker의 분리 계정 운영, ODA API의 마이그레이션 11개 적용과 live 상태를 확인했습니다. 마스터 단독 등록 변경을 포함한 최신 적용 결과와 남은 실기기 검증 범위는 [배포 기록](docs/oda-shared-deployment.md)과 [1차 검증 범위](docs/oda-phase1.md#이번-개발본-검증-범위)를 따릅니다.
 
 ---
 

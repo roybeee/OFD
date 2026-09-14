@@ -35,6 +35,7 @@ const sample = {
   partnerB: { name: '지원자', email: 'partner@example.test', password: 'Oda-partner-123!' },
 };
 async function completeForm() {
+  await click('사업자·매장 함께 등록');
   await enter('setup-store-name', sample.store.name); await enter('setup-store-code', sample.store.code); await click('다음');
   for (const target of ['headquarters', 'store'] as const)
     for (const [key, value] of Object.entries(target === 'headquarters' ? sample.headquarters : sample.store.business)) await enter(`setup-${target}-${key}`, value);
@@ -59,13 +60,56 @@ describe('ODA online setup', () => {
     await render();
     expect(container.textContent).toContain('일회성 설정 키를 입력해 주세요');
     expect(container.querySelector('#setup-store-name')).toBeNull();
+    expect(container.querySelector('#setup-master-name')).toBeNull();
     expect(container.querySelector<HTMLInputElement>('#setup-token')!.type).toBe('password');
     await enter('setup-token', token); await click('첫 설정 시작');
     expect(container.querySelector('#setup-token')).toBeNull();
-    expect(container.querySelector<HTMLInputElement>('#setup-store-name')!.value).toBe('');
+    expect(container.querySelector<HTMLInputElement>('#setup-master-name')!.value).toBe('');
+    expect(container.querySelector('#setup-store-name')).toBeNull();
     expect(container.textContent).not.toContain(token);
     expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(token);
     expect(window.localStorage.length + window.sessionStorage.length).toBe(0);
+  });
+
+  it('enrolls the owner without business or A/B accounts using only the setup header and shows direct login', async () => {
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST'
+      ? json({ created: true, setupMode: 'master-only', storeName: 'ODA 기본 작업공간', masterName: sample.master.name }, 201)
+      : json(status()));
+    vi.stubGlobal('fetch', fetchMock);
+    await render(); await enter('setup-token', token); await click('첫 설정 시작');
+    expect(container.querySelectorAll('input')).toHaveLength(4);
+    expect(container.querySelector('#setup-store-name')).toBeNull();
+    expect(container.querySelector('#setup-operatorA-name')).toBeNull();
+    expect(container.querySelector('#setup-partnerB-name')).toBeNull();
+    expect(container.textContent).toContain('ODA 전용 공간에 온라인 저장');
+    expect(container.textContent).toContain('올드페리도넛 자료와 구분');
+    for (const [key, value] of Object.entries(sample.master)) await enter(`setup-master-${key}`, value);
+    await enter('setup-master-password-confirm', sample.master.password);
+    await click('관리자 계정 만들기');
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0][1]?.headers).toMatchObject({ 'x-oda-setup-token': token });
+    expect(JSON.parse(String(posts[0][1]?.body))).toEqual({ mode: 'master-only', master: sample.master });
+    expect(container.textContent).toContain('관리자 계정이 준비됐습니다');
+    expect(container.textContent).toContain('본인 이메일과 비밀번호로 로그인');
+    expect(container.textContent).not.toContain('비밀번호를 변경');
+    expect(container.querySelector('input')).toBeNull();
+    expect(window.localStorage.length + window.sessionStorage.length).toBe(0);
+    await click('로그인으로 이동'); expect(container.textContent).toContain('정상 로그인 화면');
+  });
+
+  it('blocks a master-only submission if the online setup expires while the form is open', async () => {
+    window.history.replaceState({}, '', `/#setup=${token}`);
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => json(status()));
+    vi.stubGlobal('fetch', fetchMock);
+    await render();
+    for (const [key, value] of Object.entries(sample.master)) await enter(`setup-master-${key}`, value);
+    await enter('setup-master-password-confirm', sample.master.password);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse(expiresAt));
+    await click('관리자 계정 만들기');
+    expect(container.querySelector('[role=alert]')?.textContent).toContain('설정 키가 만료됐습니다');
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    expect(container.textContent).not.toContain('관리자 계정이 준비됐습니다');
   });
 
   it('removes the fragment before any request and submits the secret only as a header after reviewing online storage', async () => {

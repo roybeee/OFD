@@ -9,7 +9,7 @@ let root: Root;
 let container: HTMLDivElement;
 const token = 'a'.repeat(43);
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
-beforeEach(() => { container = document.createElement('div'); document.body.append(container); root = createRoot(container); window.history.replaceState({}, '', '/'); window.localStorage.clear(); });
+beforeEach(() => { container = document.createElement('div'); document.body.append(container); root = createRoot(container); window.history.replaceState({}, '', '/'); window.localStorage.clear(); window.sessionStorage.clear(); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function render() { await act(async () => root.render(<StrictMode><OdaSetupGate><p>정상 로그인 화면</p></OdaSetupGate></StrictMode>)); }
 async function enter(id: string, value: string) { await act(async () => { const element = container.querySelector<HTMLInputElement>(`#${id}`)!; expect(element).toBeTruthy(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); }); }
@@ -22,6 +22,7 @@ const form: OdaSetupForm = {
   partnerB: { name: '지원자', email: 'partner@example.com', password: 'Oda-partner-123!' },
 };
 async function completeForm() {
+  await click('사업자·매장 함께 등록');
   for (const key of ['name', 'code', 'openDate'] as const) await enter(`setup-store-${key}`, form.store[key]);
   await click('다음');
   for (const target of ['headquarters', 'store'] as const) for (const [key, value] of Object.entries(target === 'headquarters' ? form.headquarters : form.store.business)) await enter(`setup-${target}-${key}`, value);
@@ -66,10 +67,55 @@ describe('ODA local initialization', () => {
     window.history.replaceState({}, '', `/#setup=${token}`);
     vi.stubGlobal('fetch', vi.fn(async () => json({ enabled: true, initialized: false })));
     await render();
+    expect(container.querySelector<HTMLInputElement>('#setup-master-name')!.value).toBe('');
+    expect(container.querySelector('#setup-store-name')).toBeNull();
+    await click('관리자 계정 만들기');
+    expect(container.querySelector('[role=alert]')?.textContent).toContain('이름과 이메일');
+    await click('사업자·매장 함께 등록');
     expect(container.querySelector<HTMLInputElement>('#setup-store-name')!.value).toBe('');
     await click('다음');
     expect(container.querySelector('[role=alert]')?.textContent).toContain('매장명과 매장 코드');
     expect(container.textContent).not.toContain('사업자등록증을 기준으로 입력해 주세요');
+    await click('관리자 계정만 먼저 만들기');
+    expect(container.querySelector('#setup-master-name')).not.toBeNull();
+    expect(container.querySelector('#setup-store-name')).toBeNull();
+    expect(container.querySelector('[role=alert]')).toBeNull();
+  });
+  it('creates only the master account by default with confirmed strong credentials and no business information', async () => {
+    window.history.replaceState({}, '', `/#setup=${token}`);
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST'
+      ? json({ created: true, setupMode: 'master-only', storeName: 'ODA 기본 작업공간', masterName: form.master.name }, 201)
+      : json({ enabled: true, initialized: false }));
+    vi.stubGlobal('fetch', fetchMock);
+    await render();
+    expect(container.querySelectorAll('input')).toHaveLength(4);
+    expect(container.querySelector('#setup-store-name')).toBeNull();
+    expect(container.querySelector('#setup-operatorA-name')).toBeNull();
+    expect(container.querySelector('#setup-partnerB-name')).toBeNull();
+    expect(container.textContent).toContain('이 컴퓨터에 저장 · 외부 공유 안 됨');
+    await enter('setup-master-name', ` ${form.master.name} `);
+    await enter('setup-master-email', ' MASTER@example.com ');
+    await enter('setup-master-password', 'weakpassword');
+    await click('관리자 계정 만들기');
+    expect(container.querySelector('[role=alert]')?.textContent).toContain('숫자·특수문자');
+    await enter('setup-master-password', form.master.password);
+    await enter('setup-master-password-confirm', 'Different-password-1!');
+    await click('관리자 계정 만들기');
+    expect(container.querySelector('[role=alert]')?.textContent).toContain('비밀번호 확인이 일치하지 않습니다');
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    await enter('setup-master-password-confirm', form.master.password);
+    await click('관리자 계정 만들기');
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0][1]?.body))).toEqual({ token, mode: 'master-only', master: form.master });
+    expect(posts[0][1]?.headers).not.toHaveProperty('x-oda-setup-token');
+    expect(container.textContent).toContain('관리자 계정이 준비됐습니다');
+    expect(container.textContent).toContain('본인 이메일과 비밀번호로 로그인');
+    expect(container.textContent).not.toContain('비밀번호를 변경');
+    expect(container.querySelector('input')).toBeNull();
+    expect(window.localStorage.length + window.sessionStorage.length).toBe(0);
+    await click('로그인으로 이동');
+    expect(container.textContent).toContain('정상 로그인 화면');
   });
   it('explains how to relaunch before asking for identity data if the setup token is missing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ enabled: true, initialized: false })));

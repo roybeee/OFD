@@ -26,6 +26,7 @@ import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipme
 import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
 import { registerOdaRoutes } from "./oda-routes.ts";
 import { isOdaSetupEnabled, registerOdaSetup } from "./oda-setup.ts";
+import { registerOdaAdminRoutes } from "./oda-admin-routes.ts";
 import { audit as posAudit } from "./events.ts";
 
 export interface BuildAppOptions {
@@ -45,6 +46,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const env = options.env ?? process.env;
   const config = readProviderConfig(env);
   const odaSettlementOnly = config.odaSettlementOnly === true;
+  const odaWorkspace = env.WORKSTATION_BRAND === "oda"
+    && (odaSettlementOnly || config.appMode !== "production");
   const holidayCalendar = parseHolidayCalendar(env.KOREA_HOLIDAYS, config.appMode === "production" && !odaSettlementOnly);
   const repository = options.repository ?? createRepository(env);
   const requiredMigrations = await discoverMigrations();
@@ -219,12 +222,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return reply.code(204).send();
   });
   app.get("/api/v2/bootstrap", async (request) => {
-    const response = await service.bootstrap(request.actor);
-    if (!odaSettlementOnly) return response;
+    const response = await service.bootstrap(request.actor, { odaWorkspace });
+    const capabilities = response.capabilities as string[];
+    const odaCapabilities = odaWorkspace && request.actor.role === "hq_master" && request.actor.storeIds.length === 0
+      ? [...capabilities, "oda.master.manage"] : capabilities;
+    if (!odaSettlementOnly) return { ...response, capabilities: odaCapabilities };
     return { ...response,
       meta: { ...(response.meta as Record<string, unknown>), odaSettlementOnly: true, evidenceStorage: "postgres", emailProvider: "disabled" },
-      capabilities: (response.capabilities as string[]).filter(capability =>
-        ["oda.settlement.read", "oda.finance.read", "hq.accounts.manage", "hq.actors.manage"].includes(capability)),
+      capabilities: odaCapabilities.filter(capability =>
+        ["oda.settlement.read", "oda.finance.read", "hq.accounts.manage", "hq.actors.manage", "oda.master.manage"].includes(capability)),
     };
   });
 
@@ -1103,6 +1109,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   registerOdaRoutes(app, repository);
+  if (odaWorkspace) registerOdaAdminRoutes(app, repository);
   registerOdaSetup(app, repository, env);
 
   app.setErrorHandler((error, request, reply) => {

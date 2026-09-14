@@ -1,5 +1,6 @@
 import { isOdaBrand } from './lib/brand';
 import { OdaSettlementPage } from './pages/OdaSettlementPage';
+import { OdaMasterPage, OdaStoresPage } from './pages/OdaMasterPage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, changePasswordV2, loadBootstrap, logoutV2, registerStepUpRequester, stepUpV2 } from './api/client';
 import { createStepUpCoordinator } from './api/step-up-coordinator';
@@ -28,7 +29,7 @@ import { StoreOrdersPage } from './pages/StoreOrdersPage';
 import type { BootstrapData, PublicActor, Toast } from './types';
 import { browserPathFor, canAccessPath, defaultPathFor, logicalPathFromLocation, roleForPath } from './lib/access';
 
-const knownPaths = new Set(['/store/oda-settlement', '/hq/oda-settlement', '/store/home', '/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/sales', '/hq/products', '/hq/openings', '/hq/stores', '/hq/design', '/hq/leads', '/hq/audit', '/hq/accounts', '/hq/settings', '/driver/today', '/unauthorized']);
+const knownPaths = new Set(['/hq/oda-master', '/hq/oda-stores', '/store/oda-settlement', '/hq/oda-settlement', '/store/home', '/store/orders', '/store/documents', '/hq/orders', '/hq/delivery', '/hq/reconciliation', '/hq/invoices', '/hq/sales', '/hq/products', '/hq/openings', '/hq/stores', '/hq/design', '/hq/leads', '/hq/audit', '/hq/accounts', '/hq/settings', '/driver/today', '/unauthorized']);
 
 function initialPath() {
   const logicalPath = logicalPathFromLocation(window.location.pathname, import.meta.env.BASE_URL);
@@ -84,7 +85,8 @@ function WorkstationApp() {
     loadBootstrap()
       .then((result) => {
         if (!mounted) return;
-        if (postLoginRedirect.current) {
+        if (postLoginRedirect.current || (isOdaBrand && result.data.capabilities.includes('oda.master.manage')
+          && logicalPathFromLocation(window.location.pathname, import.meta.env.BASE_URL) === '/')) {
           const permittedPath = defaultPathFor(result.data.capabilities);
           postLoginRedirect.current = false;
           window.history.replaceState({}, '', browserPathFor(permittedPath, import.meta.env.BASE_URL));
@@ -129,9 +131,10 @@ function WorkstationApp() {
   const actorName = useMemo(() => data?.actor.name ?? '사용자', [data]);
 
   function navigate(nextPath: string) {
-    if (data && !canAccessPath(nextPath, data.capabilities)) return;
-    window.history.pushState({}, '', browserPathFor(nextPath, import.meta.env.BASE_URL));
-    setPath(nextPath);
+    const target = new URL(nextPath, window.location.origin);
+    if (target.origin !== window.location.origin || (data && !canAccessPath(target.pathname, data.capabilities))) return;
+    window.history.pushState({}, '', `${browserPathFor(target.pathname, import.meta.env.BASE_URL)}${target.search}${target.hash}`);
+    setPath(target.pathname);
     window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
 
@@ -201,6 +204,8 @@ function WorkstationApp() {
   return (
     <AppShell appMode={data.meta.appMode} role={role} path={path} actorName={actorName} actorRole={data.actor.role} storeName={data.store.name} deliveryCount={data.deliveries.length} capabilities={data.capabilities} menuOrder={data.menuOrder} onNavigate={navigate} onLogout={logout} logoutPending={logoutPending}>
       {logoutError && <div className="logout-recovery" role="alert"><div><strong>로그아웃을 완료하지 못했습니다</strong><p>{logoutError} 현재 로그인 상태는 유지됩니다.</p></div><Button type="button" variant="secondary" onClick={logout} disabled={logoutPending}>로그아웃 다시 시도</Button><Button type="button" variant="ghost" onClick={() => setLogoutError('')}>계속 사용</Button></div>}
+      {path === '/hq/oda-master' && <OdaMasterPage data={data} onNavigate={navigate} />}
+      {path === '/hq/oda-stores' && <OdaStoresPage onNavigate={navigate} notify={notify} onSaved={() => setRetryKey(value => value + 1)} />}
       {(path === '/store/oda-settlement' || path === '/hq/oda-settlement') && <OdaSettlementPage data={data} notify={notify} />}
       {path === '/store/home' && <StoreHomePage data={data} notify={notify} onNavigate={navigate} />}
       {path === '/store/orders' && <StoreOrdersPage data={data} notify={notify} refresh={() => setRetryKey((value) => value + 1)} />}

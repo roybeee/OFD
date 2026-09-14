@@ -12,6 +12,7 @@ const STORE = DEMO_IDS.storeDoksan;
 const base = `/api/v2/oda/${STORE}/${MONTH}`;
 const owner = { "x-demo-actor-id": DEMO_IDS.owner };
 const finance = { "x-demo-actor-id": DEMO_IDS.finance };
+const master = { "x-demo-actor-id": DEMO_IDS.master };
 const CSV = "날짜,유형,내용,금액,부가세,분류,채널,거래ID\n2026-08-31,매출,월 마감,33000000,3000000,매출,pos,S-01";
 const EXPENSE = "날짜,유형,내용,금액,부가세,분류,채널,거래ID\n2026-08-31,비용,8월 임차료,11000000,1000000,임차료,manual,E-01";
 async function setup(repository = createDemoRepository()) {
@@ -182,11 +183,75 @@ describe("ODA monthly settlement API", () => {
     expect(audits.some((item) => (item.metadata.lineChanges as unknown[])?.length)).toBe(true);
   });
 
-  it("cannot acknowledge both parties with the same identity after a role change", async () => {
+  it("lets a global master operate an agreed settlement without business registration and records the real operator", async () => {
+    const { app, repository } = await setup();
+    const store = (await repository.get<Store>("store", STORE))!;
+    await repository.commit({ changes: [{ type: "store", id: STORE, storeId: STORE, expectedVersion: 1,
+      value: { ...store, version: 2, business: { businessNumber: "", legalName: "", representativeName: "", address: "",
+        businessType: "", businessCategory: "", email: "" } } }] });
+    const version = await ready(app);
+    const view = (await app.inject({ method: "GET", url: base, headers: master })).json();
+    expect(view.capabilities).toEqual({ edit: true, confirmParty: null, finalize: true, pay: true, reopen: true });
+    expect((await app.inject({ method: "GET", url: `/api/v2/oda/${DEMO_IDS.storeHapjeong}/${MONTH}`, headers: master })).statusCode).toBe(200);
+    const finalized = await request(app, "/finalize", { expectedVersion: version }, master);
+    expect(finalized.statusCode, finalized.body).toBe(200);
+    expect(finalized.json().data.finalizedBy).toBe(DEMO_IDS.master);
+    expect((await request(app, "/reopen", { expectedVersion: 6, reason: "마스터 검토 후 재개방" }, finance)).statusCode).toBe(403);
+    const reopened = await request(app, "/reopen", { expectedVersion: 6, reason: "마스터 검토 후 재개방" }, master);
+    expect(reopened.statusCode, reopened.body).toBe(200);
+    expect(reopened.json().history[1].actorId).toBe(DEMO_IDS.master);
+    const refinalized = await request(app, "/finalize", { expectedVersion: 7 }, master);
+    expect(refinalized.statusCode, refinalized.body).toBe(200);
+    const payment = { expectedVersion: 8, date: "2026-09-10", reference: "실제 이체 기록 확인", amount: 9350000 };
+    expect((await request(app, "/paid", payment, finance)).statusCode).toBe(403);
+    expect((await request(app, "/paid", { ...payment, amount: 1 }, master)).statusCode).toBe(422);
+    const paid = await request(app, "/paid", payment, master);
+    expect(paid.statusCode, paid.body).toBe(200);
+    expect(paid.json().data.paidBy).toBe(DEMO_IDS.master);
+    expect(paid.json().data.policy.acknowledgements.A.actorId).toBe(DEMO_IDS.owner);
+    expect(paid.json().data.policy.acknowledgements.B.actorId).toBe(DEMO_IDS.finance);
+    expect((await request(app, "/reopen", { expectedVersion: 9, reason: "지급 이후 변경 요청" }, master)).statusCode).toBe(409);
+    const operations = (await repository.listAudit(100, [STORE])).filter((event) =>
+      ["ODA 월 정산 확정", "ODA 월 정산 재개방", "ODA 을 지급 완료 기록"].includes(event.action));
+    expect(operations).toHaveLength(4);
+    expect(operations.every((event) => event.actorId === DEMO_IDS.master && event.actorRole === "hq_master")).toBe(true);
+    const exported = await app.inject({ method: "GET", url: `${base}/export.xlsx`, headers: master });
+    expect(exported.statusCode, exported.body).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported.rawPayload as unknown as ExcelJS.Buffer);
+    expect(workbook.worksheets).toHaveLength(5);
+    expect((await app.inject({ method: "GET", url: `${base}/export.csv`, headers: master })).statusCode).toBe(200);
+  });
+
+  it("does not let master operational authority replace A/B agreement or expand an assigned store scope", async () => {
+    const { app, repository } = await setup();
+    const version = await ready(app);
+    const record = (await app.inject({ method: "GET", url: base, headers: master })).json().data;
+    const { acknowledgements: _acks, ...policy } = record.policy;
+    const changed = await request(app, "/save", { expectedVersion: version, policy: { ...policy, bVatPolicy: "none" } }, master);
+    expect(changed.statusCode, changed.body).toBe(200);
+    expect(changed.json().data.policy.acknowledgements).toEqual({});
+    const confirm = await request(app, "/confirm-policy", { expectedVersion: 6 }, master);
+    expect(confirm.statusCode).toBe(403);
+    expect(confirm.json().error.code).toBe("ODA_PARTY_ASSIGNMENT_REQUIRED");
+    expect((await request(app, "/confirm-policy", { expectedVersion: 6, party: "A", actorId: DEMO_IDS.owner }, master)).statusCode).toBe(422);
+    const blocked = await request(app, "/finalize", { expectedVersion: 6 }, master);
+    expect(blocked.statusCode).toBe(422);
+    expect(blocked.json().error.code).toBe("ODA_FINALIZE_BLOCKED");
+    expect(blocked.json().error.details.some((issue: { code: string }) => issue.code === "policy_acknowledgements_missing")).toBe(true);
+    const actor = (await repository.get<Actor>("actor", DEMO_IDS.master))!;
+    await repository.commit({ changes: [{ type: "actor", id: actor.id, expectedVersion: 1,
+      value: { ...actor, storeIds: [DEMO_IDS.storeHapjeong] } }] });
+    expect((await request(app, "/finalize", { expectedVersion: 6 }, master)).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: base, headers: master })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: `/api/v2/oda/${DEMO_IDS.storeHapjeong}/${MONTH}`, headers: master })).statusCode).toBe(200);
+  });
+
+  it.each(["hq_finance", "hq_master"] as const)("cannot acknowledge both parties with the same identity after changing to %s", async (role) => {
     const { app, repository } = await setup();
     expect((await request(app, "/confirm-policy", { expectedVersion: 0 })).statusCode).toBe(200);
     const actor = (await repository.get<Actor>("actor", DEMO_IDS.owner))!;
-    await repository.commit({ changes: [{ type: "actor", id: actor.id, expectedVersion: 1, value: { ...actor, role: "hq_finance" } }] });
+    await repository.commit({ changes: [{ type: "actor", id: actor.id, expectedVersion: 1, value: { ...actor, role } }] });
     const duplicateIdentity = await request(app, "/confirm-policy", { expectedVersion: 1 });
     expect(duplicateIdentity.statusCode).toBe(403);
     expect(duplicateIdentity.json().error.code).toBe("ODA_DUAL_SIGNATURE");

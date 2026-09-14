@@ -105,6 +105,8 @@ export interface Store {
   active: boolean;
   version: number;
   /* V1 매장 대장 이식 필드 — 기존 payload 하위호환을 위해 선택 필드 */
+  /** ODA logical workspace without registered business details; never represents a legal entity. */
+  odaWorkspace?: boolean;
   storeKind?: "직영" | "가맹";
   region?: string;
   roadAddress?: string;

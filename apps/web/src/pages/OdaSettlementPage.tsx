@@ -35,16 +35,24 @@ const money = (value: number | null) => value === null ? '확인 필요' : `${nu
 const dateTime = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date); };
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const statusLabel = (status: string) => status === 'paid' ? '지급 완료' : status === 'finalized' ? '정산 확정' : '정산 준비 중';
+export function odaSettlementLocation(search: string, stores: ReadonlyArray<{ id: string }>) {
+  const params = new URLSearchParams(search);
+  const value = params.get('tab');
+  const tab: Tab = value === 'transactions' || value === 'policy' || value === 'history' ? value : 'overview';
+  const storeId = params.get('store') ?? '';
+  return { tab, storeId: stores.some(store => store.id === storeId) ? storeId : '' };
+}
 
 export function OdaSettlementPage({ data, notify }: Props) {
-  const [storeId, setStoreId] = useState(data.store.id || data.stores[0]?.id || '');
+  const location = odaSettlementLocation(window.location.search, data.stores);
+  const [storeId, setStoreId] = useState(location.storeId || data.store.id || data.stores[0]?.id || '');
   const [month, setMonth] = useState((data.meta.operationalDate || today()).slice(0, 7));
   const [state, setState] = useState<OdaResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [readingUpload, setReadingUpload] = useState(false);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(location.tab);
   const [filter, setFilter] = useState<Filter>('review');
   const [search, setSearch] = useState('');
   const [visibleLimit, setVisibleLimit] = useState(50);
@@ -57,6 +65,7 @@ export function OdaSettlementPage({ data, notify }: Props) {
   const [paymentDate, setPaymentDate] = useState(today());
   const [paymentReference, setPaymentReference] = useState('');
   const version = useRef(0);
+  const initialFocus = useRef(window.location.hash === '#oda-exports' || window.location.hash === '#oda-payment' ? window.location.hash.slice(1) : '');
   const context = useRef('');
   context.current = `${storeId}/${month}`;
 
@@ -73,6 +82,11 @@ export function OdaSettlementPage({ data, notify }: Props) {
     finally { if (!signal?.aborted && context.current === requestedContext) setLoading(false); }
   }, [storeId, month, accept]);
   useEffect(() => { const controller = new AbortController(); setState(null); setShowManual(false); setShowUpload(false); void load(controller.signal); return () => controller.abort(); }, [load, data.actor.id]);
+  useEffect(() => {
+    if (!state || !initialFocus.current) return;
+    const element = document.getElementById(initialFocus.current);
+    if (element) { element.scrollIntoView?.({ block: 'center' }); element.focus({ preventScroll: true }); initialFocus.current = ''; }
+  }, [state]);
 
   async function mutate(action: string, body: Record<string, unknown> = {}, message = '저장했습니다.') {
     if (busy) return false;
@@ -139,14 +153,14 @@ export function OdaSettlementPage({ data, notify }: Props) {
         <div className="oda-steps"><div className={`oda-step ${hasLines ? 'done' : 'active'}`}><span>{hasLines ? <Check size={16} /> : '1'}</span><div><strong>자료 넣기</strong><small>매출·비용 파일 한 번에</small></div></div><div className={`oda-step ${hasLines && !summary?.canFinalize && !locked ? 'active' : summary?.canFinalize || locked ? 'done' : ''}`}><span>{summary?.canFinalize || locked ? <Check size={16} /> : '2'}</span><div><strong>확인할 항목만</strong><small>{reviewLines.length ? `${reviewLines.length}건 확인 필요` : hasLines ? '정산 기준과 증빙 확인' : '중복·누락·분류 확인'}</small></div></div><div className={`oda-step ${summary?.canFinalize || locked ? 'active' : ''}`}><span>{locked ? <Check size={16} /> : '3'}</span><div><strong>정산서 확정</strong><small>원본 보관 · 지급 기록</small></div></div></div>
         <div className="oda-layout"><div className="oda-stack">
           {editable && hasLines && !showUpload && <section className="oda-card"><div className="oda-card-head"><div><h2>이번 달 자료가 모였습니다</h2><p>자료 {state.data.sources.length}개 · 거래 {state.data.lines.length}건</p></div><Button variant="secondary" onClick={() => setShowUpload(true)}><Plus size={17} /> 자료 추가</Button></div></section>}
-          <section className="oda-card"><div className="oda-card-head"><div><h2>한눈에 보는 손익계산서</h2><p>{month.replace('-', '년 ')}월 · {state.data.policy.vatBasis === 'net' ? '공급가액 기준' : state.data.policy.vatBasis === 'gross' ? '부가세 포함 기준' : '부가세 기준은 정산 기준에서 확인하세요'}</p></div><div className="oda-inline-tools" aria-label="정산서 내려받기"><a className="button button-secondary" href={odaUrl(storeId, month, '/export.xlsx')}><ArrowDownToLine size={16} /><span>엑셀</span></a><a className="button button-secondary" href={odaUrl(storeId, month, '/export.csv')}><ArrowDownToLine size={16} /><span>CSV</span></a></div></div>
+          <section className="oda-card" id="oda-exports" tabIndex={-1}><div className="oda-card-head"><div><h2>한눈에 보는 손익계산서</h2><p>{month.replace('-', '년 ')}월 · {state.data.policy.vatBasis === 'net' ? '공급가액 기준' : state.data.policy.vatBasis === 'gross' ? '부가세 포함 기준' : '부가세 기준은 정산 기준에서 확인하세요'}</p></div><div className="oda-inline-tools" aria-label="정산서 내려받기"><a className="button button-secondary" href={odaUrl(storeId, month, '/export.xlsx')}><ArrowDownToLine size={16} /><span>엑셀</span></a><a className="button button-secondary" href={odaUrl(storeId, month, '/export.csv')}><ArrowDownToLine size={16} /><span>CSV</span></a></div></div>
             {!hasLines ? <div className="oda-empty"><ReceiptText /><strong>첫 자료를 넣으면 손익이 계산됩니다</strong><p>매출·비용은 귀속월 기준으로 합산하고,<br />계좌 입금은 중복 매출로 더하지 않습니다.</p></div> : <div className="oda-pnl"><div className="oda-pnl-row"><strong>매출 합계</strong><b>{money(summary!.revenue)}</b></div>{summary!.revenueByChannel.map((item) => <div className="oda-pnl-row sub" key={item.category}><span>{channelLabel(item.category) || '기타 매출'}</span><b>{money(item.amount)}</b></div>)}<div className="oda-pnl-row"><strong>운영 비용</strong><b>− {money(summary!.expenses)}</b></div>{summary!.expenseByCategory.map((item) => <div className="oda-pnl-row sub" key={item.category}><span>{categoryLabel(item.category)} <span aria-label="거래 수">· {item.count}건</span></span><b>{money(item.amount)}</b></div>)}<div className="oda-pnl-row total"><span>배분 전 영업이익</span><b>{money(summary!.profit)}</b></div></div>}
             <p className="oda-pnl-note">A 우선배분금 300만원은 비용 차감 후 이익에서 배분합니다. 계약에 따라 감가상각은 비용에서 제외합니다. 시설 투자·보증금·배분금은 앱에서 운영비와 별도로 분류합니다.</p>
           </section>
           {hasLines && <section className="oda-card"><div className="oda-card-head"><div><h2>확인할 항목 {reviewLines.length}건</h2><p>확인된 거래는 다시 입력하지 않습니다. 금액·분류·증빙의 예외만 확인하세요.</p></div><Button variant="secondary" onClick={gotoReview}>확인하기 <ArrowRight size={16} /></Button></div>{reviewLines.length ? <div className="oda-card-body"><ul className="oda-issues">{reviewLines.slice(0, 4).map((line) => <li key={line.id}><AlertTriangle size={16} /><span>{line.description} · {money(line.amount)}<br />{lineIssues.find((issue) => issue.lineId === line.id)?.message || '금액·분류와 원본을 확인해 주세요.'}</span></li>)}</ul></div> : <div className="oda-card-body"><p><Check size={17} /> 거래 확인이 완료되었습니다. 정산 기준과 양측 확인을 마치면 확정할 수 있습니다.</p></div>}</section>}
         </div><aside className="oda-stack">
           <SplitCard summary={summary!} hasLines={hasLines} policy={state.data.policy} />
-          <section className="oda-card"><div className="oda-card-head"><div><h2>{locked ? '확정된 정산서' : '정산 확인'}</h2><p>{locked ? '변경 시 사유를 남기고 재정산합니다.' : '양측이 같은 기준을 확인합니다.'}</p></div></div><div className="oda-card-body">
+          <section className="oda-card" id="oda-payment" tabIndex={-1}><div className="oda-card-head"><div><h2>{locked ? '확정된 정산서' : '정산 확인'}</h2><p>{locked ? '변경 시 사유를 남기고 재정산합니다.' : '양측이 같은 기준을 확인합니다.'}</p></div></div><div className="oda-card-body">
             {policyIssues.length > 0 && !locked && <ul className="oda-issues">{policyIssues.slice(0, 4).map((issue) => <li key={issue.code}><AlertTriangle size={16} /><span>{issue.message}</span></li>)}{policyIssues.length > 4 && <li>그 외 {policyIssues.length - 4}개 항목은 정산 기준에서 확인하세요.</li>}</ul>}
             <Approvals policy={state.data.policy} />
             <div className="oda-confirm-actions">{!locked && <Button variant="secondary" onClick={() => setTab('policy')}>정산 기준 확인 <ArrowRight size={16} /></Button>}{!locked && actorParty && <Button variant="secondary" disabled={Boolean(busy) || Boolean(state.data.policy.acknowledgements[actorParty])} onClick={() => void mutate('/confirm-policy', {}, `${actorParty}의 정산 기준 확인을 기록했습니다.`)}>{state.data.policy.acknowledgements[actorParty] ? `${actorParty} 확인 완료` : `${actorParty} 정산 기준 확인`}</Button>}{!locked && <Button disabled={!state.capabilities.finalize || !summary?.canFinalize || Boolean(busy)} onClick={() => void mutate('/finalize', {}, '정산서를 확정하고 원본을 보관했습니다.')}><LockKeyhole size={17} />{busy === '/finalize' ? '확정 중…' : '정산서 확정'}</Button>}{locked && <Button variant="secondary" onClick={() => window.print()}><FileCheck2 size={17} /> 정산서 인쇄·PDF</Button>}</div>

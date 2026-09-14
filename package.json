@@ -39,7 +39,7 @@
     "render:rollback": "node infra/scripts/deploy/rollback-render-deploy.mjs",
     "dev:oda": "node infra/scripts/oda-dev.mjs",
     "build:oda": "npm run build:packages && npm run build -w @ofd/api && npm run build -w @ofd/worker && npm run build:oda -w @ofd/web",
-    "test:oda": "npm run build:packages && node --import tsx --test packages/domain/src/oda-settlement.test.ts packages/integrations/src/config.test.ts packages/integrations/src/oda-production.test.ts && node --test infra/scripts/oda-local.test.mjs infra/scripts/oda-shared-guard.test.mjs infra/scripts/oda-production-profile.test.mjs && npm run test -w @ofd/api -- oda local-runtime scoped-finance && npm run test -w @ofd/web -- OdaSettlementPage OdaSetup OdaLocalUx oda-client HqAccountsPage.oda"
+    "test:oda": "npm run build:packages && node --import tsx --test packages/domain/src/oda-settlement.test.ts packages/integrations/src/config.test.ts packages/integrations/src/oda-production.test.ts && node --test infra/scripts/oda-local.test.mjs infra/scripts/oda-shared-guard.test.mjs infra/scripts/oda-production-profile.test.mjs && npm run test -w @ofd/api -- oda local-runtime scoped-finance && npm run test -w @ofd/web -- OdaMasterPage OdaSettlementPage OdaSetup OdaLocalUx oda-client HqAccountsPage.oda"
   },
   "engines": {
     "node": ">=22.12.0",

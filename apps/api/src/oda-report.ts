@@ -151,7 +151,7 @@ export async function buildOdaReport(input: OdaReportInput): Promise<Buffer> {
     checks.addRow([`${party} 정산 기준 확인`, ack?.actorName ?? "미확인", ack?.actorId ?? "", ack?.at ?? ""]);
   }
   section(checks, "확정 전 해결할 항목");
-  if (!summary.blockers.length) checks.addRow(["확인 필요 항목 없음", closed ? "정산 확정" : "A 최종 확인 대기"]);
+  if (!summary.blockers.length) checks.addRow(["확인 필요 항목 없음", closed ? "정산 확정" : "최종 확정 대기"]);
   for (const issue of summary.blockers) checks.addRow([issue.code, "확인 필요", issue.lineId ?? "", issue.message]);
   section(checks, "참고 사항");
   for (const issue of summary.warnings) checks.addRow([issue.code, "참고", issue.lineId ?? "", issue.message]);
