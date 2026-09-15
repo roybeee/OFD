@@ -31,7 +31,7 @@ describe('ODA 원본 파일과 동시 수정 API 계약', () => {
     await previewOdaImport('oda/1', '2026-09', input);
     await odaMutation('oda/1', '2026-09', '/import', 7, { ...input, expectedVersion: 999 });
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/v2/oda/oda%2F1/2026-09/import/preview', '/api/v2/oda/oda%2F1/2026-09/import']);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]![1].body))).toEqual(input);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1].body))).toEqual({ ...input, useExpenseRules: true });
     expect(JSON.parse(String(fetchMock.mock.calls[1]![1].body))).toEqual({ ...input, expectedVersion: 7 });
     expect(fetchMock.mock.calls[1]![1].headers['Idempotency-Key']).toBeTruthy();
     expect(odaUrl('oda/1', '2026-09', '/export.csv')).toBe('/api/v2/oda/oda%2F1/2026-09/export.csv');

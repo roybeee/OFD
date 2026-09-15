@@ -19,7 +19,7 @@ async function setup(lines = [row('one'), row('two', 'ＡＢＣ  매장')]) {
 const remember = (app: FastifyInstance, expectedVersion = 1, expectedExpenseRulesVersion = 0, category = 'supplies') => app.inject({ method: 'POST', url: `${base}/expenses/batch`, headers: owner,
   payload: { expectedVersion, lineIds: ['one', 'two'], changes: { category }, rememberCategory: true, expectedExpenseRulesVersion } });
 const file = { filename: '비용.csv', kind: 'expense', content: 'date,description,amount,vat\n2026-09-12,ABC 매장,22000,2000\n' };
-const preview = (app: FastifyInstance) => app.inject({ method: 'POST', url: `${base}/import/preview`, headers: owner, payload: file });
+const preview = (app: FastifyInstance) => app.inject({ method: 'POST', url: `${base}/import/preview`, headers: owner, payload: { ...file, useExpenseRules: true } });
 const rules = async (app: FastifyInstance) => (await app.inject({ method: 'GET', url: rulesPath, headers: owner })).json();
 afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())); });
 
@@ -64,6 +64,8 @@ it('applies the displayed rule snapshot on import, retains review work and never
 });
 it('does not silently apply unseen rules for legacy callers which omitted a preview rules version', async () => {
   const { app } = await setup(); await remember(app);
+  const legacyPreview = await app.inject({ method: 'POST', url: `${base}/import/preview`, headers: owner, payload: file });
+  expect(legacyPreview.json().expenseRulesVersion).toBeUndefined(); expect(legacyPreview.json().lines[0].categoryRule).toBeUndefined();
   const result = await app.inject({ method: 'POST', url: `${base}/import`, headers: owner, payload: { ...file, expectedVersion: 2 } });
   expect(result.statusCode).toBe(200); expect(result.json().data.lines.at(-1).categoryRule).toBeUndefined();
 });

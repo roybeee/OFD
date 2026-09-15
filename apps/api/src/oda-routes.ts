@@ -27,6 +27,7 @@ const versionSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const moneySchema = z.number().int().min(-1_000_000_000_000).max(1_000_000_000_000);
 const kindSchema = z.enum(["pos", "platform", "bank", "expense", "evidence"]);
 const importSchema = z.object({
+  useExpenseRules: z.boolean().optional(),
   expectedExpenseRulesVersion: versionSchema.optional(),
   expectedVersion: versionSchema.optional(), filename: z.string().trim().min(1).max(200), kind: kindSchema,
   content: z.string().max(MAX_FILE_BYTES).optional(), contentBase64: z.string().max(Math.ceil(MAX_FILE_BYTES * 4 / 3) + 8).optional(),
@@ -310,10 +311,10 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
     const body = importSchema.parse(request.body);
     const file = await prepareFile(body);
     const record = await loadMonth(repository, storeId, month);
-    const expenseRules = await getExpenseRules(repository, storeId);
+    const expenseRules = body.useExpenseRules ? await getExpenseRules(repository, storeId) : undefined;
     const parsed = parseFile(file, body.kind, body.channel, record, "preview", expenseRules);
     if (record.sources.some((source) => source.sha256 === file.sha256)) parsed.errors.push({ row: 0, code: "DUPLICATE_FILE", message: "이미 첨부한 동일한 원본 파일입니다." });
-    return { ...parsed, expenseRulesVersion: expenseRules.version, ...(file.workbook ? { workbook: file.workbook } : {}) };
+    return { ...parsed, ...(expenseRules ? { expenseRulesVersion: expenseRules.version } : {}), ...(file.workbook ? { workbook: file.workbook } : {}) };
   });
   app.post(`${base}/import`, async (request) => {
     const body = importSchema.parse(request.body);

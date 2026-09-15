@@ -55,7 +55,7 @@ export function odaMutation(storeId: string, month: string, suffix: string, expe
 }
 
 export function previewOdaImport(storeId: string, month: string, input: OdaImport) {
-  return mutateV2<OdaPreview>(`${base(storeId, month)}/import/preview`, input, { idempotencyKey: newIdempotencyKey() });
+  return mutateV2<OdaPreview>(`${base(storeId, month)}/import/preview`, { ...input, useExpenseRules: true }, { idempotencyKey: newIdempotencyKey() });
 }
 
 export type OdaRecurringPreview = { month: string; previousMonth: string; previousVersion: number | null; targetVersion: number;
