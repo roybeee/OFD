@@ -260,3 +260,11 @@
 .oda-delivery-scopes legend { padding: 0 6px; font-weight: 700; }
 .oda-delivery-scopes > .oda-mini-note { margin: 0 0 16px; }
 @media (max-width: 640px) { .oda-delivery-scopes .oda-form-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.oda-revenue-scroll { overflow-x: auto; }
+.oda-revenue-table { width: 100%; min-width: 650px; border-collapse: collapse; font-size: 14px; }
+.oda-revenue-table caption { text-align: left; padding: 14px 24px; color: var(--oda-muted); }
+.oda-revenue-table th,.oda-revenue-table td { padding: 13px 16px; text-align: left; border-bottom: 1px solid var(--oda-line); vertical-align: top; }
+.oda-revenue-table thead { background: var(--oda-soft, #f6f8f7); }
+.oda-revenue-table td:nth-child(3),.oda-revenue-table td:nth-child(4) { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.oda-revenue-table small { display: block; margin-top: 5px; color: var(--oda-muted); font-size: 12px; }

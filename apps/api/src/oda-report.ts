@@ -112,6 +112,15 @@ export async function buildOdaReport(input: OdaReportInput): Promise<Buffer> {
   metric(report, "실제 통장 출금 합계", summary.bankOutflow, "비용으로 연결·확인한 거래만 운영비에 별도로 반영됩니다.");
   metric(report, "운영비·매출 제외금액", summary.excluded, `${summary.excludedCount}건. 계좌 대사 및 POS 포함 배달매출과 별도입니다.`);
   metric(report, "중복 합산 제외 배달매출", summary.ignoredRevenueCount, "건수. POS에 이미 포함된 배달 플랫폼 매출입니다.");
+  if (summary.platformRevenueByChannel?.length) {
+    section(report, "4. 배달 채널별 매출 반영");
+    for (const group of summary.platformRevenueByChannel) {
+      const channel = CHANNELS[group.channel] ?? group.channel;
+      metric(report, `${channel} · 정산 대상 원본금액`, group.gross, `부가세 포함 · 환불 차감 · ${group.count}건. 손익 제외·금액 오류·귀속월 오류·중복 거래·수수료·지급예정액 제외`);
+      metric(report, `${channel} · POS 중복 제외`, group.ignoredGross, `부가세 포함 · ${group.ignoredCount}건. POS에서 이미 반영하는 매출`);
+      metric(report, `${channel} · 손익 추가액`, group.recognized, `${closed ? "확정 기준" : "작성 중 잠정 집계"} · ${policy.vatBasis === "net" ? "입력된 부가세 제외" : policy.vatBasis === "gross" ? "부가세 포함" : "부가세 기준 확인 전"}`, true);
+    }
+  }
 
   const detail = sheet("거래내역", "거래내역과 원본 연결", [14, 23, 46, 20, 18, 22, 18, 13, 35, 38, 12, 32, 38, 38, 45],
     "금액은 원본 부가세 포함액입니다. 이 표의 단순 합계는 손익이 아닙니다. 미확인·제외·대사 내역을 포함하며 월손익·배분 시트에 서버 계산 결과를 표시합니다.");

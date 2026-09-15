@@ -5,6 +5,7 @@ import { calculateOdaMonth, createOdaMonth, type OdaLine, type OdaSource } from 
 import type { BootstrapData } from '../types';
 import type { OdaResponse } from '../api/oda-client';
 import { OdaSettlementPage } from './OdaSettlementPage';
+import { OdaRevenueReconciliation } from './OdaRevenueReconciliation';
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), mutate: vi.fn(), prepare: vi.fn(), preview: vi.fn(), profile: vi.fn(), resetProfile: vi.fn(), recurring: vi.fn() }));
 vi.mock('../api/oda-client', async (importOriginal) => ({
@@ -59,6 +60,52 @@ describe('ODA 월 정산 업무 흐름', () => {
     const input = container.querySelector<HTMLInputElement>('[aria-label="정산 파일 선택"]')!;
     await act(async () => { Object.defineProperty(input, 'files', { configurable: true, value: [new File(['test'], filename)] }); input.dispatchEvent(new Event('change', { bubbles: true })); });
   }
+
+  it('원본 미등록과 POS 포함 0원을 구분하고 계산 근거에서 기준·원본으로 이동한다', async () => {
+    const saved = response();
+    saved.data.policy.vatBasis = 'net';
+    saved.data.policy.activeChannels = ['pos', 'baemin', 'coupang', 'ddangyo'];
+    saved.data.policy.posDeliveryScopes = { baemin: 'included', coupang: 'excluded', yogiyo: 'unresolved', ddangyo: 'excluded' };
+    for (const channel of ['baemin', 'coupang']) {
+      saved.data.sources.push({ ...source(channel, 'platform'), channel });
+      saved.data.lines.push(line(channel, 'revenue', 110_000, { sourceId: channel, channel, vat: 10_000 }));
+    }
+    saved.summary = calculateOdaMonth(saved.data);
+    mocks.get.mockResolvedValue(saved);
+    await render();
+    const table = container.querySelector('[aria-label="배달 매출 반영 내역"]')!;
+    expect(table).toBeTruthy(); expect(table.textContent).toContain('작성 중 · 잠정 집계');
+    const rows = [...table.querySelectorAll('tbody tr')];
+    expect(rows[0]!.textContent).toContain('배달의민족');
+    expect(rows[0]!.querySelector('strong')!.textContent).toBe('0원');
+    expect(rows[0]!.textContent).toContain('POS 중복 제외 110,000원');
+    expect(rows[1]!.querySelector('strong')!.textContent).toBe('100,000원');
+    expect(rows[2]!.querySelector('strong')!.textContent).toBe('—');
+    expect(rows[2]!.textContent).toContain('자료 미등록');
+    await click('포함 기준 보기');
+    expect(container.querySelector('[aria-label="배달의민족 POS 포함 여부"]')).toBeTruthy();
+    await click('월 정산'); await click('거래·원본 확인');
+    expect(container.querySelector('[aria-label="정산 파일 선택"]')).toBeTruthy();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it('확정 당시 채널별 집계를 보존하고 항목이 없던 과거 보관본에는 금액을 만들지 않는다', async () => {
+    const saved = response(); saved.data.status = 'finalized';
+    saved.data.policy.activeChannels = ['pos', 'baemin'];
+    saved.data.sources.push({ ...source('baemin', 'platform'), channel: 'baemin' });
+    saved.data.lines.push(line('배민', 'revenue', 110_000, { channel: 'baemin', sourceId: 'baemin' }));
+    saved.data.history = [{ id: 'snapshot', version: 4, at: '2026-10-02T00:00:00Z', actorId: 'owner-a', actorName: 'A', reason: '월 정산 확정',
+      policy: structuredClone(saved.data.policy), lines: structuredClone(saved.data.lines), sources: structuredClone(saved.data.sources), summary: calculateOdaMonth(saved.data) }];
+    saved.data.lines.at(-1)!.amount = 220_000;
+    saved.summary = calculateOdaMonth(saved.data);
+    const show = async () => act(async () => root.render(<OdaRevenueReconciliation state={saved} onPolicy={vi.fn()} onSources={vi.fn()} />));
+    await show();
+    expect(container.querySelector('strong')!.textContent).toBe('110,000원');
+    expect(container.textContent).toContain('확정 기준 집계');
+    delete saved.data.history[0]!.summary.platformRevenueByChannel;
+    await show();
+    expect(container.textContent).toBe('');
+  });
 
   it('배달 채널별 POS 포함을 따로 저장하고 땡겨요 원본을 업로드할 수 있다', async () => {
     const original = response(); original.data.policy.posDeliveryScope = 'included';

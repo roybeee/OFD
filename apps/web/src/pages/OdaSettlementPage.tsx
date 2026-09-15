@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowDownToLine, ArrowRight, CalendarDays, Check, Chevro
 import { downloadOdaText, getOdaMonth, getOdaImportProfile, resetOdaImportProfile, odaMutation, odaUrl, prepareOdaFile, previewOdaImport } from '../api/oda-client';
 import type { OdaImport, OdaImportProfile as ImportProfile, OdaLine, OdaPolicy, OdaPreview, OdaResponse, OdaSource, OdaSourceKind, OdaSummary } from '../api/oda-client';
 import { ODA_DELIVERY_CHANNELS, getOdaPosDeliveryScopes } from '../../../../packages/domain/src/oda-settlement';
+import { OdaRevenueReconciliation } from './OdaRevenueReconciliation';
 import { OdaSalesChannels } from './OdaSalesChannels';
 import { OdaRecurringCosts } from './OdaRecurringCosts';
 import { OdaExpenses, expenseCategories } from './OdaExpenses';
@@ -158,6 +159,7 @@ export function OdaSettlementPage({ data, notify }: Props) {
             {!hasLines ? <div className="oda-empty"><ReceiptText /><strong>첫 자료를 넣으면 손익이 계산됩니다</strong><p>매출·비용은 귀속월 기준으로 합산하고,<br />계좌 입금은 중복 매출로 더하지 않습니다.</p></div> : <div className="oda-pnl"><div className="oda-pnl-row"><strong>매출 합계</strong><b>{money(summary!.revenue)}</b></div>{summary!.revenueByChannel.map((item) => <div className="oda-pnl-row sub" key={item.category}><span>{channelLabel(item.category) || '기타 매출'}</span><b>{money(item.amount)}</b></div>)}<div className="oda-pnl-row"><strong>운영 비용</strong><b>− {money(summary!.expenses)}</b></div>{summary!.expenseByCategory.map((item) => <div className="oda-pnl-row sub" key={item.category}><span>{categoryLabel(item.category)} <span aria-label="거래 수">· {item.count}건</span></span><b>{money(item.amount)}</b></div>)}<div className="oda-pnl-row total"><span>배분 전 영업이익</span><b>{money(summary!.profit)}</b></div></div>}
             <p className="oda-pnl-note">A 우선배분금 300만원은 비용 차감 후 이익에서 배분합니다. 계약에 따라 감가상각은 비용에서 제외합니다. 시설 투자·보증금·배분금은 앱에서 운영비와 별도로 분류합니다.</p>
           </section>
+          <OdaRevenueReconciliation state={state} onPolicy={() => setTab('policy')} onSources={() => setTab('transactions')} />
           {hasLines && <section className="oda-card"><div className="oda-card-head"><div><h2>확인할 항목 {reviewLines.length}건</h2><p>확인된 거래는 다시 입력하지 않습니다. 금액·분류·증빙의 예외만 확인하세요.</p></div><Button variant="secondary" onClick={gotoReview}>확인하기 <ArrowRight size={16} /></Button></div>{reviewLines.length ? <div className="oda-card-body"><ul className="oda-issues">{reviewLines.slice(0, 4).map((line) => <li key={line.id}><AlertTriangle size={16} /><span>{line.description} · {money(line.amount)}<br />{lineIssues.find((issue) => issue.lineId === line.id)?.message || '금액·분류와 원본을 확인해 주세요.'}</span></li>)}</ul></div> : <div className="oda-card-body"><p><Check size={17} /> 거래 확인이 완료되었습니다. 정산 기준과 양측 확인을 마치면 확정할 수 있습니다.</p></div>}</section>}
         </div><aside className="oda-stack">
           <SplitCard summary={summary!} hasLines={hasLines} policy={state.data.policy} />

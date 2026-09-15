@@ -44,6 +44,25 @@ function value(book: ExcelJS.Workbook, label: string, sheet = "월손익·배분
 }
 
 describe("ODA monthly report", () => {
+  it("exports channel reconciliation from the frozen summary and omits it for older snapshots", async () => {
+    const data = fixture();
+    data.lines.push({ ...data.lines[0]!, id: "platform-sale", sourceId: "platform", channel: "baemin", amount: 1_100_000, vat: 100_000, externalId: "platform-sale" });
+    const draft = await workbook(data);
+    expect(value(draft, "배달의민족 · 정산 대상 원본금액")).toBe(1_100_000);
+    expect(value(draft, "배달의민족 · 손익 추가액")).toBe(1_000_000);
+    data.policy.posDeliveryScope = "included";
+    data.status = "finalized"; data.version = 6;
+    data.history = [{ id: "confirmed", version: 5, at: TIME, actorId: "A", actorName: "운영자", reason: "월 정산 확정",
+      lines: structuredClone(data.lines), sources: structuredClone(data.sources), policy: structuredClone(data.policy), summary: calculateOdaMonth(data) }];
+    data.lines.at(-1)!.amount = 2_200_000;
+    data.policy.posDeliveryScope = "excluded";
+    const frozen = await workbook(data);
+    expect(value(frozen, "배달의민족 · POS 중복 제외")).toBe(1_100_000);
+    expect(value(frozen, "배달의민족 · 손익 추가액")).toBe(0);
+    delete data.history[0]!.summary.platformRevenueByChannel;
+    expect(value(await workbook(data), "배달의민족 · 손익 추가액")).toBeNull();
+  });
+
   it("shows each delivery channel POS scope in the accounting report", async () => {
     const data = fixture();
     data.policy.activeChannels = ["pos", "baemin", "coupang", "yogiyo", "ddangyo"];

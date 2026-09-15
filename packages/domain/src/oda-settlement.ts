@@ -68,6 +68,15 @@ export interface OdaSource {
 export interface OdaComment { id: string; actorId: string; actorName: string; at: string; body: string }
 export interface OdaIssue { code: string; message: string; lineId?: string }
 export interface OdaCategoryTotal { category: string; amount: number; count: number }
+export interface OdaPlatformRevenue {
+  channel: string;
+  /** Eligible platform revenue rows only, after invalid, duplicate and excluded rows are skipped. */
+  gross: number;
+  recognized: number;
+  ignoredGross: number;
+  count: number;
+  ignoredCount: number;
+}
 export interface OdaSummary {
   revenue: number;
   expenses: number;
@@ -94,6 +103,8 @@ export interface OdaSummary {
   duplicateCount: number;
   ignoredRevenueCount: number;
   revenueByChannel: OdaCategoryTotal[];
+  /** Optional for historical snapshots made before platform reconciliation was introduced. */
+  platformRevenueByChannel?: OdaPlatformRevenue[];
   expenseByCategory: OdaCategoryTotal[];
   blockers: OdaIssue[];
   warnings: OdaIssue[];
@@ -272,6 +283,7 @@ export function calculateOdaMonth(data: OdaMonth): OdaSummary {
   let revenue = 0, expenses = 0, grossRevenue = 0, grossExpenses = 0, revenueVat = 0, expenseVat = 0, excluded = 0, bankInflow = 0, bankOutflow = 0, platformPayout = 0, excludedCount = 0, duplicateCount = 0, ignoredRevenueCount = 0;
   const revenueGroups = new Map<string, OdaCategoryTotal>();
   const expenseGroups = new Map<string, OdaCategoryTotal>();
+  const platformRevenueGroups = new Map<string, OdaPlatformRevenue>();
   const externalKeys = new Map<string, OdaLine[]>();
   const derivedBankIds = new Set<string>();
   const groupAdd = (map: Map<string, OdaCategoryTotal>, category: string, amount: number): void => { const group = map.get(category) ?? { category, amount: 0, count: 0 }; group.amount = sumMoney(group.amount, amount); group.count++; map.set(category, group); };
@@ -315,14 +327,22 @@ export function calculateOdaMonth(data: OdaMonth): OdaSummary {
       continue;
     }
     if (category === "uncategorized") block("category_unresolved", "미분류 거래의 운영비 해당 여부를 확인해 주세요.", line.id);
-    if (line.kind === "revenue" && data.sources.some((source) => source.id === line.sourceId && source.kind === "platform") && getOdaPosDeliveryScope(policy, channel) === "included") {
+    let platformRevenue: OdaPlatformRevenue | undefined;
+    if (line.kind === "revenue" && data.sources.some(source => source.id === line.sourceId && source.kind === "platform")) {
+      platformRevenue = platformRevenueGroups.get(channel) ?? { channel, gross: 0, recognized: 0, ignoredGross: 0, count: 0, ignoredCount: 0 };
+      platformRevenue.gross = sumMoney(platformRevenue.gross, line.amount); platformRevenue.count++;
+      platformRevenueGroups.set(channel, platformRevenue);
+    }
+    if (platformRevenue && getOdaPosDeliveryScope(policy, channel) === "included") {
       ignoredRevenueCount++;
+      platformRevenue.ignoredGross = sumMoney(platformRevenue.ignoredGross, line.amount); platformRevenue.ignoredCount++;
       if (!channels.includes(channel)) block("inactive_channel", "업로드한 매출 채널을 정산 기준의 활성 채널에 추가해 주세요.", line.id);
       continue;
     }
     if (policy.vatBasis === "net" && line.vat === null) block("vat_missing", "부가세 제외 기준에는 거래별 실제 부가세(면세는 0)가 필요합니다.", line.id);
     const value = policy.vatBasis === "net" ? line.amount - (line.vat ?? 0) : line.amount;
     if (line.kind === "revenue") {
+      if (platformRevenue) platformRevenue.recognized = sumMoney(platformRevenue.recognized, value);
       if (!channels.includes(channel)) block("inactive_channel", "업로드한 매출 채널을 정산 기준의 활성 채널에 추가해 주세요.", line.id);
       revenue = sumMoney(revenue, value); grossRevenue = sumMoney(grossRevenue, line.amount); revenueVat = sumMoney(revenueVat, line.vat ?? 0); groupAdd(revenueGroups, channel, value);
     } else if (line.kind === "expense") {
@@ -347,7 +367,7 @@ export function calculateOdaMonth(data: OdaMonth): OdaSummary {
   if (shareB !== null && policy.bVatPolicy !== "unresolved") { vatB = policy.bVatPolicy === "add10" ? integerDivideRound(shareB, 10) : 0; payableB = sumMoney(shareB, vatB); }
   const following = new Date(Date.UTC(Number(data.month.slice(0, 4)), Number(data.month.slice(5, 7)), 1));
   const nextMonth = following.toISOString().slice(0, 7);
-  return { revenue, expenses, profit, grossRevenue, grossExpenses, revenueVat, expenseVat, excluded, bankInflow, bankOutflow, platformPayout, priorityA, residualProfit, shareA, shareB, vatB, payableB, statementDueDate: `${nextMonth}-05`, paymentDueDate: `${nextMonth}-10`, unreviewedCount: data.lines.filter((l) => !l.reviewed).length, excludedCount, duplicateCount, ignoredRevenueCount, revenueByChannel: [...revenueGroups.values()], expenseByCategory: [...expenseGroups.values()], blockers, warnings, canFinalize: blockers.length === 0 };
+  return { revenue, expenses, profit, grossRevenue, grossExpenses, revenueVat, expenseVat, excluded, bankInflow, bankOutflow, platformPayout, priorityA, residualProfit, shareA, shareB, vatB, payableB, statementDueDate: `${nextMonth}-05`, paymentDueDate: `${nextMonth}-10`, unreviewedCount: data.lines.filter((l) => !l.reviewed).length, excludedCount, duplicateCount, ignoredRevenueCount, revenueByChannel: [...revenueGroups.values()], platformRevenueByChannel: [...platformRevenueGroups.values()], expenseByCategory: [...expenseGroups.values()], blockers, warnings, canFinalize: blockers.length === 0 };
 }
 
 type CsvField = "date" | "description" | "amount" | "vat" | "category" | "channel" | "externalId" | "kind" | "note" | "feeAmount" | "feeVat" | "payoutAmount" | "creditAmount" | "debitAmount";

@@ -129,6 +129,12 @@ test("배민·요기요는 POS 포함, 쿠팡·땡겨요는 별도 매출로 집
   assert.equal(result.revenue, 31_900_000); assert.equal(result.revenueVat, 190_000);
   assert.equal(result.expenses, 20_400_000); assert.equal(result.expenseVat, 40_000);
   assert.equal(result.ignoredRevenueCount, 4); assert.equal(result.platformPayout, 3_520_000);
+  assert.deepEqual(result.platformRevenueByChannel, [
+    { channel: "baemin", gross: 990_000, recognized: 0, ignoredGross: 990_000, count: 2, ignoredCount: 2 },
+    { channel: "coupang", gross: 990_000, recognized: 900_000, ignoredGross: 0, count: 2, ignoredCount: 0 },
+    { channel: "yogiyo", gross: 990_000, recognized: 0, ignoredGross: 990_000, count: 2, ignoredCount: 2 },
+    { channel: "ddangyo", gross: 990_000, recognized: 900_000, ignoredGross: 0, count: 2, ignoredCount: 0 },
+  ]);
   assert.equal(result.canFinalize, true); assert.deepEqual(data, originals);
   assert.equal(result.revenueByChannel.find(item => item.category === "ddangyo")?.amount, 900_000);
 });
@@ -331,4 +337,27 @@ test("동일 주문번호의 매출과 취소는 둘 다 보존하고 확인 뒤
 test("수동 비용도 명시적인 A 선공제 내용은 일반 인건비로 이중 공제할 수 없다", () => {
   const data = ready(); data.lines.push(line("manual-priority", "expense", 3_000_000, { description: "A 선공제", category: "labor" }));
   const result = calculateOdaMonth(data); assert.equal(result.expenses, 20_000_000); assert.equal(result.excluded, 3_000_000);
+});
+
+
+test("채널별 반영 근거는 제외·오류·중복 행을 건너뛰고 미확인 세액은 잠정 손익과 일치한다", () => {
+  const data = ready(); data.policy.vatBasis = "net"; data.policy.activeChannels.push("baemin");
+  data.sources.push(source("platform", "platform", "baemin"));
+  const sale = line("배민 매출", "revenue", 1100, { vat: 100, sourceId: "platform", channel: "baemin", externalId: "order1" });
+  data.lines.push(sale,
+    { ...sale, id: "duplicate" },
+    { ...sale, id: "excluded", kind: "excluded", externalId: "order2" },
+    { ...sale, id: "bad-money", amount: 1.5, externalId: "order3" },
+    { ...sale, id: "wrong-month", date: "2026-08-31", externalId: "order4" },
+    { ...sale, id: "refund", amount: -110, vat: -10 },
+    { ...sale, id: "unknown-vat", amount: 220, vat: null, reviewed: false, externalId: "order5" });
+  const summary = calculateOdaMonth(data);
+  assert.deepEqual(summary.platformRevenueByChannel, [
+    { channel: "baemin", gross: 1210, recognized: 1120, ignoredGross: 0, count: 3, ignoredCount: 0 },
+  ]);
+  assert.equal(summary.revenue - 30_000_000, 1120);
+  assert.equal(summary.canFinalize, false);
+  assert.ok(summary.blockers.some(issue => issue.code === "vat_missing"));
+  data.policy.vatBasis = "gross";
+  assert.equal(calculateOdaMonth(data).platformRevenueByChannel?.[0]?.recognized, 1210);
 });
