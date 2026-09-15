@@ -6,10 +6,10 @@ import type { BootstrapData } from '../types';
 import type { OdaResponse } from '../api/oda-client';
 import { OdaSettlementPage } from './OdaSettlementPage';
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), mutate: vi.fn(), prepare: vi.fn(), preview: vi.fn(), profile: vi.fn(), resetProfile: vi.fn() }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), mutate: vi.fn(), prepare: vi.fn(), preview: vi.fn(), profile: vi.fn(), resetProfile: vi.fn(), recurring: vi.fn() }));
 vi.mock('../api/oda-client', async (importOriginal) => ({
   ...await importOriginal<typeof import('../api/oda-client')>(),
-  getOdaMonth: mocks.get, odaMutation: mocks.mutate, prepareOdaFile: mocks.prepare, previewOdaImport: mocks.preview, getOdaImportProfile: mocks.profile, resetOdaImportProfile: mocks.resetProfile,
+  getOdaMonth: mocks.get, odaMutation: mocks.mutate, prepareOdaFile: mocks.prepare, previewOdaImport: mocks.preview, getOdaImportProfile: mocks.profile, resetOdaImportProfile: mocks.resetProfile, getOdaRecurringPreview: mocks.recurring,
 }));
 
 const baseData: BootstrapData = {
@@ -114,6 +114,17 @@ describe('ODA 월 정산 업무 흐름', () => {
     expect([...container.querySelectorAll('.oda-line')].filter((item) => item.textContent?.includes('월세 출금'))).toHaveLength(2);
     expect(bank.kind).toBe('bank'); expect(bank.amount).toBe(-100_000);
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('원본 계좌 내역은 그대로 보관'), 'success');
+  });
+
+  it('전월 비용 선택은 화면의 오래된 버전 대신 미리보기에서 읽은 정산 버전으로 반영한다', async () => {
+    mocks.get.mockResolvedValue(response()); mocks.mutate.mockResolvedValue(response());
+    mocks.recurring.mockResolvedValue({ month: '2026-09', previousMonth: '2026-08', previousVersion: 8, targetVersion: 7, status: 'available',
+      rows: [{ lineId: 'old-rent', description: '지난달 임차료', category: 'rent', amount: 1100000, vat: 100000, previousDate: '2026-08-01', status: 'available', matchCount: 0, matches: [] }] });
+    await render(); await click('거래·증빙'); await click('지난달 비용 미리보기');
+    expect(mocks.mutate).not.toHaveBeenCalled();
+    await click('선택한 1건 확인 대기로 가져오기');
+    expect(mocks.mutate).toHaveBeenCalledWith('oda-1', '2026-09', '/repeat-previous', 7,
+      { previousVersion: 8, lineIds: ['old-rent'], confirmedSimilarLineIds: [] });
   });
 
   it('파일 선택으로 미리보기를 실행하고 오류가 있으면 원본 반영을 실행하지 않는다', async () => {

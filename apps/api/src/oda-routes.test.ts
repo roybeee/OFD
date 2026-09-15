@@ -330,6 +330,63 @@ describe("ODA monthly settlement API", () => {
     expect(twice.json().data.lines).toHaveLength(1);
   });
 
+  it("previews only the immediately previous finalized month without writing, and scopes access", async () => {
+    const { app, repository } = await setup();
+    await ready(app); await request(app, '/finalize', { expectedVersion: 5 });
+    const url = `/api/v2/oda/${STORE}/2026-09/repeat-previous/preview`;
+    const preview = await app.inject({ method: 'GET', url, headers: owner });
+    expect(preview.statusCode, preview.body).toBe(200);
+    expect(preview.json()).toMatchObject({ previousMonth: '2026-08', previousVersion: 6, targetVersion: 0, status: 'available' });
+    expect(preview.json().rows).toHaveLength(1);
+    expect(preview.json().rows[0]).toMatchObject({ category: 'rent', amount: 11000000, status: 'available' });
+    expect(preview.body).not.toContain('evidenceBytes'); expect(preview.body).not.toContain('contentBase64');
+    expect(await repository.get('oda_month', `${STORE}:2026-09`)).toBeUndefined();
+    expect((await app.inject({ method: 'GET', url, headers: { 'x-demo-actor-id': DEMO_IDS.auditor } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: url.replace(STORE, DEMO_IDS.storeHapjeong), headers: owner })).statusCode).toBe(403);
+    const october = await app.inject({ method: 'GET', url: url.replace('2026-09', '2026-10'), headers: owner });
+    expect(october.json()).toMatchObject({ previousMonth: '2026-09', status: 'missing', rows: [] });
+    expect((await app.inject({ method: 'GET', url: url.replace('2026-09', '2027-01'), headers: owner })).json().previousMonth).toBe('2026-12');
+    await request(app, '/reopen', { expectedVersion: 6, reason: '반복 비용 검증' });
+    expect((await app.inject({ method: 'GET', url, headers: owner })).json()).toMatchObject({ status: 'unfinalized', rows: [] });
+  });
+
+  it("compares current costs, requires explicit similar-cost selection, and validates both month versions", async () => {
+    const { app } = await setup();
+    await ready(app); await request(app, '/finalize', { expectedVersion: 5 });
+    const nextBase = `/api/v2/oda/${STORE}/2026-09`;
+    const post = (suffix: string, payload: unknown) => app.inject({ method: 'POST', url: nextBase + suffix, headers: owner, payload });
+    const get = () => app.inject({ method: 'GET', url: nextBase + '/repeat-previous/preview', headers: owner });
+    const row = (await get()).json().rows[0];
+    await post('/lines', { expectedVersion: 0, line: { date: '2026-09-01', kind: 'expense', description: '9월 임차료', amount: 12000000, vat: 0, category: 'rent' } });
+    const preview = (await get()).json();
+    expect(preview.rows[0]).toMatchObject({ status: 'similar', matchCount: 1, matches: [{ description: '9월 임차료', amount: 12000000 }] });
+    const selected = { expectedVersion: 1, previousVersion: 6, lineIds: [row.lineId] };
+    const stale = await post('/repeat-previous', { ...selected, expectedVersion: 0 });
+    expect(stale.statusCode).toBe(409);
+    expect((await post('/repeat-previous', selected)).json().error.code).toBe('ODA_REPEAT_SIMILAR');
+    expect((await post('/repeat-previous', { ...selected, lineIds: ['not-a-cost'] })).statusCode).toBe(422);
+    expect((await post('/repeat-previous', { ...selected, lineIds: [row.lineId, row.lineId] })).statusCode).toBe(422);
+    expect((await post('/repeat-previous', { ...selected, lineIds: [row.lineId, 'not-a-cost'], confirmedSimilarLineIds: [row.lineId] })).statusCode).toBe(422);
+    const unchanged = (await app.inject({ method: 'GET', url: nextBase, headers: owner })).json();
+    expect(unchanged.version).toBe(1); expect(unchanged.data.lines).toHaveLength(1);
+    const success = await post('/repeat-previous', { ...selected, confirmedSimilarLineIds: [row.lineId] });
+    expect(success.statusCode, success.body).toBe(200);
+    expect(success.json().data.lines).toHaveLength(2);
+    expect(success.json().data.lines[1]).toMatchObject({ reviewed: false, sourceId: '', channel: 'manual', sourceRow: 0, amount: 11000000 });
+    expect(success.json().data.lines[1]).not.toHaveProperty('bankLineId');
+    expect(success.json().summary.expenses).toBe(12000000);
+    expect((await get()).json().rows[0].status).toBe('already_added');
+    const duplicate = await post('/repeat-previous', { ...selected, expectedVersion: 2, confirmedSimilarLineIds: [row.lineId] });
+    expect(duplicate.json().error.code).toBe('ODA_REPEAT_EXISTS');
+    // Re-finalizing changes the source version even when its amounts are unchanged.
+    await request(app, '/reopen', { expectedVersion: 6, reason: '원본 정산 다시 확인' });
+    await request(app, '/confirm-policy', { expectedVersion: 7 }, owner);
+    await request(app, '/confirm-policy', { expectedVersion: 8 }, finance);
+    const refinalized = await request(app, '/finalize', { expectedVersion: 9 });
+    expect(refinalized.statusCode, refinalized.body).toBe(200);
+    expect((await post('/repeat-previous', { ...selected, expectedVersion: 2 })).json().error.code).toBe('VERSION_CONFLICT');
+  });
+
   it("bank cash is never automatic P&L; explicit confirmed outflow converts once with linked evidence", async () => {
     const { app } = await setup();
     const bank = "날짜,내용,금액,분류,거래ID\n2026-08-31,임차료 이체,-1100000,입출금,B-01\n2026-08-31,플랫폼 입금,3000000,입출금,B-02";

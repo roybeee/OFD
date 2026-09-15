@@ -47,6 +47,20 @@ export function previewOdaImport(storeId: string, month: string, input: OdaImpor
   return mutateV2<OdaPreview>(`${base(storeId, month)}/import/preview`, input, { idempotencyKey: newIdempotencyKey() });
 }
 
+export type OdaRecurringPreview = { month: string; previousMonth: string; previousVersion: number | null; targetVersion: number;
+  status: 'available' | 'missing' | 'unfinalized'; rows: Array<{ lineId: string; description: string; category: string; amount: number;
+    vat: number | null; previousDate: string; status: 'available' | 'similar' | 'already_added'; matchCount: number;
+    matches: Array<{ lineId: string; date: string; description: string; amount: number }> }> };
+export type OdaRecurringSelection = { expectedVersion: number; previousVersion: number; lineIds: string[]; confirmedSimilarLineIds: string[] };
+export async function getOdaRecurringPreview(storeId: string, month: string, signal?: AbortSignal): Promise<OdaRecurringPreview> {
+  const response = await fetch(odaUrl(storeId, month, '/repeat-previous/preview'), { credentials: 'same-origin', signal, headers: { Accept: 'application/json' } });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, payload.error?.code || 'ODA_RECURRING_FAILED', payload.error?.message || '지난달 비용을 불러오지 못했습니다.');
+  }
+  return response.json();
+}
+
 export async function prepareOdaFile(file: File, kind: OdaSourceKind, channel: string): Promise<OdaImport> {
   if (file.size > 2 * 1024 * 1024) throw new Error(`${file.name}: 파일당 2MB 이하로 올려 주세요.`);
   const isCsv = /\.(csv|tsv)$/i.test(file.name);

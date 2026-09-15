@@ -195,3 +195,18 @@
 
 @media (max-width: 640px) { .oda-next-action { align-items: stretch; flex-direction: column; padding: 18px 17px; gap: 14px; }.oda-next-action h2 { font-size: 19px; }.oda-next-action .button { width: 100%; }.oda-upload-settings { margin-left: 17px; margin-right: 17px; }.oda-upload-progress { margin-left: 17px; margin-right: 17px; } }
 @media print { .oda-next-action,.oda-upload-panel { display: none !important; } }
+
+/* Recurring costs: explicit selection before creating review-only proposals. */
+.oda-recurring { padding: 0 24px 24px; }
+.oda-recurring-panel { margin-top: 16px; border-top: 1px solid var(--oda-line); padding-top: 16px; }
+.oda-recurring-panel > p { font-size: 13px; line-height: 1.7; }
+.oda-recurring-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0; font-size: 12px; }
+.oda-recurring-row { padding: 16px 0; border-top: 1px solid var(--oda-line); }
+.oda-recurring-row > label { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 12px; cursor: pointer; }
+.oda-recurring-row input { width: 18px; height: 18px; min-height: 18px; accent-color: var(--oda-ember); }
+.oda-recurring-row strong, .oda-recurring-row small { display: block; overflow-wrap: anywhere; }
+.oda-recurring-row small, .oda-recurring-row > p { font-size: 12px; color: #647067; margin-top: 5px; }
+.oda-recurring-row b { font-size: 14px; }
+.oda-recurring-match { margin: 10px 0 0 32px; padding: 12px; border-radius: 8px; background: #fff7e8; color: #795518; font-size: 12px; line-height: 1.6; }
+.oda-recurring-match ul { padding-left: 16px; margin-top: 6px; }
+@media (max-width: 600px) { .oda-recurring { padding: 0 16px 16px; } .oda-recurring-row > label { grid-template-columns: 20px minmax(0, 1fr); } .oda-recurring-row b { grid-column: 2; } }

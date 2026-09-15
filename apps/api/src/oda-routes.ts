@@ -9,6 +9,7 @@ import { readOdaWorkbook } from "./oda-spreadsheet.ts";
 import { buildOdaReport } from "./oda-report.ts";
 import { getImportProfile, saveImportProfile } from "./oda-import-profile.ts";
 import { idempotentMutation } from "./idempotency.ts";
+import { previousSettlementMonth, recurringCandidates } from "./oda-recurring.ts";
 
 /** Original bytes are repository-private. Never serialize this object to a client or audit ledger. */
 interface OdaRecord extends OdaMonth {
@@ -329,22 +330,48 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
     });
   });
 
-  app.post(`${base}/repeat-previous`, async (request) => {
-    const body = z.object({ expectedVersion: versionSchema }).strict().parse(request.body);
+  app.get(`${base}/repeat-previous/preview`, async request => {
     const { storeId, month } = paramsSchema.parse(request.params);
     await scope(repository, request.actor, storeId, true);
-    const previous = (await repository.list<OdaRecord>("oda_month", [storeId])).filter((item) => item.month < month && item.status !== "draft")
-      .sort((a, b) => b.month.localeCompare(a.month))[0];
-    return mutate(request, body.expectedVersion, "ODA 전월 고정비 확인 제안", (record) => {
-      if (!previous) throw new DomainError("ODA_PREVIOUS_NOT_FOUND", "확정된 이전 정산월이 없습니다.", 422);
-      const recurring = previous.lines.filter((line) => line.kind === "expense" && /임차|임대|rent|인건|급여|labor|insurance|보험/.test(line.category));
-      for (const line of recurring) {
-        const key = `repeat:${previous.month}:${line.id}`;
-        if (record.lines.some((existing) => existing.externalId === key)) continue;
-        const { bankLineId: _priorBankId, ...proposal } = line;
-        record.lines.push({ ...proposal, id: randomUUID(), date: `${month}-01`, sourceId: "", sourceRow: 0, externalId: key,
-          reviewed: false, note: `전월 ${previous.month} 참고 제안 — 당월 실제 금액과 증빙 확인 필요`, approvalSourceId: "" });
-      }
+    const previousMonth = previousSettlementMonth(month);
+    const [previous, current] = await Promise.all([
+      repository.get<OdaRecord>('oda_month', `${storeId}:${previousMonth}`),
+      repository.get<OdaRecord>('oda_month', `${storeId}:${month}`),
+    ]);
+    if (current) ensureDraft(current);
+    const status = !previous ? 'missing' : previous.status === 'draft' ? 'unfinalized' : 'available';
+    return { month, previousMonth, previousVersion: previous?.version ?? null, targetVersion: current?.version ?? 0, status,
+      rows: status === 'available' ? recurringCandidates(previous!, current ?? createOdaMonth(storeId, month)) : [] };
+  });
+
+  app.post(`${base}/repeat-previous`, async (request) => {
+    const ids = z.array(z.string().min(1).max(120)).min(1).max(MAX_LINES).refine(values => new Set(values).size === values.length);
+    const body = z.object({ expectedVersion: versionSchema, previousVersion: versionSchema.optional(), lineIds: ids.optional(),
+      confirmedSimilarLineIds: z.array(z.string().min(1).max(120)).max(MAX_LINES).default([]) }).strict()
+      .refine(value => (value.lineIds === undefined) === (value.previousVersion === undefined), '미리보기의 이전 정산 버전과 선택 항목을 함께 보내 주세요.').parse(request.body);
+    return mutate(request, body.expectedVersion, "ODA 전월 고정비 확인 제안", async (record, scoped) => {
+      const previousMonth = previousSettlementMonth(record.month);
+      await scoped.exclusiveTransaction(`oda:${record.storeId}:${previousMonth}`, async tx => {
+        const previous = await tx.get<OdaRecord>('oda_month', `${record.storeId}:${previousMonth}`);
+        if (!previous || previous.status === 'draft') throw new DomainError('ODA_PREVIOUS_NOT_FOUND', '지난달의 확정된 정산서가 없습니다. 지난달 정산을 먼저 확인해 주세요.', 422);
+        if (body.previousVersion !== undefined && previous.version !== body.previousVersion)
+          throw new DomainError('VERSION_CONFLICT', '지난달 정산이 변경됐습니다. 비용 미리보기를 다시 불러와 주세요.', 409);
+        const candidates = recurringCandidates(previous, record);
+        const selected = body.lineIds ?? candidates.filter(row => row.status === 'available').map(row => row.lineId);
+        const byId = new Map(candidates.map(row => [row.lineId, row]));
+        const confirmedSimilar = new Set(body.confirmedSimilarLineIds);
+        for (const id of selected) {
+          const row = byId.get(id);
+          if (!row) throw new DomainError('ODA_REPEAT_INVALID', '지난달 반복 비용 목록의 항목만 선택해 주세요.', 422);
+          if (row.status === 'already_added') throw new DomainError('ODA_REPEAT_EXISTS', '이미 가져온 항목입니다. 미리보기를 다시 불러와 주세요.', 409);
+          if (row.status === 'similar' && !confirmedSimilar.has(id))
+            throw new DomainError('ODA_REPEAT_SIMILAR', '이번 달의 비슷한 비용을 확인한 후 해당 항목을 직접 선택해 주세요.', 409);
+          record.lines.push({ id: randomUUID(), date: `${record.month}-01`, kind: 'expense', description: row.description,
+            amount: row.amount, vat: row.vat, category: row.category, channel: 'manual', sourceId: '', sourceRow: 0,
+            externalId: `repeat:${previousMonth}:${id}`, reviewed: false,
+            note: `전월 ${previousMonth} 참고 제안 — 당월 실제 금액·귀속일·증빙 확인 필요`, approvalSourceId: '' });
+        }
+      });
     });
   });
 

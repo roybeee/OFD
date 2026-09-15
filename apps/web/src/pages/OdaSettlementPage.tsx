@@ -4,6 +4,7 @@ import { Button } from '../components/ui';
 import { AlertTriangle, ArrowDownToLine, ArrowRight, CalendarDays, Check, ChevronDown, CircleDollarSign, Clock3, FileCheck2, ImagePlus, Info, LockKeyhole, Plus, ReceiptText, RefreshCcw, Search, Send, ShieldCheck, X } from '../components/icons';
 import { downloadOdaText, getOdaMonth, getOdaImportProfile, resetOdaImportProfile, odaMutation, odaUrl, prepareOdaFile, previewOdaImport } from '../api/oda-client';
 import type { OdaImport, OdaImportProfile as ImportProfile, OdaLine, OdaPolicy, OdaPreview, OdaResponse, OdaSource, OdaSourceKind, OdaSummary } from '../api/oda-client';
+import { OdaRecurringCosts } from './OdaRecurringCosts';
 import '../oda.css';
 
 type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void };
@@ -84,12 +85,12 @@ export function OdaSettlementPage({ data, notify }: Props) {
     if (element) { element.scrollIntoView?.({ block: 'center' }); element.focus({ preventScroll: true }); initialFocus.current = ''; }
   }, [state]);
 
-  async function mutate(action: string, body: Record<string, unknown> = {}, message = '저장했습니다.') {
+  async function mutate(action: string, body: Record<string, unknown> = {}, message = '저장했습니다.', expectedVersion = version.current) {
     if (busy) return false;
     const requestedContext = `${storeId}/${month}`;
     setBusy(action); setError('');
     try {
-      const response = await odaMutation(storeId, month, action, version.current, body);
+      const response = await odaMutation(storeId, month, action, expectedVersion, body);
       if (context.current === requestedContext) accept(response);
       notify(message, 'success'); return true;
     } catch (e) {
@@ -167,7 +168,7 @@ export function OdaSettlementPage({ data, notify }: Props) {
         </aside></div>
       </>}
       {tab === 'transactions' && <div className="oda-stack">
-        {editable && <><section className="oda-card"><div className="oda-card-head"><div><h2>파일에 없는 비용만 추가하세요</h2><p>반복 비용은 지난달 내역을 가져온 뒤 이번 달 증빙을 연결합니다.</p></div><div className="oda-inline-tools"><Button variant="secondary" disabled={Boolean(busy)} onClick={() => void mutate('/repeat-previous', {}, '지난달 비용을 확인 대기 상태로 가져왔습니다. 이번 달 증빙을 연결해 주세요.')}>지난달 비용 가져오기</Button><Button variant="secondary" onClick={() => setShowManual(!showManual)}>{showManual ? <X size={16} /> : <Plus size={16} />}{showManual ? '닫기' : '비용 직접 추가'}</Button></div></div>{showManual && <ManualExpense month={month} sources={state.data.sources} busy={Boolean(busy)} onSave={async (line) => { const saved = await mutate('/lines', { line }, '비용을 추가했습니다.'); if (saved) setShowManual(false); }} />}</section></>}
+        {editable && <><section className="oda-card"><div className="oda-card-head"><div><h2>파일에 없는 비용만 추가하세요</h2><p>반복 비용은 지난달 내역을 가져온 뒤 이번 달 증빙을 연결합니다.</p></div><div className="oda-inline-tools"><Button variant="secondary" onClick={() => setShowManual(!showManual)}>{showManual ? <X size={16} /> : <Plus size={16} />}{showManual ? '닫기' : '비용 직접 추가'}</Button></div></div><OdaRecurringCosts key={`${storeId}/${month}`} storeId={storeId} month={month} version={state.version} disabled={Boolean(busy)} onImport={async ({ expectedVersion, ...selection }) => { const saved = await mutate('/repeat-previous', selection, '선택한 비용을 확인 대기로 가져왔습니다. 실제 금액·귀속일·이번 달 증빙을 확인해 주세요.', expectedVersion); if (saved) gotoReview(); return saved; }} />{showManual && <ManualExpense month={month} sources={state.data.sources} busy={Boolean(busy)} onSave={async (line) => { const saved = await mutate('/lines', { line }, '비용을 추가했습니다.'); if (saved) setShowManual(false); }} />}</section></>}
         <section className="oda-card"><div className="oda-card-head"><div><h2>거래 내역</h2><p>원본 행까지 연결해 금액·분류·증빙을 확인합니다.</p></div><span className="oda-badge">{state.data.lines.length}건</span></div><div className="oda-filterbar"><div className="oda-filters">{[{ value: 'review', label: `확인 필요 ${reviewLines.length}` }, { value: 'all', label: '전체' }, { value: 'revenue', label: '매출' }, { value: 'expense', label: '비용' }, { value: 'bank', label: '계좌' }, { value: 'excluded', label: '제외' }].map((item) => <button key={item.value} className={filter === item.value ? 'active' : ''} aria-pressed={filter === item.value} onClick={() => setFilter(item.value as Filter)}>{item.label}</button>)}</div><label className="oda-search"><Search size={16} /><input aria-label="거래 내역 검색" placeholder="거래명·거래번호 검색" value={search} onChange={(e) => setSearch(e.target.value)} /></label></div>
           {filtered.length ? filtered.slice(0, visibleLimit).map((line) => <LineRow key={`${line.id}:${line.reviewed}:${line.category}:${line.note}:${line.sourceId}:${line.vat}`} line={line} sources={state.data.sources} issues={summary!.blockers.filter((issue) => issue.lineId === line.id).map((issue) => issue.message)} disabled={!editable || Boolean(busy)} storeId={storeId} month={month} onSave={(changes) => mutate(`/lines/${encodeURIComponent(line.id)}`, { changes }, '거래 확인을 저장했습니다.')} onBankExpense={state.data.lines.some((item) => item.bankLineId === line.id) ? undefined : (body) => mutate('/bank-expense', body, '계좌 출금을 비용으로 반영했습니다. 원본 계좌 내역은 그대로 보관합니다.')} />) : <div className="oda-empty"><Check /><strong>{filter === 'review' && hasLines ? '확인할 거래가 없습니다' : '표시할 거래가 없습니다'}</strong><p>{hasLines ? '다른 필터를 선택하면 저장된 거래를 확인할 수 있습니다.' : '매출·비용 파일을 올려 정산을 시작하세요.'}</p></div>}{filtered.length > visibleLimit && <div className="oda-policy-footer"><p>{filtered.length}건 중 {visibleLimit}건 표시</p><Button variant="secondary" onClick={() => setVisibleLimit((count) => count + 50)}>다음 50건 더 보기</Button></div>}
         </section>
