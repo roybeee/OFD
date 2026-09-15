@@ -23,6 +23,7 @@ type NavItem = { path: string; label: string; icon: typeof LayoutGrid };
 const navByRole: Record<Role, NavItem[]> = {
   store: [
     { path: '/store/oda-settlement', label: '월 손익·정산', icon: ReceiptText },
+    { path: '/store/oda-hr', label: '인사관리', icon: UserRound },
     { path: '/store/home', label: '홈', icon: LayoutGrid },
     { path: '/store/orders', label: '발주·입고', icon: PackageCheck },
     { path: '/store/documents', label: '정산·증빙', icon: ReceiptText },
@@ -30,6 +31,7 @@ const navByRole: Record<Role, NavItem[]> = {
   hq: [
     { path: '/hq/oda-master', label: '마스터 홈', icon: LayoutGrid },
     { path: '/hq/oda-settlement', label: 'ODA 월 정산', icon: ReceiptText },
+    { path: '/hq/oda-hr', label: '인사관리', icon: UserRound },
     { path: '/hq/oda-stores', label: '매장·사업자 관리', icon: Store },
     { path: '/hq/orders', label: '주문 운영', icon: ClipboardCheck },
     { path: '/hq/delivery', label: '배송', icon: Route },
@@ -65,7 +67,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
 }) {
   /* 마스터가 지정한 순서를 적용한다 — 저장된 순서에 없는 페이지는 원래 자리 뒤에 남는다 */
   const local = isOdaBrand && appMode === 'local';
-  const localPaths = new Set(['/store/oda-settlement', '/hq/oda-settlement', '/hq/oda-master', '/hq/oda-stores', '/hq/accounts']);
+  const localPaths = new Set(['/store/oda-settlement', '/hq/oda-settlement', '/hq/oda-master', '/hq/oda-stores', '/hq/accounts', '/store/oda-hr', '/hq/oda-hr']);
   const nav = applyMenuOrder(navByRole[role].filter((item) => (!local || localPaths.has(item.path)) && (isOdaBrand || !item.path.includes('/oda-')) && (!isOdaBrand || item.path !== '/hq/design') && capabilities.includes(pathCapability[item.path])), menuOrder);
   const contextName = local ? storeName : isOdaBrand && actorRole === 'hq_master' ? 'ODA 마스터 작업공간' : role === 'store' ? storeName : role === 'driver' ? `오늘 배송 ${deliveryCount}곳` : '본사 운영센터';
   const actorRoleLabel = local && actorRole === 'hq_finance' ? '운영 지원자 B' : local && actorRole === 'store_owner' ? '매장 운영자 A' : role === 'hq' ? actorRole === 'auditor' ? '감사 · 읽기 전용' : actorRole === 'hq_master' || actorRole === 'master' ? '마스터' : actorRole === 'hq_finance' ? '재무' : '운영' : role === 'driver' ? '배송기사' : actorRole === 'store_staff' ? '매장 직원' : '점주';

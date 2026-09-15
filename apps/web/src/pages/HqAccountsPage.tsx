@@ -161,7 +161,7 @@ export function HqAccountsPage({ data, notify, onCurrentSessionRevoked }: {
           <form onSubmit={createAccount} noValidate>
             <label htmlFor="account-role">계정 유형
               <select id="account-role" value={role} onChange={(event) => changeRole(event.target.value as ProvisionableActorRole)}>
-                {roles.filter((item) => !settlementAccounts || ['store_owner', 'hq_finance', 'hq_master', 'auditor'].includes(item.value)).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                {roles.filter((item) => !settlementAccounts || ['store_owner', 'store_staff', 'hq_finance', 'hq_master', 'auditor'].includes(item.value)).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </label>
             <label htmlFor="account-name">이름

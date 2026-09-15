@@ -15,6 +15,8 @@ export interface AccessPage {
 export const ACCESS_PAGES: readonly AccessPage[] = [
   { path: "/store/oda-settlement", label: "ODA 월 손익·정산", domain: "store", capabilities: ["oda.settlement.read"] },
   { path: "/hq/oda-settlement", label: "ODA 월 정산", domain: "hq", capabilities: ["oda.finance.read"] },
+  { path: "/store/oda-hr", label: "인사관리", domain: "store", capabilities: ["oda.hr.read"] },
+  { path: "/hq/oda-hr", label: "인사관리", domain: "hq", capabilities: ["oda.hr.hq.read"] },
   { path: "/store/home", label: "홈", domain: "store", capabilities: ["store.orders.read"] },
   { path: "/store/orders", label: "발주·입고", domain: "store", capabilities: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel"] },
   { path: "/store/documents", label: "정산·증빙", domain: "store", capabilities: ["store.documents.read"] },

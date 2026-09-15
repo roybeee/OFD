@@ -131,7 +131,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (actor: Publ
           <span className="auth-symbol" aria-hidden="true"><LockKeyhole size={28} /></span>
           <p className="eyebrow"><span /> {isOdaBrand ? "ODA PIZZERIA" : "SECURE OFD WORKSPACE"}</p>
           <h1 id="auth-title">{workstationName} 로그인</h1>
-          <p>{isOdaBrand ? "매장 운영자 A·운영 지원자 B·관리자 계정으로 로그인해 주세요." : "점주·매장 직원·배송기사·본사 담당자 계정으로 로그인해 주세요."}</p>
+          <p>{isOdaBrand ? "매장 운영자·직원·지원 파트너·관리자 계정으로 로그인해 주세요." : "점주·매장 직원·배송기사·본사 담당자 계정으로 로그인해 주세요."}</p>
           {isOdaBrand && window.location.origin === 'http://127.0.0.1:4175' && <p className="oda-local-login-note">이 컴퓨터에 저장 · 외부 공유 안 됨</p>}
 
           <form onSubmit={submitLogin} noValidate>

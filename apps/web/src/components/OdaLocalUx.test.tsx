@@ -25,7 +25,7 @@ it('loads local accounts without querying unsupported page policy and hides unsu
   const data = { actor: { id: 'm1', name: '관리자', role: 'hq_master' }, stores: [{ id: 's1', name: '매장' }], meta: { appMode: 'local' } } as BootstrapData;
   await act(async () => root.render(<HqAccountsPage data={data} notify={vi.fn()} />));
   expect(container.textContent).toContain('partner@example.com');
-  expect([...container.querySelectorAll('#account-role option')].map(item => item.getAttribute('value'))).toEqual(['store_owner', 'hq_finance', 'hq_master', 'auditor']);
+  expect([...container.querySelectorAll('#account-role option')].map(item => item.getAttribute('value'))).toEqual(['store_owner', 'store_staff', 'hq_finance', 'hq_master', 'auditor']);
   expect(container.querySelector('[aria-label="지원자 상세 설정 열기"]')).toBeNull();
   expect(container.querySelector('[aria-label="지원자 비밀번호 재설정"]')).toBeTruthy();
   expect(container.textContent).not.toContain('역할별 노출');

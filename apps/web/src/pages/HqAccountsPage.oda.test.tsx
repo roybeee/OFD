@@ -77,7 +77,7 @@ it.each([
     expect(container.querySelector('.account-load-error')).toBeNull();
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(['/api/v2/admin/actors']);
     expect([...container.querySelectorAll<HTMLOptionElement>('#account-role option')].map(option => option.value))
-      .toEqual(['store_owner', 'hq_finance', 'hq_master', 'auditor']);
+      .toEqual(['store_owner', 'store_staff', 'hq_finance', 'hq_master', 'auditor']);
     expect(container.querySelector<HTMLButtonElement>('[aria-label="검증 운영자 상세 설정"]')!.disabled).toBe(true);
     expect(container.querySelector('[aria-label="검증 운영자 상세 설정 열기"]')).toBeNull();
     expect(container.textContent).toContain(profile.appMode === 'production' ? 'ODA 온라인 정산' : '이 컴퓨터에서 사용하는');

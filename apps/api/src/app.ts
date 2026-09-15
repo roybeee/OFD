@@ -25,6 +25,8 @@ import { randomUUID as posRandomUUID } from "node:crypto";
 import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipment, Store as PosStoreRecord, TaxInvoice, UserCredential } from "@ofd/domain";
 import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
 import { registerOdaRoutes } from "./oda-routes.ts";
+import { registerOdaHrRoutes } from "./oda-hr-routes.ts";
+import { registerOdaHrPayrollCostRoutes } from "./oda-hr-payroll-cost.ts";
 import { isOdaSetupEnabled, registerOdaSetup } from "./oda-setup.ts";
 import { registerOdaOverview } from './oda-overview.ts';
 import { registerOdaAdminRoutes } from "./oda-admin-routes.ts";
@@ -231,7 +233,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { ...response,
       meta: { ...(response.meta as Record<string, unknown>), odaSettlementOnly: true, evidenceStorage: "postgres", emailProvider: "disabled" },
       capabilities: odaCapabilities.filter(capability =>
-        ["oda.settlement.read", "oda.finance.read", "hq.accounts.manage", "hq.actors.manage", "oda.master.manage"].includes(capability)),
+        ["oda.settlement.read", "oda.finance.read", "oda.hr.read", "oda.hr.hq.read", "hq.accounts.manage", "hq.actors.manage", "oda.master.manage"].includes(capability)),
     };
   });
 
@@ -249,8 +251,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       storeIds: z.array(z.string().min(1)).max(100).default([]),
       email: z.string().email().max(254), password: z.string().min(10).max(200),
     }).parse(request.body);
-    if ((config.appMode === "local" || odaSettlementOnly) && !["hq_master", "store_owner", "hq_finance", "auditor"].includes(body.role)) {
-      throw new DomainError(odaSettlementOnly ? "ODA_ROLE_UNAVAILABLE" : "LOCAL_ROLE_UNAVAILABLE", "월정산에서는 관리자·매장 운영자·지원 파트너·감사 계정만 등록할 수 있습니다.", 422);
+    if ((config.appMode === "local" || odaSettlementOnly) && !["hq_master", "store_owner", "store_staff", "hq_finance", "auditor"].includes(body.role)) {
+      throw new DomainError(odaSettlementOnly ? "ODA_ROLE_UNAVAILABLE" : "LOCAL_ROLE_UNAVAILABLE", "ODA에서는 관리자·매장 운영자·직원·지원 파트너·감사 계정을 등록할 수 있습니다.", 422);
     }
     return idempotentMutation(request, reply, repository, request.actor, 201,
       (scoped) => new AuthService(scoped, sessionSecret, config.appMode, env.ENCRYPTION_KEY).provisionActor(request.actor, body));
@@ -263,7 +265,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       z.object({ action: z.literal("role"), actorId: z.string().min(1), expectedVersion: z.number().int().positive(),
         role: provisionableRole, storeIds: z.array(z.string().min(1)).max(100).default([]) }),
     ]).parse(request.body);
-    if ((config.appMode === "local" || odaSettlementOnly) && body.action === "role" && !["hq_master", "store_owner", "hq_finance", "auditor"].includes(body.role)) {
+    if ((config.appMode === "local" || odaSettlementOnly) && body.action === "role" && !["hq_master", "store_owner", "store_staff", "hq_finance", "auditor"].includes(body.role)) {
       throw new DomainError(odaSettlementOnly ? "ODA_ROLE_UNAVAILABLE" : "LOCAL_ROLE_UNAVAILABLE", "월정산에서 지원하지 않는 계정 역할입니다.", 422);
     }
     return idempotentMutation(request, reply, repository, request.actor, 200, (scoped) => {
@@ -1110,6 +1112,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   registerOdaRoutes(app, repository);
+  registerOdaHrRoutes(app, repository);
+  registerOdaHrPayrollCostRoutes(app, repository);
   if (odaWorkspace) { registerOdaAdminRoutes(app, repository); registerOdaOverview(app, repository); }
   registerOdaSetup(app, repository, env);
 

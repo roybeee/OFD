@@ -217,7 +217,7 @@ export class ProcurementService {
         externalIssueEnabled: this.externalIssueEnabled, generatedAt: this.now().toISOString(),
         operationalDate: today, timeZone: "Asia/Seoul" },
       capabilities: this.appMode === "local"
-        ? capabilitiesFor(actor, accessPolicy).filter((capability) => ["oda.settlement.read", "oda.finance.read", "hq.accounts.manage", "hq.actors.manage"].includes(capability))
+        ? capabilitiesFor(actor, accessPolicy).filter((capability) => ["oda.settlement.read", "oda.finance.read", "oda.hr.read", "oda.hr.hq.read", "hq.accounts.manage", "hq.actors.manage"].includes(capability))
         : capabilitiesFor(actor, accessPolicy),
       menuOrder: accessPolicy.menuOrder ?? [],
       allowedDeliveryDates: allowedDeliveryDates(this.now()),
@@ -1181,15 +1181,15 @@ function inAutomaticMatchWindow(request: PaymentRequest, transaction: BankTransa
 
 export function baseCapabilitiesFor(role: Actor["role"]): string[] {
   const map: Record<Actor["role"], string[]> = {
-    store_owner: ["oda.settlement.read", "store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
-    store_staff: ["store.orders.read", "store.orders.create", "store.orders.submit", "store.documents.read"],
+    store_owner: ["oda.settlement.read", "oda.hr.read", "store.orders.read", "store.orders.create", "store.orders.submit", "store.orders.cancel", "store.documents.read"],
+    store_staff: ["oda.hr.read", "store.orders.read", "store.orders.create", "store.orders.submit", "store.documents.read"],
     hq_ops: ["hq.orders.read", "hq.orders.approve", "hq.orders.change_request", "hq.shipments.manage", "hq.shipments.dispatch", "hq.drivers.read", "hq.pos.read",
       "hq.stores.manage", "hq.leads.manage", "hq.notices.manage", "hq.design.read"],
-    hq_finance: ["oda.finance.read", "hq.payments.reconcile", "hq.settlements.manage", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read", "hq.audit.read"],
-    hq_master: ["oda.finance.read", "hq.settlements.approve", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
+    hq_finance: ["oda.finance.read", "oda.hr.hq.read", "hq.payments.reconcile", "hq.settlements.manage", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.prepare", "hq.invoices.retry", "hq.documents.read", "hq.pos.read", "hq.audit.read"],
+    hq_master: ["oda.finance.read", "oda.hr.hq.read", "hq.settlements.approve", "hq.settlements.draft", "hq.invoices.read", "hq.invoices.approve", "hq.invoices.retry", "hq.documents.read",
       "hq.outbox.requeue", "hq.accounts.manage", "hq.actors.manage", "hq.settings.manage", "hq.drivers.read", "hq.pos.read",
       "hq.stores.manage", "hq.leads.manage", "hq.notices.manage", "hq.audit.read", "hq.design.read"],
-    auditor: ["oda.finance.read", "hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
+    auditor: ["oda.finance.read", "oda.hr.hq.read", "hq.orders.read", "hq.invoices.read", "hq.documents.read", "hq.audit.read", "hq.finance.read"],
     driver: ["driver.deliveries.read", "driver.deliveries.complete"],
     system: [],
   };

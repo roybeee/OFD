@@ -6,6 +6,8 @@ export const pathCapability: Record<string, string> = {
   '/hq/oda-stores': 'oda.master.manage',
   '/store/oda-settlement': 'oda.settlement.read',
   '/hq/oda-settlement': 'oda.finance.read',
+  '/store/oda-hr': 'oda.hr.read',
+  '/hq/oda-hr': 'oda.hr.hq.read',
   // 점주 홈이 매장 계정의 첫 화면이다 — defaultPathFor가 삽입 순서를 따르므로 맨 앞에 둔다.
   '/store/home': 'store.orders.read',
   '/store/orders': 'store.orders.read',
