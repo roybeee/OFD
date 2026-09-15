@@ -2,10 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import type { HrStoreScheduleEntry } from '../../../../packages/domain/src/oda-hr';
 import { ApiError } from '../api/client';
 import { commandOdaHr, getOdaHr, type HrResponse } from '../api/oda-hr-client';
-import { CalendarDays, Check, Clock3, MapPin, RefreshCcw } from '../components/icons';
+import { Bell, CalendarDays, Check, ChevronRight, Clock3, FileCheck2, MapPin, Plus, RefreshCcw, Search, Umbrella, UserRound } from '../components/icons';
 import { Button } from '../components/ui';
 import { getCurrentHrPosition, hrDistanceMeters, type HrPosition } from '../lib/hr-location';
 import type { BootstrapData } from '../types';
+import { HrDialog } from '../hr/shared';
+import { StaffBottomNav, staffHomeTabs, type StaffHomeTab } from '../hr/StaffNavigation';
+import { HrStaffTasks, deriveStaffTasks } from '../hr/HrStaffTasks';
+import { HrStaffMore, useStaffTextPreference } from '../hr/HrStaffMore';
+import { addStaffDays, shiftMinutes, staffDuration, staffScheduleIcs, staffWeekSummary } from '../lib/hr-staff-summary';
 import './OdaStaffPage.css';
 
 export const staffPersonalTabs = [
@@ -14,7 +19,7 @@ export const staffPersonalTabs = [
   ['contracts', '내 계약'], ['documents', '내 문서'], ['help', '인사 도움말'],
 ] as const;
 export type StaffPersonalTab = typeof staffPersonalTabs[number][0];
-type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void; onOpenPersonal?: (tab: StaffPersonalTab) => void };
+type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void; onOpenPersonal?: (tab: StaffPersonalTab) => void; initialTab?: StaffHomeTab; onHomeTabChange?: (tab: StaffHomeTab) => void };
 type GeoState = { phase: 'idle' | 'checking' | 'ready' | 'error'; position?: HrPosition; message?: string };
 type ClockLocation = NonNullable<HrResponse['workspace']['settings']['clockLocation']>;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '요청을 처리하지 못했습니다. 다시 시도해 주세요.';
@@ -31,10 +36,18 @@ export function clockLocationCheck(position: HrPosition, location: ClockLocation
   return { valid: true, distance, message: '매장 반경 안에서 위치를 확인했습니다.' };
 }
 
-export function OdaStaffPage({ data, notify, onOpenPersonal }: Props) {
+export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeTabChange }: Props) {
   const stores = data.stores.filter(store => store.active !== false);
   const initialStore = stores.find(store => store.id === new URLSearchParams(window.location.search).get('store'))?.id || stores.find(store => store.id === data.store.id)?.id || stores[0]?.id || '';
   const [storeId, setStoreId] = useState(initialStore);
+  const [homeTab, setHomeTab] = useState<StaffHomeTab>(() => { const value = new URLSearchParams(window.location.search).get('view'); return initialTab || (staffHomeTabs.includes(value as StaffHomeTab) ? value as StaffHomeTab : 'today'); });
+  const [search, setSearch] = useState('');
+  const [clockSheet, setClockSheet] = useState(false);
+  const [noticeSheet, setNoticeSheet] = useState(false);
+  const [calendarExpanded, setCalendarExpanded] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [coworker, setCoworker] = useState('all');
+  const staffText = useStaffTextPreference(data.actor.id, storeId);
   const [response, setResponse] = useState<HrResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -107,7 +120,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal }: Props) {
     if (saving.current || next === activeStore.current || !stores.some(store => store.id === next)) return;
     operation.current++; geoRequest.current++; locked.current = false;
     activeStore.current = next; setStoreId(next); setPhase(null); setGeo({ phase: 'idle' }); setResponse(null);
-    setClockError(''); setSuccess(''); setScheduleMode('mine'); setOpenNotice('');
+    setClockError(''); setSuccess(''); setScheduleMode('mine'); setOpenNotice(''); setCoworker('all'); setClockSheet(false); setNoticeSheet(false);
     const params = new URLSearchParams(window.location.search); params.set('store', next); params.delete('tab');
     window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
   }
@@ -116,6 +129,8 @@ export function OdaStaffPage({ data, notify, onOpenPersonal }: Props) {
       const requested = new URLSearchParams(window.location.search).get('store');
       const next = stores.find(store => store.id === requested)?.id || stores[0]?.id;
       if (next && next !== activeStore.current) selectStore(next);
+      const requestedTab = new URLSearchParams(window.location.search).get('view');
+      if (!locked.current && staffHomeTabs.includes(requestedTab as StaffHomeTab)) setHomeTab(requestedTab as StaffHomeTab);
     }
     window.addEventListener('popstate', popstate); return () => window.removeEventListener('popstate', popstate);
   }, [data]);
@@ -152,7 +167,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal }: Props) {
       saving.current = true; setPhase('saving');
       const saved = await commandOdaHr(target, fresh.workspace.version, `clock.${expectedKind}`, { employeeId, location: position });
       if (!mounted.current || token !== operation.current || activeStore.current !== target) return;
-      setResponse(saved); setNow(Date.now());
+      setResponse(saved); setNow(Date.now()); setClockSheet(false);
       const message = expectedKind === 'in' ? '출근을 기록했습니다. 오늘도 좋은 하루 보내세요.' : '퇴근을 기록했습니다. 수고하셨습니다.';
       setSuccess(message); notify(message, 'success');
     } catch (error) {
@@ -171,64 +186,113 @@ export function OdaStaffPage({ data, notify, onOpenPersonal }: Props) {
 
   const team: HrStoreScheduleEntry[] = view?.employeeId ? view.storeSchedule || [] : [];
   const mine: HrStoreScheduleEntry[] = view?.employeeId ? view.workspace.attendance.shifts.filter(row => row.status === 'published' && row.employeeId === view.employeeId).map(row => ({ ...row, employeeName: employee?.name || data.actor.name })) : [];
-  const schedules = scheduleMode === 'mine' ? mine : team;
-  const dayRows = schedules.filter(row => row.date === selectedDate).sort((a, b) => Number(b.employeeId === view?.employeeId) - Number(a.employeeId === view?.employeeId) || a.startTime.localeCompare(b.startTime) || a.employeeName.localeCompare(b.employeeName, 'ko'));
+  const schedules = scheduleMode === 'mine' ? mine : team.filter(row => coworker === 'all' || row.employeeId === view?.employeeId || row.employeeId === coworker);
   const notices = view?.workspace.notices.filter(row => row.status === 'published').slice().sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)) || [];
   const clockDisabled = !view?.employeeId || !location || Boolean(phase) || loading || Boolean(loadError);
   const geoMessage = !location ? '매장 출퇴근 위치가 아직 등록되지 않았습니다. 관리자에게 설정을 요청해 주세요.' : geo.phase === 'checking' ? '현재 위치를 확인하고 있습니다…' : geo.phase === 'error' ? geo.message : locationResult?.message || '출퇴근 버튼을 누르면 현재 위치를 새로 확인합니다.';
 
-  return <main id="main-content" className="oda-staff-page" tabIndex={-1}>
-    <header className="staff-heading"><div><p className="staff-eyebrow">ODA · MY WORKDAY</p><h1>{employee?.name || data.actor.name}님, 안녕하세요</h1><p>{new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(now)}</p></div><div className="staff-store"><label><span>근무 매장</span><select aria-label="직원 홈 매장" value={storeId} disabled={phase === 'saving' || !stores.length} onChange={event => selectStore(event.target.value)}>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label><button className="staff-refresh" type="button" aria-label="직원 홈 새로고침" disabled={Boolean(phase) || loading || !storeId} onClick={() => { geoRequest.current++; setGeo({ phase: 'idle' }); setClockError(''); setSuccess(''); setRetry(value => value + 1); }}><RefreshCcw size={19} /></button></div></header>
+  const week = staffWeekSummary(view, today);
+  const taskCount = deriveStaffTasks(view, data.actor.id, today).todo.length;
+  const todayShifts = mine.filter(row => row.date === today);
+  const dayLeaves = view?.workspace.attendance.leaveRequests.filter(row => row.employeeId === view.employeeId && ['approved', 'pending'].includes(row.status) && row.slots.some(slot => slot.date === selectedDate)) || [];
+  const dayMeetings = view?.workspace.talent.meetings.filter(row => row.scheduledDate === selectedDate) || [];
+  const todayMeetings = view?.workspace.talent.meetings.filter(row => row.scheduledDate === today) || [];
+  const todayLeave = view?.workspace.attendance.leaveRequests.filter(row => row.employeeId === view.employeeId && ['approved', 'pending'].includes(row.status) && row.slots.some(slot => slot.date === today)) || [];
+  const todayCount = todayShifts.length + todayMeetings.length + todayLeave.length;
+  const dayTeam = team.filter(row => row.date === selectedDate && row.employeeId !== view?.employeeId && (coworker === 'all' || row.employeeId === coworker));
+  const coworkers = [...new Map(team.filter(row => row.employeeId !== view?.employeeId).map(row => [row.employeeId, row.employeeName])).entries()];
+  const openPersonal = (tab: StaffPersonalTab) => { if (!locked.current) onOpenPersonal?.(tab); };
+  function navigate(tab: StaffHomeTab) {
+    if (locked.current) return;
+    setHomeTab(tab); setSearch(''); onHomeTabChange?.(tab);
+    const params = new URLSearchParams(window.location.search); params.set('view', tab); params.set('store', storeId); params.delete('tab');
+    window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+    document.scrollingElement?.scrollTo?.({ top: 0 });
+  }
+  function openSchedule() { setMonth(today.slice(0, 7)); setSelectedDate(today); navigate('schedule'); }
+  function exportCalendar() {
+    const url = URL.createObjectURL(new Blob([staffScheduleIcs(mine, month)], { type: 'text/calendar;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url; link.download = `ODA-근무일정-${month}.ics`; link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify('내 공개 근무표를 내보냈습니다. 일정 변경 시 다시 내려받아 주세요.', 'info');
+  }
+  const noticeList = <section className="staff-notices" aria-label="매장 공지"><div className="staff-section-heading"><h2>매장 공지</h2><span className="staff-notice-count">{notices.length}</span></div>
+    {!notices.length ? <p className="staff-empty">게시된 매장 공지가 없습니다.</p> : <ul>{notices.map(notice => <li key={notice.id}><button type="button" aria-expanded={openNotice === notice.id} onClick={() => setOpenNotice(openNotice === notice.id ? '' : notice.id)}><span>{notice.pinned && <small className="staff-pinned">중요</small>}<strong>{notice.title}</strong><time>{staffDate(Date.parse(notice.updatedAt)).replaceAll('-', '.')}</time></span><ChevronRight size={18} aria-hidden="true" /></button>{openNotice === notice.id && <p className="staff-notice-body">{notice.body}</p>}</li>)}</ul>}
+  </section>;
+  const clockAction = <button className="staff-clock-button" type="button" aria-label={clockedIn ? '퇴근하기' : '출근하기'} disabled={clockDisabled} onClick={() => void recordClock()}>{phase === 'locating' ? '위치 확인 중…' : phase === 'saving' ? '기록 중…' : clockedIn ? '지금 퇴근' : '지금 출근'}</button>;
+  const locationPanel = <section className="staff-location-card" aria-label="출퇴근 위치 확인">
+    <div className="staff-section-heading"><h2><MapPin size={19} /> 출퇴근 위치</h2><span className={`staff-location-badge ${locationResult?.valid ? 'verified' : ''}`}>{!location ? '미설정' : geo.phase === 'checking' ? '확인 중' : locationResult?.valid ? '위치 확인' : '확인 필요'}</span></div>
+    <strong>{stores.find(store => store.id === storeId)?.name}</strong><p className="staff-address">{configuredAddress || '등록된 주소가 없습니다.'}</p>
+    <div className="staff-location-measures"><div><span>매장과의 거리</span><strong>{locationResult ? `${Math.round(locationResult.distance).toLocaleString('ko-KR')}m` : '—'}</strong></div><div><span>현재 위치 오차</span><strong>{geo.position ? `±${Math.ceil(geo.position.accuracy)}m` : '—'}</strong></div></div>
+    <p className="staff-location-message" role="status">{geoMessage}</p>
+    <button type="button" className="staff-location-retry" disabled={!location || geo.phase === 'checking' || Boolean(phase)} onClick={() => void checkPosition()}><RefreshCcw size={16} />위치 다시 확인</button>
+    <p className="staff-location-rule">매장 반경 200m · 위치 오차 50m 이하<br />위치 오차까지 반경 안에 포함되어야 합니다.</p>
+    {clockError && <p className="staff-clock-error" role="alert">{clockError}</p>}
+    <div className="staff-clock-times"><div><span>최근 출근</span><strong>{clockTime(recentIn?.at)}</strong></div><div><span>최근 퇴근</span><strong>{clockTime(recentOut?.at)}</strong></div></div>
+    {clockedIn && staffDate(Date.parse(latest!.at)) !== today && <p className="staff-overnight">이전 날짜의 출근 기록이 이어지고 있습니다. 퇴근으로 근무를 마무리하세요.</p>}
+    {clockAction}
+    {onOpenPersonal && <button type="button" className="staff-text-button" disabled={Boolean(phase)} onClick={() => openPersonal('attendance')}>근무 기록·정정 신청<ChevronRight size={16} /></button>}
+  </section>;
+
+  return <main id="main-content" className={`oda-staff-page staff-view-${homeTab}`} data-staff-text={staffText} tabIndex={-1}>
+    {homeTab === 'today' && <header className="staff-heading"><h1><span className="staff-date-icon"><FileCheck2 size={21} /></span>{Number(today.slice(5, 7))}월 {Number(today.slice(8))}일</h1><button type="button" className="staff-icon-button" aria-label={`알림 · 해야할 일 ${taskCount}건`} onClick={() => navigate('tasks')}><Bell size={22} />{taskCount > 0 && <span className="staff-alert-dot" />}</button></header>}
+    <div className="staff-store"><label><span>근무 매장</span><select aria-label="직원 홈 매장" value={storeId} disabled={phase === 'saving' || !stores.length} onChange={event => selectStore(event.target.value)}>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label><button className="staff-icon-button" type="button" aria-label="직원 홈 새로고침" disabled={Boolean(phase) || loading || !storeId} onClick={() => { geoRequest.current++; setGeo({ phase: 'idle' }); setClockError(''); setSuccess(''); setRetry(value => value + 1); }}><RefreshCcw size={18} /></button></div>
     {!stores.length ? <section className="staff-empty">배정된 매장이 없습니다. 계정 관리자에게 매장 배정을 요청해 주세요.</section> : <>
       {loading && <p className="staff-loading" role="status">근무 정보를 불러오고 있습니다.</p>}
       {loadError && <div className="staff-error" role="alert"><p>{loadError}</p><Button variant="secondary" disabled={loading || Boolean(phase)} onClick={() => setRetry(value => value + 1)}>다시 불러오기</Button></div>}
-      <div className="staff-primary-grid"><section className={`staff-clock-card ${clockedIn ? 'is-working' : ''}`} aria-label="내 출퇴근">
-        <div className="staff-clock-top"><span><Clock3 size={18} /> 오늘의 근무</span><span className="staff-work-status"><i />{clockedIn ? '근무 중' : sameDayOut ? '퇴근 완료' : '출근 전'}</span></div>
-        <h2>{clockedIn ? '오늘도 함께해 주셔서 고마워요' : sameDayOut ? '오늘도 수고하셨습니다' : '준비되셨나요?'}</h2><p className="staff-clock-description">{clockedIn ? `${clockDate(latest!.at)}부터 근무 중` : '매장에 도착하면 출근을 기록해 주세요.'}</p>
-        <div className="staff-clock-times"><div><span>최근 출근</span><strong>{clockTime(recentIn?.at)}</strong></div><span className="staff-time-divider" /><div><span>최근 퇴근</span><strong>{clockTime(recentOut?.at)}</strong></div></div>
-        {clockedIn && staffDate(Date.parse(latest!.at)) !== today && <p className="staff-overnight">이전 날짜의 출근 기록이 이어지고 있습니다. 퇴근으로 근무를 마무리하세요.</p>}
-        {!view?.employeeId && !loading && <p className="staff-unlinked">계정에 연결된 직원 정보가 없습니다. 관리자에게 직원 계정 연결을 요청해 주세요.</p>}
-        <button className="staff-clock-button" type="button" disabled={clockDisabled} onClick={() => void recordClock()}>{phase === 'locating' ? '위치 확인 중…' : phase === 'saving' ? '기록 중…' : clockedIn ? '퇴근하기' : '출근하기'}<span aria-hidden="true">→</span></button>
-        {success && <p className="staff-clock-success" role="status"><Check size={16} />{success}</p>}
-        {clockError && <p className="staff-clock-error" role="alert">{clockError}</p>}
-      </section>
-      <section className="staff-location-card" aria-label="출퇴근 위치 확인"><div className="staff-section-heading"><h2><MapPin size={19} /> 출퇴근 위치</h2><span className={`staff-location-badge ${geo.phase === 'ready' && locationResult?.valid ? 'verified' : ''}`}>{!location ? '미설정' : geo.phase === 'checking' ? '확인 중' : locationResult?.valid ? '위치 확인' : '확인 필요'}</span></div>
-        <strong className="staff-store-name">{stores.find(store => store.id === storeId)?.name}</strong><p className="staff-address">{configuredAddress || '등록된 주소가 없습니다.'}</p>
-        <div className="staff-location-measures"><div><span>매장과의 거리</span><strong>{locationResult ? `${Math.round(locationResult.distance).toLocaleString('ko-KR')}m` : '—'}</strong></div><div><span>현재 위치 오차</span><strong>{geo.position ? `±${Math.ceil(geo.position.accuracy)}m` : '—'}</strong></div></div>
-        <p className={`staff-location-message ${locationResult?.valid ? 'verified' : ''}`} role="status">{geoMessage}</p>
-        <button type="button" className="staff-location-retry" disabled={!location || geo.phase === 'checking' || Boolean(phase)} onClick={() => void checkPosition()}><RefreshCcw size={15} />위치 다시 확인</button>
-        <p className="staff-location-rule">매장 반경 200m · 위치 오차 50m 이하<br />위치 오차까지 반경 안에 포함되어야 합니다.</p>
-      </section></div>
-      <section className="staff-schedule-card" aria-label="내 근무 일정"><div className="staff-section-heading"><div><h2><CalendarDays size={20} /> 근무 일정</h2><p>게시된 일정만 표시합니다.</p></div><div className="staff-segment" aria-label="근무표 범위"><button type="button" aria-pressed={scheduleMode === 'mine'} onClick={() => setScheduleMode('mine')}>나</button><button type="button" aria-pressed={scheduleMode === 'store'} disabled={!view?.employeeId} onClick={() => setScheduleMode('store')}>매장</button></div></div>
-        <div className="staff-schedule-grid"><div><div className="staff-month-nav"><button type="button" aria-label="이전 달" onClick={() => changeMonth(-1)}>‹</button><strong>{Number(month.slice(0, 4))}년 {Number(month.slice(5))}월</strong><button type="button" aria-label="다음 달" onClick={() => changeMonth(1)}>›</button><button className="staff-today" type="button" onClick={() => { setMonth(today.slice(0, 7)); setSelectedDate(today); }}>오늘</button></div>
-          <ScheduleCalendar month={month} today={today} selected={selectedDate} mode={scheduleMode} rows={schedules} onSelect={setSelectedDate} />
-        </div><div className="staff-day-schedule"><h3>{Number(selectedDate.slice(5, 7))}월 {Number(selectedDate.slice(8))}일 <span>{scheduleMode === 'mine' ? '내 일정' : '매장 근무표'}</span></h3>
-          {!dayRows.length ? <div className="staff-empty"><CalendarDays size={24} /><p>{view?.employeeId ? '게시된 근무 일정이 없습니다.' : '직원 계정 연결 후 일정을 확인할 수 있습니다.'}</p></div> : <ul>{dayRows.map(row => <li key={row.id}><span className={`staff-schedule-avatar ${row.employeeId === view?.employeeId ? 'mine' : ''}`}>{row.employeeName.slice(0, 1)}</span><div><strong>{row.employeeName}{row.employeeId === view?.employeeId && <small>나</small>}</strong><p>{row.kind === 'off' ? '휴무' : `${row.startTime} – ${row.endTime}${row.endTime <= row.startTime ? ' (다음 날)' : ''}`}</p>{row.kind === 'work' && <small>휴게 {row.breakMinutes}분</small>}</div><span className={`staff-shift-kind ${row.kind}`}>{row.kind === 'off' ? '휴무' : '근무'}</span></li>)}</ul>}
-        </div></div>
-      </section>
-      <section className="staff-notices" aria-label="매장 공지"><div className="staff-section-heading"><div><h2>매장 공지</h2><p>함께 확인할 소식을 모았습니다.</p></div><span className="staff-notice-count">{notices.length}</span></div>
-        {!notices.length ? <p className="staff-empty">게시된 매장 공지가 없습니다.</p> : <ul>{notices.map(notice => <li key={notice.id}><button type="button" aria-expanded={openNotice === notice.id} onClick={() => setOpenNotice(openNotice === notice.id ? '' : notice.id)}><span>{notice.pinned && <small className="staff-pinned">중요</small>}<strong>{notice.title}</strong><time>{staffDate(Date.parse(notice.updatedAt)).replaceAll('-', '.')}</time></span><span aria-hidden="true">{openNotice === notice.id ? '−' : '+'}</span></button>{openNotice === notice.id && <p className="staff-notice-body">{notice.body}</p>}</li>)}</ul>}
-      </section>
-      {onOpenPersonal && <details className="staff-personal-menu"><summary>내 인사 메뉴<span>휴가·급여·문서 등</span></summary><nav aria-label="내 인사 메뉴">{staffPersonalTabs.map(([id, label]) => <button type="button" key={id} disabled={Boolean(phase)} onClick={() => onOpenPersonal(id)}>{label}<span aria-hidden="true">›</span></button>)}</nav></details>}
+      {!view?.employeeId && !loading && !loadError && <p className="staff-unlinked">계정에 연결된 직원 정보가 없습니다. 관리자에게 직원 계정 연결을 요청해 주세요.</p>}
+      {success && <p className="staff-clock-success" role="status"><Check size={16} />{success}</p>}
+      {clockError && !clockSheet && <p className="staff-clock-error" role="alert">{clockError}</p>}
+      {homeTab === 'today' && <>
+        <label className="staff-search"><Search size={20} /><input type="search" aria-label="메뉴·공지 검색" placeholder="찾는 게 있으신가요?" value={search} onChange={event => setSearch(event.target.value)} /></label>
+        {search.trim() ? <section className="staff-search-results" aria-label="검색 결과">{staffPersonalTabs.filter(([, label]) => label.includes(search.trim())).map(([id, label]) => <button type="button" key={id} onClick={() => openPersonal(id)}>{label}<ChevronRight size={18} /></button>)}{notices.filter(row => `${row.title} ${row.body}`.includes(search.trim())).map(row => <button type="button" key={row.id} onClick={() => { setNoticeSheet(true); setOpenNotice(row.id); }}>공지 · {row.title}<ChevronRight size={18} /></button>)}{!staffPersonalTabs.some(([, label]) => label.includes(search.trim())) && !notices.some(row => `${row.title} ${row.body}`.includes(search.trim())) && <p className="staff-empty">검색 결과가 없습니다.</p>}</section> : <>
+          <div className="staff-quick-actions"><button type="button" disabled={Boolean(phase)} onClick={() => setClockSheet(true)}><Clock3 size={19} /><span>근무 등록</span></button><button type="button" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('leave')}><span className="staff-leave-symbol" aria-hidden="true"><Umbrella size={20} /></span><span>휴가 등록</span></button><button type="button" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('meetings')}><CalendarDays size={19} /><span>미팅 추가</span></button></div>
+          <div className="staff-overview-links"><button type="button" onClick={openSchedule}><strong>일정<ChevronRight size={16} /></strong><span>{todayCount ? `오늘 ${todayCount}개의 일정` : '오늘은 일정이 없어요.'}</span></button><button type="button" onClick={() => navigate('tasks')}><strong>해야할 일<ChevronRight size={16} /></strong><span>{taskCount ? `${taskCount}건을 확인해 주세요.` : '모두 완료했어요.'}</span></button></div>
+          <section className="staff-my-work" aria-label="내 근무"><h2 className="staff-group-title">내 근무</h2><button type="button" className="staff-week-card" disabled={!onOpenPersonal} onClick={() => openPersonal('attendance')}><div><span>승인된 근무</span><span>{week.start.slice(5).replace('-', '.')} – {week.end.slice(5).replace('-', '.')}</span></div><div><span className="staff-target-label"><Clock3 size={22} />채운 시간</span><p><strong>{staffDuration(week.recognizedMinutes)}</strong><span> / {week.target === null ? '기준 미설정' : staffDuration(week.target)}</span></p></div>{week.target !== null && week.target > 0 && <progress value={week.recognizedMinutes} max={week.target} aria-label="주간 근무 달성률" />}<small>{week.pendingCount ? `승인 대기 ${week.pendingCount}건 · ` : ''}{week.paidLeaveMinutes ? `유급휴가 ${staffDuration(week.paidLeaveMinutes)} · ` : ''}승인된 기록을 기준으로 표시합니다.</small></button>
+            <button type="button" className="staff-location-link" onClick={() => setClockSheet(true)}><MapPin size={18} /><span>{location ? '출퇴근 위치 확인' : '출퇴근 위치 설정이 필요해요'}</span><ChevronRight size={18} /></button>
+          </section>
+          <section className="staff-team-today"><h2 className="staff-group-title">구성원 근무</h2><button type="button" className="staff-team-card" onClick={() => { setScheduleMode('store'); openSchedule(); }}><span><UserRound size={22} />오늘의 매장 근무표</span><strong>{new Set(team.filter(row => row.date === today && row.kind === 'work').map(row => row.employeeId)).size}명<ChevronRight size={18} /></strong></button><p className="staff-hint">공개된 근무 일정만 표시합니다.</p></section>
+          {noticeList}
+        </>}
+      </>}
+      {homeTab === 'schedule' && <section className="staff-schedule-screen" aria-label="내 근무 일정">
+        <header className="staff-screen-heading"><h1>{Number(month.slice(0, 4))}년 {Number(month.slice(5))}월</h1><div><button className="staff-icon-button" type="button" aria-label="일정 필터" aria-expanded={filterOpen} onClick={() => setFilterOpen(!filterOpen)}><span className="staff-filter-icon" aria-hidden="true">≡</span></button><button className="staff-icon-button" type="button" aria-label="일정 추가" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('meetings')}><Plus size={23} /></button></div></header>
+        {filterOpen && <div className="staff-calendar-filter"><div className="staff-segment" aria-label="근무표 범위"><button type="button" aria-pressed={scheduleMode === 'mine'} onClick={() => setScheduleMode('mine')}>나</button><button type="button" aria-pressed={scheduleMode === 'store'} disabled={!view?.employeeId} onClick={() => setScheduleMode('store')}>매장</button></div><label>동료<select value={coworker} onChange={event => setCoworker(event.target.value)}><option value="all">모든 동료</option>{coworkers.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label></div>}
+        <div className="staff-month-nav"><button type="button" aria-label={calendarExpanded ? '이전 달' : '이전 주'} onClick={() => calendarExpanded ? changeMonth(-1) : changeWeek(-7)}>‹</button><button type="button" className="staff-today" onClick={() => { setMonth(today.slice(0, 7)); setSelectedDate(today); }}>오늘</button><button type="button" aria-label={calendarExpanded ? '다음 달' : '다음 주'} onClick={() => calendarExpanded ? changeMonth(1) : changeWeek(7)}>›</button><button type="button" className="staff-calendar-toggle" aria-expanded={calendarExpanded} onClick={() => setCalendarExpanded(!calendarExpanded)}>{calendarExpanded ? '주간 보기' : '월 전체 보기'}</button></div>
+        <ScheduleCalendar month={month} today={today} selected={selectedDate} mode={scheduleMode} rows={schedules} onSelect={date => { setSelectedDate(date); setMonth(date.slice(0, 7)); }} compact={!calendarExpanded} />
+        <div className="staff-calendar-handle" aria-hidden="true" />
+        <div className="staff-schedule-day"><div className="staff-shift-bands">{mine.filter(row => row.date === selectedDate).map(row => <button type="button" key={row.id} onClick={() => openPersonal('attendance')}><span><Clock3 size={19} />{row.kind === 'off' ? '휴무' : `근무 ${staffDuration(shiftMinutes(row))}`}</span><small>{row.kind === 'work' ? `${row.startTime} – ${row.endTime}${row.endTime <= row.startTime ? ' 다음 날' : ''}` : ''}</small><ChevronRight size={18} /></button>)}</div>
+          <section className="staff-day-section"><h2>내 일정 <em>{dayLeaves.length + dayMeetings.length}</em></h2>{!dayLeaves.length && !dayMeetings.length ? <p className="staff-empty">일정이 없는 날이에요.</p> : <ul>{dayLeaves.map(row => <li key={row.id}><button type="button" onClick={() => openPersonal('leave')}><span className="staff-event-mark leave"><Umbrella size={20} /></span><span><strong>{view?.workspace.attendance.leaveTypes.find(type => type.id === row.typeId)?.name || '휴가'}</strong><small>{row.slots.filter(slot => slot.date === selectedDate).map(slot => `${slot.startTime} – ${slot.endTime}`).join(', ')} · {row.status === 'pending' ? '승인 대기' : '승인 완료'}</small></span><ChevronRight size={18} /></button></li>)}{dayMeetings.map(row => <li key={row.id}><button type="button" onClick={() => openPersonal('meetings')}><span className="staff-event-mark"><CalendarDays size={20} /></span><span><strong>{row.title}</strong><small>미팅 · 시간 미지정</small></span><ChevronRight size={18} /></button></li>)}</ul>}</section>
+          <section className="staff-day-section"><h2>동료 일정 <em>{dayTeam.length}</em></h2>{!dayTeam.length ? <p className="staff-empty">선택한 동료의 일정이 없어요.</p> : <ul>{dayTeam.map(row => <li className="staff-coworker-shift" key={row.id}><span className="staff-schedule-avatar">{row.employeeName.slice(0, 1)}</span><div><strong>{row.employeeName}</strong><p>{row.kind === 'off' ? '휴무' : `${row.startTime} – ${row.endTime}${row.endTime <= row.startTime ? ' (다음 날)' : ''}`}</p><small>{row.kind === 'work' ? `휴게 ${row.breakMinutes}분` : '게시된 일정'}</small></div></li>)}</ul>}</section>
+        </div><button type="button" className="staff-calendar-export" disabled={!mine.some(row => row.date.startsWith(`${month}-`) && row.kind === 'work')} onClick={exportCalendar}><CalendarDays size={18} />내 근무표 캘린더로 내보내기</button><p className="staff-hint">선택한 월의 공개 근무표를 .ics 파일로 저장합니다.</p>
+      </section>}
+      {homeTab === 'tasks' && <HrStaffTasks response={view} actorId={data.actor.id} busy={Boolean(phase) || loading || Boolean(loadError)} onOpenPersonal={openPersonal} />}
+      {homeTab === 'more' && <HrStaffMore response={view} data={data} busy={Boolean(phase) || loading || Boolean(loadError)} onOpenPersonal={openPersonal} onOpenSchedule={() => { setScheduleMode('store'); openSchedule(); }} onOpenNotices={() => setNoticeSheet(true)} />}
+      {clockSheet && <HrDialog title="근무 등록" busy={Boolean(phase)} onClose={() => setClockSheet(false)}>{locationPanel}</HrDialog>}
+      {noticeSheet && <HrDialog title="매장 공지" onClose={() => setNoticeSheet(false)}>{noticeList}</HrDialog>}
+      {homeTab === 'today' && !clockSheet && <section className="staff-clock-dock" aria-label="내 출퇴근"><div><strong>{clockedIn ? '근무 중' : sameDayOut ? '퇴근 완료' : '시작 전'}</strong><span>{clockedIn ? `${clockDate(latest!.at)} 출근` : todayShifts.find(row => row.kind === 'work') ? `${todayShifts.find(row => row.kind === 'work')!.startTime} 근무 예정` : '근무 예정'}</span></div>{clockAction}</section>}
     </>}
+    <StaffBottomNav active={homeTab} onSelect={navigate} disabled={Boolean(phase)} />
   </main>;
 
   function changeMonth(offset: number) {
     const date = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1 + offset, 1));
     const next = date.toISOString().slice(0, 7); setMonth(next); setSelectedDate(`${next}-01`);
   }
+  function changeWeek(offset: number) { const date = addStaffDays(selectedDate, offset); setSelectedDate(date); setMonth(date.slice(0, 7)); }
 }
 
-function ScheduleCalendar({ month, today, selected, mode, rows, onSelect }: { month: string; today: string; selected: string; mode: 'mine' | 'store'; rows: HrStoreScheduleEntry[]; onSelect: (date: string) => void }) {
+function ScheduleCalendar({ month, today, selected, mode, rows, onSelect, compact }: { month: string; today: string; selected: string; mode: 'mine' | 'store'; rows: HrStoreScheduleEntry[]; onSelect: (date: string) => void; compact: boolean }) {
   const year = Number(month.slice(0, 4)); const monthIndex = Number(month.slice(5)) - 1;
   const offset = new Date(Date.UTC(year, monthIndex, 1)).getUTCDay();
   const days = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  const weeks = Math.ceil((days + offset) / 7);
-  return <table className="staff-calendar" aria-label={`${year}년 ${monthIndex + 1}월 근무 달력`}><thead><tr>{['일', '월', '화', '수', '목', '금', '토'].map(day => <th scope="col" key={day}>{day}</th>)}</tr></thead><tbody>{Array.from({ length: weeks }, (_, week) => <tr key={week}>{Array.from({ length: 7 }, (_, weekday) => {
+  const weeks = compact ? 1 : Math.ceil((days + offset) / 7);
+  const sunday = addStaffDays(selected, -new Date(`${selected}T00:00:00Z`).getUTCDay());
+  return <table className={`staff-calendar ${compact ? 'is-week' : ''}`} aria-label={`${year}년 ${monthIndex + 1}월 근무 달력`}><thead><tr>{['일', '월', '화', '수', '목', '금', '토'].map(day => <th scope="col" key={day}>{day}</th>)}</tr></thead><tbody>{Array.from({ length: weeks }, (_, week) => <tr key={week}>{Array.from({ length: 7 }, (_, weekday) => {
     const day = week * 7 + weekday - offset + 1;
-    if (day < 1 || day > days) return <td key={weekday} />;
-    const date = `${month}-${String(day).padStart(2, '0')}`; const dayRows = rows.filter(row => row.date === date);
+    if (!compact && (day < 1 || day > days)) return <td key={weekday} />;
+    const date = compact ? addStaffDays(sunday, weekday) : `${month}-${String(day).padStart(2, '0')}`; const dayRows = rows.filter(row => row.date === date);
     const working = dayRows.filter(row => row.kind === 'work'); const text = mode === 'store' ? working.length ? `${new Set(working.map(row => row.employeeId)).size}명` : dayRows.length ? '휴무' : '' : working[0]?.startTime || (dayRows.length ? '휴무' : '');
-    return <td key={weekday}><button type="button" className={`${selected === date ? 'selected' : ''} ${today === date ? 'today' : ''}`} aria-label={`${date}${text ? ` ${text}` : ' 일정 없음'}`} aria-pressed={selected === date} aria-current={today === date ? 'date' : undefined} onClick={() => onSelect(date)}><span>{day}</span><small className={working.length ? 'work' : 'off'}>{text || '\u00a0'}</small></button></td>;
+    return <td key={weekday}><button type="button" className={`${selected === date ? 'selected' : ''} ${today === date ? 'today' : ''}`} aria-label={`${date}${text ? ` ${text}` : ' 일정 없음'}`} aria-pressed={selected === date} aria-current={today === date ? 'date' : undefined} onClick={() => onSelect(date)}><span>{Number(date.slice(8))}</span>{!compact && <small className={working.length ? 'work' : 'off'}>{text || '\u00a0'}</small>}</button></td>;
   })}</tr>)}</tbody></table>;
 }

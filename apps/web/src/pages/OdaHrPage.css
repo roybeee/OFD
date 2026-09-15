@@ -1,35 +1,72 @@
-.oda-hr-page { max-width: 1480px; margin: 0 auto; padding: 32px 28px 48px; color: var(--ink); }
-.hr-page-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 28px; }
-.hr-kicker { color: var(--orange-dark); font-size: 11px; font-weight: 850; letter-spacing: .14em; margin-bottom: 8px; }
-.hr-page-heading h1 { display: flex; align-items: center; gap: 10px; font-size: 30px; }
+/* HR has its own flat, mobile-first control system. Other workspaces keep their brand styles. */
+.oda-hr-page, .hr-dialog, .app-shell--hr {
+  --ink: #292c32;
+  --muted: #727b88;
+  --muted-2: #727b88;
+  --panel: #fff;
+  --canvas: #f6f7f9;
+  --line: #e9ebef;
+  --line-strong: #d9dde3;
+  --orange-dark: #168b93;
+  --orange-soft: #e8f6f7;
+  --shadow-sm: none;
+}
+.app-shell--hr { background: var(--canvas); }
+.oda-hr-page { max-width: 1480px; margin: 0 auto; padding: 28px 28px 48px; color: var(--ink); }
+.oda-hr-page.oda-hr-personal { padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px)); }
+.oda-hr-page .button, .hr-dialog .button {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 650;
+  box-shadow: none;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.oda-hr-page .button:not(:disabled):hover, .hr-dialog .button:not(:disabled):hover { transform: none; }
+.oda-hr-page .button-primary, .hr-dialog .button-primary { background: #292c32; color: #fff; }
+.oda-hr-page .button-primary:not(:disabled):hover, .hr-dialog .button-primary:not(:disabled):hover { background: #42464e; }
+.oda-hr-page .button-secondary, .hr-dialog .button-secondary { background: #fff; border-color: var(--line-strong); color: var(--ink); }
+.oda-hr-page .button-secondary:not(:disabled):hover, .hr-dialog .button-secondary:not(:disabled):hover { background: var(--canvas); }
+.oda-hr-page .button-ghost, .hr-dialog .button-ghost { color: var(--muted); }
+.oda-hr-page .button:disabled, .hr-dialog .button:disabled { box-shadow: none; }
+.oda-hr-page :is(input, select, textarea, button):focus-visible,
+.hr-dialog :is(input, select, textarea, button):focus-visible { outline: 2px solid #168b93; outline-offset: 3px; }
+.oda-hr-page :is(input, select, textarea):disabled,
+.hr-dialog :is(input, select, textarea):disabled { color: #858d97; background: #f3f4f6; }
+.hr-page-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 24px; }
+.hr-kicker { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .08em; margin-bottom: 6px; }
+.hr-page-heading h1 { display: flex; align-items: center; gap: 10px; font-size: 28px; letter-spacing: -.035em; }
 .hr-page-heading p:not(.hr-kicker) { color: var(--muted); margin-top: 10px; font-size: 14px; line-height: 1.6; }
 .hr-header-actions { display: flex; gap: 10px; align-items: end; }
 .hr-header-actions select { min-width: 180px; }
-.hr-tabs { display: flex; gap: 4px; padding: 7px; background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow-x: auto; margin-bottom: 26px; scrollbar-width: thin; }
-.hr-tabs button { flex: none; background: transparent; border-radius: 9px; padding: 10px 15px; font-size: 13px; font-weight: 750; color: var(--muted); }
-.hr-tabs button.active { background: var(--orange-soft); color: var(--orange-dark); }
+.hr-tabs { display: flex; gap: 20px; padding: 0; background: transparent; border-bottom: 1px solid var(--line); overflow-x: auto; margin-bottom: 24px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.hr-tabs::-webkit-scrollbar { display: none; }
+.hr-tabs button { flex: none; min-height: 48px; padding: 0 1px; border-radius: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 14px; font-weight: 650; white-space: nowrap; color: var(--muted); }
+.hr-tabs button.active { background: transparent; color: var(--ink); border-bottom-color: var(--ink); }
 .hr-tabs button:hover:not(.active) { background: var(--canvas); }
-.hr-content, .hr-stack { display: grid; gap: 22px; min-width: 0; }
-.hr-workflow { display: grid; gap: 22px; }
+.hr-content, .hr-stack { display: grid; gap: 20px; min-width: 0; }
+.hr-workflow { display: grid; gap: 20px; }
 .hr-inline-note { padding: 15px; background: var(--canvas); border-radius: 10px; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .hr-inline-note a { color: var(--orange-dark); text-decoration: underline; }
 .hr-prewrap { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
 .hr-checkbox, .hr-form label.hr-checkbox { display: flex; align-items: center; gap: 9px; font-size: 13px; }
-.hr-card { padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); min-width: 0; box-shadow: var(--shadow-sm); }
+.hr-card { padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); min-width: 0; box-shadow: none; }
 .hr-card h2 { font-size: 19px; }
 .hr-card h3 { font-size: 17px; }
 .hr-section-heading, .hr-card-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
 .hr-card-head p, .hr-section-heading p { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
 .hr-section-heading:only-child { margin: 0; }
-.hr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.hr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .hr-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .hr-metric { display: grid; gap: 10px; padding: 22px; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; }
 .hr-metric span { font-size: 13px; color: var(--muted); }
 .hr-metric strong { font-size: 29px; letter-spacing: -.04em; }
 .hr-metric small { color: var(--muted); font-size: 12px; }
-.hr-metric:first-child { background: #203c32; color: white; border-color: #203c32; }
-.hr-metric:first-child span, .hr-metric:first-child small { color: #deebe4; }
-.hr-empty { display: grid; justify-items: center; gap: 10px; padding: 38px 24px; border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--canvas); text-align: center; font-size: 14px; line-height: 1.6; }
+.hr-metric:first-child strong { color: #168b93; }
+.hr-empty { display: grid; justify-items: center; gap: 10px; padding: 44px 20px; border: 0; border-radius: 12px; background: var(--canvas); text-align: center; font-size: 14px; line-height: 1.65; }
+.hr-empty strong { font-size: 15px; font-weight: 650; }
 .hr-empty p { max-width: 600px; color: var(--muted); }
 .hr-empty .button { margin-top: 8px; }
 .hr-loading, .hr-note { padding: 12px 15px; border-radius: 10px; background: var(--canvas); color: var(--muted); font-size: 13px; line-height: 1.7; }
@@ -40,13 +77,17 @@
 .hr-toolbar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-bottom: 20px; }
 .hr-toolbar > label:first-child { flex: 1; min-width: 180px; }
 .hr-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hr-view-tabs { gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.oda-hr-page .hr-view-tabs .button { padding: 0 0 2px; min-height: 46px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
+.oda-hr-page .hr-view-tabs .button[aria-pressed=true] { border-bottom-color: var(--ink); color: var(--ink); }
+.oda-hr-page .hr-view-tabs .button:not(:disabled):hover { background: transparent; color: var(--ink); }
 .hr-form { display: grid; gap: 16px; }
 .hr-form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 16px; min-width: 0; }
 .hr-form fieldset legend { margin-bottom: 12px; font-weight: 750; font-size: 14px; }
 .hr-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .hr-form-grid .hr-wide { grid-column: 1 / -1; }
 .hr-field, .hr-form label:not(.hr-check) { display: grid; gap: 7px; font-size: 12px; color: var(--muted); font-weight: 650; min-width: 0; }
-.oda-hr-page input:not([type=checkbox]):not([type=radio]), .oda-hr-page select, .oda-hr-page textarea, .hr-dialog input:not([type=checkbox]):not([type=radio]), .hr-dialog select, .hr-dialog textarea { width: 100%; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 9px; padding: 10px 12px; background: white; font-size: 14px; color: var(--ink); }
+.oda-hr-page input:not([type=checkbox]):not([type=radio]), .oda-hr-page select, .oda-hr-page textarea, .hr-dialog input:not([type=checkbox]):not([type=radio]), .hr-dialog select, .hr-dialog textarea { width: 100%; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px; background: white; font-size: 14px; line-height: 1.4; color: var(--ink); }
 .oda-hr-page input[type=checkbox], .hr-dialog input[type=checkbox] { width: 18px; min-height: 18px; }
 .oda-hr-page textarea, .hr-dialog textarea { resize: vertical; min-height: 110px; line-height: 1.7; }
 .hr-check { display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 1.6; }
@@ -68,9 +109,11 @@
 .hr-list p { font-size: 13px; color: var(--muted); margin-top: 7px; line-height: 1.7; }
 .hr-list small { display: block; color: var(--muted); margin-top: 8px; font-size: 11px; }
 .hr-prose { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; font-size: 14px; }
-.hr-dialog-backdrop { position: fixed; inset: 0; z-index: 100; padding: 24px; background: #17231f80; display: grid; place-items: center; overflow-y: auto; }
-.hr-dialog { width: min(740px, 100%); max-height: calc(100dvh - 48px); overflow-y: auto; border: 1px solid var(--line); background: var(--panel); border-radius: 18px; box-shadow: var(--shadow-lg); padding: 26px; }
-.hr-dialog h2 { font-size: 22px; }
+.hr-dialog-backdrop { position: fixed; inset: 0; z-index: 100; padding: 24px; background: #20252e66; display: grid; place-items: center; overflow-y: auto; }
+.hr-dialog { width: min(740px, 100%); max-height: calc(100dvh - 48px); overflow-y: auto; border: 1px solid var(--line); background: var(--panel); border-radius: 16px; box-shadow: 0 20px 60px #162a3326; padding: 24px; overscroll-behavior: contain; }
+.hr-dialog h2 { font-size: 20px; letter-spacing: -.025em; }
+.hr-dialog > .hr-section-heading { position: sticky; top: -24px; z-index: 2; background: var(--panel); margin: -24px -24px 20px; padding: 14px 24px; border-bottom: 1px solid var(--line); }
+.hr-dialog > .hr-section-heading > .button { min-width: 44px; flex: none; }
 .hr-dialog .hr-actions { margin-top: 8px; }
 .hr-dialog .hr-error { margin-bottom: 0; }
 .hr-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 24px; }
@@ -107,5 +150,106 @@
 .hr-org-row { padding: 14px 16px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .hr-org-row p { color: var(--muted); font-size: 12px; margin-top: 5px; }
 @media (max-width: 1000px) { .hr-page-heading { align-items: start; } .hr-header-actions { flex-wrap: wrap; justify-content: end; } .hr-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .oda-hr-page { padding: 24px 16px 32px; } .hr-page-heading { flex-direction: column; gap: 20px; } .hr-header-actions { width: 100%; justify-content: start; } .hr-header-actions > label { flex: 1; } .hr-page-heading h1 { font-size: 27px; } .hr-grid, .hr-form-grid { grid-template-columns: 1fr; } .hr-card { padding: 18px; } .hr-section-heading { align-items: start; flex-wrap: wrap; } .hr-dialog-backdrop { padding: 12px; } .hr-dialog { padding: 20px; max-height: calc(100dvh - 24px); } .hr-metric { padding: 17px; } .hr-tabs { margin-left: -4px; margin-right: -4px; } .hr-org-row { align-items: start; flex-direction: column; } }
+
+/* Keep mobile HR navigation below the content hierarchy, without the tall dashboard chrome. */
+@media (max-width: 700px) {
+  .app-shell--hr > .app-header { position: relative; background: #fff; border-bottom: 1px solid var(--line); }
+  .app-shell--hr > .app-header::after { display: none; }
+  .app-shell--hr .header-main { width: calc(100% - 32px); height: 52px; min-height: 52px; gap: 12px; }
+  .app-shell--hr .brand { gap: 9px; }
+  .app-shell--hr .brand-mark { width: 42px; }
+  .app-shell--hr .oda-wordmark { color: #292c32; font-size: 26px; }
+  .app-shell--hr .brand-copy strong { font-size: 13px; font-weight: 650; }
+  .app-shell--hr .brand-copy small { display: none; }
+  .app-shell--hr .header-actions { gap: 0; }
+  .app-shell--hr .logout-button { min-height: 44px; padding: 0 8px; border: 0; border-radius: 8px; font-size: 12px; background: transparent; }
+  .app-shell--hr .context-bar { width: calc(100% - 32px); min-height: 44px; gap: 0; }
+  .app-shell--hr .primary-nav { gap: 18px; }
+  .app-shell--hr .primary-nav button { min-height: 44px; padding: 0; gap: 0; font-size: 12px; line-height: 1.4; }
+  .app-shell--hr .primary-nav button svg { display: none; }
+  .app-shell--hr .primary-nav button::after { left: 0; right: 0; height: 2px; }
+  .app-shell--hr .primary-nav button.active::after { background: #292c32; }
+  .app-shell--hr .source-pill { display: none; }
+  .app-shell--hr-staff .context-bar { display: none; }
+  .app-shell--hr > .app-footer { display: none; }
+
+  .oda-hr-page { width: 100%; padding: 22px 16px 36px; }
+  .hr-page-heading { align-items: stretch; flex-direction: column; gap: 16px; margin-bottom: 18px; }
+  .hr-page-heading h1 { font-size: 24px; gap: 8px; line-height: 1.35; }
+  .hr-page-heading h1 > svg { width: 22px; height: 22px; }
+  .hr-kicker { display: none; }
+  .hr-page-heading p:not(.hr-kicker) { margin-top: 6px; font-size: 13px; }
+  .hr-header-actions { width: 100%; justify-content: start; gap: 8px; }
+  .hr-header-actions > label { flex: 1; min-width: 0; }
+  .hr-header-actions select { min-width: 0; }
+  .hr-tabs { gap: 22px; margin: 0 -16px 18px; padding: 0 16px; }
+  .hr-tabs button { min-height: 46px; font-size: 14px; }
+  .hr-content, .hr-stack, .hr-workflow { gap: 16px; }
+  .hr-grid, .hr-form-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .hr-card { padding: 18px 16px; border-radius: 16px; }
+  .hr-card h2 { font-size: 18px; line-height: 1.4; }
+  .hr-card h3 { font-size: 16px; line-height: 1.4; }
+  .hr-section-heading, .hr-card-head { align-items: start; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+  .hr-section-heading > div, .hr-card-head > div { min-width: 0; }
+  .hr-section-heading > .hr-actions { gap: 8px; width: 100%; }
+  .hr-section-heading > .hr-actions > .button { flex: 1; }
+  .hr-actions { gap: 8px; }
+  .oda-hr-page .button, .hr-dialog .button { min-height: 44px; padding: 0 12px; font-size: 14px; border-radius: 10px; }
+  .oda-hr-page .button > svg, .hr-dialog .button > svg { width: 17px; height: 17px; }
+  .hr-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .hr-toolbar > label:first-child { grid-column: 1 / -1; min-width: 0; }
+  .hr-toolbar > .button { align-self: end; }
+  .hr-field, .hr-form label:not(.hr-check) { gap: 6px; font-size: 12px; line-height: 1.5; }
+  .oda-hr-page input:not([type=checkbox]):not([type=radio]), .oda-hr-page select, .oda-hr-page textarea,
+  .hr-dialog input:not([type=checkbox]):not([type=radio]), .hr-dialog select, .hr-dialog textarea {
+    min-width: 0; min-height: 46px; padding: 10px 12px; border-radius: 10px; font-size: 16px;
+  }
+  .oda-hr-page input::placeholder, .hr-dialog input::placeholder { font-size: 14px; color: #939ba5; opacity: 1; }
+  .oda-hr-page textarea, .hr-dialog textarea { min-height: 110px; }
+  .hr-metrics { gap: 10px; }
+  .hr-metric { gap: 8px; padding: 17px 14px; border-radius: 14px; }
+  .hr-metric strong { font-size: 25px; }
+  .hr-metric span { font-size: 12px; }
+  .hr-metric small { font-size: 11px; line-height: 1.5; }
+  .hr-empty { padding: 36px 16px; font-size: 13px; }
+  .hr-empty strong { font-size: 15px; }
+  .hr-table-wrap { position: relative; border-radius: 10px; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+  .hr-table { font-size: 13px; }
+  .hr-table:has(th:nth-child(4)) { min-width: 540px; }
+  .hr-table th, .hr-table td { padding: 12px; }
+  .hr-table th:first-child, .hr-table td:first-child { position: sticky; left: 0; z-index: 1; box-shadow: 1px 0 0 var(--line); }
+  .hr-table th:first-child { background: var(--canvas); }
+  .hr-table td:first-child { background: #fff; }
+  .oda-hr-page .hr-table .button { min-height: 44px; padding: 0 10px; font-size: 13px; }
+  .hr-list { gap: 10px; }
+  .hr-list > li, .hr-list > article { padding: 14px; }
+  .hr-list .hr-section-heading { gap: 8px; }
+  .hr-org-node { padding-left: calc(var(--hr-depth, 0) * 12px); }
+  .hr-org-row { align-items: start; flex-direction: column; padding: 14px; }
+  .hr-details { gap: 18px 14px; }
+  .hr-inline-note, .hr-note { padding: 12px; font-size: 12px; }
+
+  .hr-dialog-backdrop { padding: 12px 0 0; place-items: end center; overflow: hidden; }
+  .hr-dialog {
+    width: 100%; max-width: 700px; max-height: calc(100dvh - 12px); padding: 20px 20px max(20px, env(safe-area-inset-bottom));
+    border: 0; border-radius: 20px 20px 0 0;
+  }
+  .hr-dialog h2 { font-size: 19px; }
+  .hr-dialog > .hr-section-heading { flex-wrap: nowrap; align-items: center; top: -20px; margin: -20px -20px 20px; padding: 12px 20px; gap: 12px; }
+  .hr-dialog > .hr-section-heading > h2 { min-width: 0; overflow-wrap: anywhere; }
+  .hr-dialog .hr-form > fieldset > .hr-actions:last-child, .hr-dialog .hr-form > .hr-actions:last-child {
+    position: sticky; bottom: -20px; z-index: 2; background: #fff; margin: 4px -20px -20px;
+    padding: 12px 20px max(20px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); flex-wrap: nowrap;
+  }
+  .hr-dialog .hr-form > fieldset > .hr-actions:last-child > .button, .hr-dialog .hr-form > .hr-actions:last-child > .button { flex: 1; min-height: 48px; }
+}
+
+@media (max-width: 380px) {
+  .app-shell--hr .brand-copy strong { font-size: 12px; }
+  .hr-header-actions { flex-wrap: wrap; }
+  .hr-header-actions > label { flex-basis: calc(100% - 56px); }
+  .hr-section-heading > .hr-actions > .button { padding: 0 9px; font-size: 13px; }
+  .hr-details { grid-template-columns: 1fr; }
+}
+
 @media (prefers-reduced-motion: reduce) { .oda-hr-page *, .hr-dialog * { scroll-behavior: auto; } }

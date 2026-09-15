@@ -69,7 +69,7 @@ function button(label: string): HTMLButtonElement | undefined {
   return [...container.querySelectorAll<HTMLButtonElement>('button')].find(row => {
     const visible = row.cloneNode(true) as HTMLElement;
     visible.querySelectorAll('[aria-hidden="true"]').forEach(node => node.remove());
-    return visible.textContent?.replace(/\s+/g, ' ').trim() === label;
+    return (row.getAttribute('aria-label') || visible.textContent?.replace(/\s+/g, ' ').trim()) === label;
   });
 }
 async function eventually(check: () => void) {
@@ -145,15 +145,16 @@ afterEach(async () => {
 describe('OdaStaffPage through the real in-process HR API', () => {
   it('shows a staff-linked employee, published schedule and notice without clocking in when the home opens', async () => {
     await eventually(() => {
-      expect(container.textContent).toContain(employeeName);
       expect(container.textContent).toContain('오늘 매장 운영 안내');
       expect(container.textContent).toContain('09:00');
-      expect(container.textContent).toContain('18:00');
     });
     const notice = container.querySelector<HTMLButtonElement>('.staff-notices button');
     expect(notice?.getAttribute('aria-expanded')).toBe('false');
     await act(async () => notice!.click());
     expect(container.querySelector('.staff-notice-body')?.textContent).toBe('마감 전에 정리 상태를 함께 확인해 주세요.');
+    await click('더 보기'); expect(container.querySelector('.staff-more-profile')?.textContent).toContain(employeeName);
+    await click('일정'); expect(container.querySelector('.staff-shift-bands')?.textContent).toContain('09:00 – 18:00');
+    expect(container.querySelector('[aria-current="date"]')?.getAttribute('aria-label')).toBe(`${hrToday()} 09:00`);
     expect(requests.some(row => row.method === 'GET' && row.url === endpoint)).toBe(true);
     expect(requests.filter(row => row.method === 'POST')).toEqual([]);
     const saved = await stored();
@@ -209,7 +210,7 @@ describe('OdaStaffPage through the real in-process HR API', () => {
     expect((await stored()).version).toBe(initialVersion);
 
     point = { ...storePoint, accuracy: 8 };
-    await click('위치 다시 확인');
+    await click('근무 등록'); await click('위치 다시 확인');
     await eventually(() => expect(button('출근하기')?.disabled).toBe(false));
     point = { ...storePoint, latitude: 91, accuracy: 8 };
     await click('출근하기');

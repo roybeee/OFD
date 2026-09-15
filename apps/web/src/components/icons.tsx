@@ -13,6 +13,8 @@ function IconBase({ name, size = 24, ...props }: SVGProps<SVGSVGElement> & { nam
     case 'x': body = <><path d="m6 6 12 12" /><path d="m18 6-12 12" /></>; break;
     case 'clock': body = <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>; break;
     case 'calendar': body = <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M8 3v4M16 3v4M3 10h18" /></>; break;
+    case 'grid': body = <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>; break;
+    case 'umbrella': body = <><path d="M3 12a9 9 0 0 1 18 0H3ZM12 12v7a2 2 0 0 0 4 0M12 3V2" /><path d="M8 12c0-5 2-9 4-9s4 4 4 9" /></>; break;
     case 'search': body = <><circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" /></>; break;
     case 'alert': body = <><path d="M12 3 2.8 20h18.4L12 3Z" /><path d="M12 9v5M12 17h.01" /></>; break;
     case 'alert-circle': body = <><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></>; break;
@@ -77,7 +79,8 @@ export const Truck = icon('truck');
 export const Bike = icon('bike');
 export const Store = icon('store');
 export const Building2 = icon('building');
-export const LayoutGrid = icon('building');
+export const LayoutGrid = icon('grid');
+export const Umbrella = icon('umbrella');
 export const FileCheck2 = icon('file');
 export const ClipboardCheck = icon('file');
 export const ReceiptText = icon('receipt');

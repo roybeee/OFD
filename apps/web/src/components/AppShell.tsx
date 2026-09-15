@@ -69,6 +69,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
   const local = isOdaBrand && appMode === 'local';
   const localPaths = new Set(['/store/oda-settlement', '/hq/oda-settlement', '/hq/oda-master', '/hq/oda-stores', '/hq/accounts', '/store/oda-hr', '/hq/oda-hr']);
   const staffHome = isOdaBrand && actorRole === 'store_staff';
+  const hrRoute = isOdaBrand && (path === '/store/oda-hr' || path === '/hq/oda-hr');
   const nav = applyMenuOrder(navByRole[role].filter((item) => (!local || localPaths.has(item.path)) && (isOdaBrand || !item.path.includes('/oda-')) && (!isOdaBrand || item.path !== '/hq/design') && capabilities.includes(pathCapability[item.path])), menuOrder)
     .map(item => staffHome && item.path === '/store/oda-hr' ? { ...item, label: '직원 홈' } : item);
   const firstPath = staffHome && capabilities.includes('oda.hr.read') ? '/store/oda-hr' : nav[0]?.path ?? path;
@@ -76,7 +77,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
   const actorRoleLabel = local && actorRole === 'hq_finance' ? '운영 지원자 B' : local && actorRole === 'store_owner' ? '매장 운영자 A' : role === 'hq' ? actorRole === 'auditor' ? '감사 · 읽기 전용' : actorRole === 'hq_master' || actorRole === 'master' ? '마스터' : actorRole === 'hq_finance' ? '재무' : '운영' : role === 'driver' ? '배송기사' : actorRole === 'store_staff' ? '매장 직원' : '점주';
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${hrRoute ? ' app-shell--hr' : ''}${hrRoute && staffHome ? ' app-shell--hr-staff' : ''}`}>
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <header className="app-header">
         <div className="header-main">

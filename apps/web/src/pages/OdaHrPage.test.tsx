@@ -58,7 +58,8 @@ describe('ODA HR workspace integration', () => {
     api.get.mockImplementation(async (storeId: string) => ({ ...response(storeId), permissions: { manage: false, payroll: false, self: false }, accounts: undefined }));
     window.history.replaceState({}, '', '/store/oda-hr?store=store-2');
     await act(async () => root.render(<OdaHrPage data={staffData} notify={vi.fn()} />));
-    await click('인사 도움말›');
+    await click('더 보기', container.querySelector('nav[aria-label="직원 앱 메뉴"]')!);
+    await click('인사 도움말');
     expect(container.textContent).toContain('직원 이용 안내');
     expect(container.textContent).not.toContain('조직과 직원 등록');
     expect(container.textContent).not.toContain('직원 화면 준비 현황');
