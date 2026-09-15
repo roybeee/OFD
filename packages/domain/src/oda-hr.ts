@@ -3,6 +3,7 @@ import { createHrPayrollState, applyHrPayrollCommand, getHrPayrollStateForContex
 import { createHrTalentState, applyHrTalentCommand, projectHrTalentState, type HrTalentState } from './oda-hr-talent.ts';
 import { createHrWorkflowState, applyHrWorkflowCommand, projectHrWorkflowState, type HrWorkflowState } from './oda-hr-workflow.ts';
 import { hrDate, hrEmployee, hrEnum, hrFail, hrManager, hrNumber, hrText } from './oda-hr-utils.ts';
+import { createHrClockLocation, type HrClockLocation } from './oda-hr-location.ts';
 
 export interface HrEmployee {
   id: string; employeeNumber: string; name: string; actorId?: string; departmentId: string; jobTitle: string;
@@ -11,7 +12,7 @@ export interface HrEmployee {
   history: Array<{ at: string; effectiveDate: string; reason: string; changes: Record<string, unknown>; previousSnapshot?: Record<string, unknown> }>;
 }
 export interface HrDepartment { id: string; name: string; parentId?: string; leaderId?: string; archived: boolean }
-export interface HrSettings { companyName: string; workdayHours: number; weeklyDays: number; annualLeaveDays: number; timezone: 'Asia/Seoul'; approvalEmployeeId?: string }
+export interface HrSettings { companyName: string; workdayHours: number; weeklyDays: number; annualLeaveDays: number; timezone: 'Asia/Seoul'; approvalEmployeeId?: string; clockLocation?: HrClockLocation }
 export interface HrNotice { id: string; title: string; body: string; pinned: boolean; status: 'draft' | 'published' | 'archived'; createdBy: string; createdAt: string; updatedAt: string }
 export interface HrDocument { id: string; title: string; category: 'contract' | 'certificate' | 'policy' | 'other'; employeeId?: string; body: string; status: 'active' | 'archived'; createdBy: string; createdAt: string; updatedAt: string }
 export interface HrHistory { id: string; type: string; actorId: string; at: string; summary: string }
@@ -23,14 +24,15 @@ export interface HrWorkspace {
 export interface HrCommand { type: string; input: Record<string, unknown> }
 export interface HrContext { actorId: string; employeeId?: string; manager: boolean; payroll: boolean; today: string; now: string; id: () => string }
 export interface HrPermissions { manage: boolean; payroll: boolean; self: boolean }
-export interface HrResponse { workspace: HrWorkspace; permissions: HrPermissions; employeeId?: string; accounts?: Array<{ id: string; name: string; role: string }> }
+export interface HrStoreScheduleEntry { id: string; employeeId: string; employeeName: string; date: string; startTime: string; endTime: string; breakMinutes: number; kind: 'work' | 'off' }
+export interface HrResponse { workspace: HrWorkspace; permissions: HrPermissions; employeeId?: string; accounts?: Array<{ id: string; name: string; role: string }>; storeSchedule?: HrStoreScheduleEntry[]; storeAddress?: string }
 
 /** Coarse command gate precedes object lookup; slices enforce ownership, assignment and state. */
 export const HR_COMMAND_ACCESS: Readonly<Record<string, 'manager' | 'member' | 'self' | 'payroll' | 'finance'>> = Object.freeze(Object.fromEntries([
   ...['workspace.initialize', 'employee.create', 'employee.update', 'employee.retire', 'department.upsert', 'department.archive', 'settings.update',
     'notice.create', 'notice.update', 'notice.archive', 'document.create', 'document.update', 'document.archive',
     'work.policy.create', 'work.policy.assign', 'work.approve', 'work.reject', 'clock.resolve', 'leave.type.create', 'leave.grant', 'leave.approve', 'leave.reject',
-    'shift.template.create', 'shift.save', 'shift.publish', 'shift.cancel', 'attendance.lock', 'attendance.unlock', 'attendance.holidays.set',
+    'shift.template.create', 'shift.save', 'shift.publish', 'shift.cancel', 'attendance.lock', 'attendance.unlock', 'attendance.holidays.set', 'attendance.location.set',
     'review.create', 'review.update', 'review.delete', 'review.open', 'review.close', 'review.publish', 'review.revoke',
     'recruitment.createJob', 'recruitment.updateJob', 'recruitment.deleteJob', 'recruitment.addCandidate', 'recruitment.moveCandidate', 'recruitment.reopenCandidate',
     'contract.create', 'contract.update', 'contract.complete', 'contract.cancel', 'contract.applyPersonnel', 'workflow.template.save', 'workflow.template.archive'].map(type => [type, 'manager']),
@@ -97,9 +99,10 @@ function employeeChanges(employee: HrEmployee, input: Record<string, unknown>): 
 }
 function coreCommand(workspace: HrWorkspace, command: HrCommand, ctx: HrContext): boolean {
   const input = command.input;
-  if (!['workspace.initialize', 'employee.create', 'employee.update', 'employee.retire', 'department.upsert', 'department.archive', 'settings.update', 'notice.create', 'notice.update', 'notice.archive', 'document.create', 'document.update', 'document.archive'].includes(command.type)) return false;
+  if (!['workspace.initialize', 'employee.create', 'employee.update', 'employee.retire', 'department.upsert', 'department.archive', 'settings.update', 'attendance.location.set', 'notice.create', 'notice.update', 'notice.archive', 'document.create', 'document.update', 'document.archive'].includes(command.type)) return false;
   hrManager(ctx);
   switch (command.type) {
+    case 'attendance.location.set': workspace.settings.clockLocation = createHrClockLocation(input, ctx); return true;
     case 'workspace.initialize': keys(input, []); if (workspace.version !== 0) hrFail('이미 시작한 인사관리입니다.', 'HR_ALREADY_INITIALIZED', 409); return true;
     case 'employee.create': {
       if (workspace.employees.length >= 5000) hrFail('구성원은 최대 5,000명까지 등록할 수 있습니다.');
@@ -220,5 +223,9 @@ export function projectHrWorkspace(workspace: HrWorkspace, ctx: HrContext): HrRe
   result.payroll = getHrPayrollStateForContext(workspace.payroll, ctx);
   result.talent = projectHrTalentState(workspace.talent, ctx);
   result.workflow = projectHrWorkflowState(workspace.workflow, ctx);
-  return { workspace: result, permissions: { manage: ctx.manager, payroll: ctx.payroll, self: Boolean(ctx.employeeId) }, ...(ctx.employeeId ? { employeeId: ctx.employeeId } : {}) };
+  const storeSchedule: HrStoreScheduleEntry[] = workspace.attendance.shifts.filter(row => row.status === 'published').map(row => ({
+    id: row.id, employeeId: row.employeeId, employeeName: workspace.employees.find(employee => employee.id === row.employeeId)?.name ?? '구성원',
+    date: row.date, startTime: row.startTime, endTime: row.endTime, breakMinutes: row.breakMinutes, kind: row.kind,
+  }));
+  return { workspace: result, permissions: { manage: ctx.manager, payroll: ctx.payroll, self: Boolean(ctx.employeeId) }, ...(ctx.employeeId ? { employeeId: ctx.employeeId } : {}), ...(ctx.manager || ctx.employeeId ? { storeSchedule } : {}) };
 }

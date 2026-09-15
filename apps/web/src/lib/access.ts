@@ -51,7 +51,8 @@ export function canAccessPath(path: string, capabilities: string[]) {
   return capabilities.includes(pathCapability[path]);
 }
 
-export function defaultPathFor(capabilities: string[]) {
+export function defaultPathFor(capabilities: string[], actorRole?: string) {
+  if (isOdaBrand && actorRole === 'store_staff' && capabilities.includes('oda.hr.read')) return '/store/oda-hr';
   return Object.keys(pathCapability).filter((path) => isOdaBrand || !path.includes('/oda-')).find((path) => capabilities.includes(pathCapability[path])) ?? '/unauthorized';
 }
 

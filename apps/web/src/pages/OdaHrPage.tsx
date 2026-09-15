@@ -11,6 +11,7 @@ import { HrWorkflow } from '../hr/HrWorkflow';
 import { HrEmpty, HrRecoveryContext, hrError, type HrPanelProps } from '../hr/shared';
 import type { BootstrapData } from '../types';
 import './OdaHrPage.css';
+import { OdaStaffPage, staffPersonalTabs, type StaffPersonalTab } from './OdaStaffPage';
 
 export const hrTabs = [
   ['overview', '홈·인사이트'], ['people', '직원·조직'], ['attendance', '근무 기록'], ['shifts', '근무 일정'],
@@ -33,10 +34,21 @@ export function odaHrLocation(search: string, stores: ReadonlyArray<{ id: string
 type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void };
 
 export function OdaHrPage({ data, notify }: Props) {
+  const [personalTab, setPersonalTab] = useState<StaffPersonalTab | null>(null);
+  if (data.actor.role === 'store_staff') {
+    if (!personalTab) return <OdaStaffPage data={data} notify={notify} onOpenPersonal={setPersonalTab} />;
+    return <OdaHrWorkspacePage data={data} notify={notify} personalTab={personalTab} onHome={() => setPersonalTab(null)} />;
+  }
+  return <OdaHrWorkspacePage data={data} notify={notify} />;
+}
+
+function OdaHrWorkspacePage({ data, notify, personalTab, onHome }: Props & { personalTab?: StaffPersonalTab; onHome?: () => void }) {
+  const personal = data.actor.role === 'store_staff';
+  const visibleTabs = personal ? hrTabs.filter(([id]) => staffPersonalTabs.some(([allowed]) => allowed === id)) : hrTabs;
   const stores = data.stores.filter(store => store.active !== false);
   const initial = odaHrLocation(window.location.search, stores, data.store.id);
   const [storeId, setStoreId] = useState(initial.storeId);
-  const [tab, setTab] = useState<HrTab>(initial.tab);
+  const [tab, setTab] = useState<HrTab>(personalTab || initial.tab);
   const [response, setResponse] = useState<HrResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -54,7 +66,7 @@ export function OdaHrPage({ data, notify }: Props) {
     function onPopState() {
       if (lock.current) return;
       const location = odaHrLocation(window.location.search, stores, data.store.id);
-      setStoreId(location.storeId); setTab(location.tab);
+      setStoreId(location.storeId); setTab(personal && !visibleTabs.some(([id]) => id === location.tab) ? personalTab || 'leave' : location.tab);
     }
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -76,7 +88,7 @@ export function OdaHrPage({ data, notify }: Props) {
   }, [storeId, retry]);
 
   function select(nextStore: string, nextTab: HrTab) {
-    if (lock.current) return;
+    if (lock.current || !visibleTabs.some(([id]) => id === nextTab)) return;
     const query = new URLSearchParams(window.location.search);
     query.set('store', nextStore); query.set('tab', nextTab);
     window.history.replaceState({}, '', `${window.location.pathname}?${query}`);
@@ -127,23 +139,23 @@ export function OdaHrPage({ data, notify }: Props) {
 
   const panel: HrPanelProps | null = response && loadedStore.current === storeId ? {
     workspace: response.workspace, permissions: response.permissions, employeeId: response.employeeId,
-    actorId: data.actor.id, mutate, busy: busy || loading || Boolean(loadError), onReload: reload,
+    actorId: data.actor.id, mutate, busy: busy || loading || Boolean(loadError), onReload: reload, storeAddress: response.storeAddress,
   } : null;
   const title = hrTabs.find(([id]) => id === tab)?.[1] || '인사관리';
 
   return <main id="main-content" className="page oda-hr-page" tabIndex={-1}>
-    <header className="hr-page-heading"><div><p className="hr-kicker">ODA · PEOPLE</p><h1><UserRound size={28} aria-hidden="true" /> 인사관리</h1><p>직원과 조직, 매일의 근무부터 성장까지 한곳에서 관리합니다.</p></div>
+    <header className="hr-page-heading"><div><p className="hr-kicker">ODA · PEOPLE</p><h1><UserRound size={28} aria-hidden="true" /> {personal ? '내 인사 메뉴' : '인사관리'}</h1><p>{personal ? '나의 신청과 기록을 확인하세요. 출퇴근은 직원 홈에서 기록합니다.' : '직원과 조직, 매일의 근무부터 성장까지 한곳에서 관리합니다.'}</p>{onHome && <Button variant="secondary" onClick={onHome} disabled={busy} style={{ marginTop: 12 }}>직원 홈으로 돌아가기</Button>}</div>
       <div className="hr-header-actions"><label className="hr-field"><span>작업할 매장</span><select aria-label="인사관리 매장" value={storeId} disabled={busy || !stores.length} onChange={event => select(event.target.value, tab)}>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label>
         <Button variant="secondary" onClick={() => setRetry(value => value + 1)} disabled={busy || loading || !storeId}><RefreshCcw size={16} /> {loading ? '불러오는 중' : '새로고침'}</Button></div>
     </header>
     {!stores.length ? <HrEmpty title="배정된 매장이 없습니다">계정 관리자에게 매장 배정을 요청해 주세요.</HrEmpty> : <>
-      <nav className="hr-tabs" aria-label="인사관리 메뉴">{hrTabs.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} disabled={busy} onClick={() => select(storeId, id)}>{label}</button>)}</nav>
+      <nav className="hr-tabs" aria-label="인사관리 메뉴">{visibleTabs.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} disabled={busy} onClick={() => select(storeId, id)}>{personal ? staffPersonalTabs.find(([key]) => key === id)?.[1] || label : label}</button>)}</nav>
       {loadError && <div className="hr-error" role="alert"><strong>인사 정보를 불러오지 못했습니다.</strong><p>{loadError}</p><Button variant="secondary" disabled={loading || busy} onClick={() => setRetry(value => value + 1)}>다시 불러오기</Button></div>}
       {commandError && <div className="hr-error" role="alert">{commandError}</div>}
       {loading && <p className="hr-loading" role="status">선택한 매장의 인사 정보를 불러오고 있습니다.</p>}
       {panel && <HrRecoveryContext.Provider value={{ error: loadError, pending: busy || loading, retry: () => setRetry(value => value + 1) }}><section className="hr-content" aria-label={title} aria-busy={busy || loading} key={storeId}>
         {(['overview', 'people', 'documents', 'settings', 'help'] as string[]).includes(tab) && <HrPersonnel {...panel} accounts={response?.accounts || []} tab={tab as 'overview' | 'people' | 'documents' | 'settings' | 'help'} onTabChange={next => select(storeId, next)} />}
-        {(tab === 'attendance' || tab === 'leave' || tab === 'shifts') && <HrAttendance {...panel} tab={tab} />}
+        {(tab === 'attendance' || tab === 'leave' || tab === 'shifts') && <HrAttendance {...panel} tab={tab} hideClock={personal} />}
         {(tab === 'approvals' || tab === 'expenses') && <HrWorkflow {...panel} tab={tab} />}
         {tab === 'payroll' && <HrPayroll {...panel} />}
         {(tab === 'goals' || tab === 'reviews' || tab === 'meetings' || tab === 'recruitment' || tab === 'contracts') && <HrTalent {...panel} tab={tab} />}

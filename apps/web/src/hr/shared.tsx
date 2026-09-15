@@ -10,6 +10,7 @@ export type HrPanelProps = {
   busy: boolean;
   actorId: string;
   employeeId?: string;
+  storeAddress?: string;
   onReload?: () => Promise<void>;
 };
 

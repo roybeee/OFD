@@ -1,7 +1,7 @@
-import type { HrPermissions, HrWorkspace } from '../../../../packages/domain/src/oda-hr';
+import type { HrResponse } from '../../../../packages/domain/src/oda-hr';
 import { ApiError, mutateV2, newIdempotencyKey } from './client';
 
-export type HrResponse = { workspace: HrWorkspace; permissions: HrPermissions; employeeId?: string; accounts?: Array<{ id: string; name: string; role: string }> };
+export type { HrResponse } from '../../../../packages/domain/src/oda-hr';
 const base = (storeId: string) => `/oda/${encodeURIComponent(storeId)}/hr`;
 
 export async function getOdaHr(storeId: string, signal?: AbortSignal): Promise<HrResponse> {

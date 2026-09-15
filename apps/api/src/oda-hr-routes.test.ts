@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createDemoRepository, DEMO_IDS, type StateRepository } from '@ofd/db';
-import { ACCESS_PAGES, HR_COMMAND_ACCESS, type Actor, type HrResponse, type HrWorkspace } from '@ofd/domain';
+import { ACCESS_PAGES, HR_COMMAND_ACCESS, type Actor, type HrResponse, type HrWorkspace, type Store } from '@ofd/domain';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from './app.ts';
@@ -187,5 +187,178 @@ describe('ODA HR API persistence, isolation and commands', () => {
     expect(retried.json().permissions.manage).toBe(false); expect(retried.json().accounts).toBeUndefined();
     expect(retried.json().workspace.employees[1].email).toBeUndefined(); expect(retried.json().workspace.employees[1].basePay).toBe(0);
     const cache = await repository.getIdempotency(actor.id, key); expect(cache?.response).toEqual({ version: 3 });
+  });
+});
+
+describe('ODA HR location attendance and published store schedule', () => {
+  const clockLocation = { address: '서울 금천구 매장 도로명주소', latitude: 37.47, longitude: 126.9 };
+  const position = (changes: Record<string, unknown> = {}) => ({ latitude: clockLocation.latitude,
+    longitude: clockLocation.longitude, accuracy: 8, timestamp: Date.now(), ...changes });
+
+  it('returns only the scoped store address on GET and POST, preferring its road address', async () => {
+    const { app, repository } = await setup();
+    const first = (await repository.get<Store>('store', storeId))!;
+    const second = (await repository.get<Store>('store', DEMO_IDS.storeHapjeong))!;
+    await repository.commit({ changes: [
+      { type: 'store', id: first.id, expectedVersion: first.version, value: { ...first, version: first.version + 1, roadAddress: '독산 도로명주소', business: { ...first.business, address: '독산 사업자주소' } } },
+      { type: 'store', id: second.id, expectedVersion: second.version, value: { ...second, version: second.version + 1, roadAddress: '', business: { ...second.business, address: '합정 사업자주소' } } },
+    ] });
+    expect((await read(app, DEMO_IDS.staff)).json().storeAddress).toBe('독산 도로명주소');
+    const saved = await command(app, 'settings.update', { companyName: '독산 인사' }, 0);
+    expect(saved.statusCode, saved.body).toBe(200); expect(saved.json().storeAddress).toBe('독산 도로명주소');
+    const secondBase = `/api/v2/oda/${second.id}/hr`;
+    const other = await app.inject({ method: 'GET', url: secondBase, headers: headers(DEMO_IDS.master) });
+    expect(other.statusCode).toBe(200); expect(other.json().storeAddress).toBe('합정 사업자주소');
+    const otherSaved = await app.inject({ method: 'POST', url: `${secondBase}/commands`,
+      headers: { ...headers(DEMO_IDS.master), 'idempotency-key': randomUUID() },
+      payload: { type: 'workspace.initialize', expectedVersion: 0, input: {} } });
+    expect(otherSaved.statusCode, otherSaved.body).toBe(200); expect(otherSaved.json().storeAddress).toBe('합정 사업자주소');
+    const forbidden = await app.inject({ method: 'GET', url: secondBase, headers: headers(DEMO_IDS.staff) });
+    expect(forbidden.statusCode).toBe(403); expect(forbidden.body).not.toContain('합정 사업자주소');
+  });
+
+  it('allows only managers to set a fixed 200 m location and rejects client radius or malformed coordinates atomically', async () => {
+    const { app, repository } = await setup(); await employee(app, 0, 'SELF', DEMO_IDS.staff);
+    for (const actorId of [DEMO_IDS.staff, DEMO_IDS.finance, DEMO_IDS.auditor]) {
+      const denied = await command(app, 'attendance.location.set', clockLocation, 1, actorId);
+      expect(denied.statusCode, denied.body).toBe(403);
+    }
+    const before = await repository.get<HrWorkspace>('oda_hr', `hr:${storeId}`);
+    for (const input of [{ ...clockLocation, radiusMeters: 99999 }, { ...clockLocation, latitude: 91 },
+      { ...clockLocation, longitude: '126.9' }, { ...clockLocation, address: ' ' }]) {
+      const invalid = await command(app, 'attendance.location.set', input, 1);
+      expect(invalid.statusCode, invalid.body).toBe(422); expect(invalid.json().error.code).toBe('HR_CLOCK_LOCATION_INVALID');
+      expect(await repository.get('oda_hr', `hr:${storeId}`)).toEqual(before);
+    }
+    expect((await command(app, 'settings.update', { clockLocation }, 1)).statusCode).toBe(422);
+    const saved = await command(app, 'attendance.location.set', clockLocation, 1);
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().workspace.settings.clockLocation).toEqual({ ...clockLocation, radiusMeters: 200,
+      updatedAt: expect.any(String), updatedBy: DEMO_IDS.owner });
+    expect((await read(app, DEMO_IDS.staff)).json().workspace.settings.clockLocation.radiusMeters).toBe(200);
+    const outsideStore = await app.inject({ method: 'POST', url: `/api/v2/oda/${DEMO_IDS.storeHapjeong}/hr/commands`,
+      headers: { ...headers(DEMO_IDS.owner), 'idempotency-key': randomUUID() },
+      payload: { type: 'attendance.location.set', input: clockLocation, expectedVersion: 0 } });
+    expect(outsideStore.statusCode).toBe(403); expect(await repository.get('oda_hr', `hr:${DEMO_IDS.storeHapjeong}`)).toBeUndefined();
+    const audit = (await repository.listAudit()).filter(row => row.aggregateType === 'oda_hr');
+    expect(audit).toHaveLength(2); expect(JSON.stringify(audit)).not.toContain(clockLocation.address);
+  });
+
+  it('rejects unavailable, stale, inaccurate and out-of-range positions without a clock, version or audit change', async () => {
+    const { app, repository } = await setup();
+    const employeeId = (await employee(app, 0, 'SELF', DEMO_IDS.staff)).workspace.employees[0]!.id;
+    const unconfigured = await command(app, 'clock.in', { employeeId, location: position() }, 1, DEMO_IDS.staff);
+    expect(unconfigured.statusCode).toBe(409); expect(unconfigured.json().error.code).toBe('HR_CLOCK_LOCATION_NOT_CONFIGURED');
+    expect((await command(app, 'attendance.location.set', clockLocation, 1)).statusCode).toBe(200);
+    const failures: Array<[string, () => Record<string, unknown>]> = [
+      ['HR_CLOCK_LOCATION_REQUIRED', () => ({})],
+      ['HR_CLOCK_LOCATION_INVALID', () => ({ location: position({ latitude: 91 }) })],
+      ['HR_CLOCK_LOCATION_INVALID', () => ({ location: position({ timestamp: 'today' }) })],
+      ['HR_CLOCK_LOCATION_INVALID', () => ({ location: position({ radiusMeters: 99999 }) })],
+      ['HR_CLOCK_LOCATION_STALE', () => ({ location: position({ timestamp: Date.now() - 61000 }) })],
+      ['HR_CLOCK_LOCATION_STALE', () => ({ location: position({ timestamp: Date.now() + 11000 }) })],
+      ['HR_CLOCK_LOCATION_ACCURACY', () => ({ location: position({ accuracy: 51 }) })],
+      ['HR_CLOCK_LOCATION_OUTSIDE', () => ({ location: position({ latitude: clockLocation.latitude + 0.01 }) })],
+      // The entire accuracy circle must fit within 200 m, even when the point itself is inside.
+      ['HR_CLOCK_LOCATION_OUTSIDE', () => ({ location: position({ latitude: clockLocation.latitude + 0.0017, accuracy: 20 }) })],
+    ];
+    for (const [type, version] of [['clock.in', 2], ['clock.out', 3]] as const) {
+      const before = await repository.get('oda_hr', `hr:${storeId}`);
+      const auditBefore = await repository.listAudit();
+      for (const [code, input] of failures) {
+        const failed = await command(app, type, { employeeId, ...input() }, version, DEMO_IDS.staff);
+        expect(failed.statusCode, `${type}: ${failed.body}`).toBe(422); expect(failed.json().error.code).toBe(code);
+        expect(await repository.get('oda_hr', `hr:${storeId}`)).toEqual(before);
+        expect(await repository.listAudit()).toEqual(auditBefore);
+      }
+      if (type === 'clock.in') {
+        const accepted = await command(app, type, { employeeId, location: position() }, version, DEMO_IDS.staff);
+        expect(accepted.statusCode, accepted.body).toBe(200);
+      }
+    }
+  });
+
+  it('keeps only server verification evidence on raw clocks and checks against the requested store location', async () => {
+    const { app, repository } = await setup();
+    const initial = await employee(app, 0, 'SELF', DEMO_IDS.staff); const employeeId = initial.workspace.employees[0]!.id;
+    expect((await command(app, 'attendance.location.set', clockLocation, 1)).statusCode).toBe(200);
+    const otherBase = `/api/v2/oda/${DEMO_IDS.storeHapjeong}/hr/commands`;
+    const otherPoint = { address: '합정 출퇴근 위치', latitude: 37.55, longitude: 126.91 };
+    expect((await app.inject({ method: 'POST', url: otherBase,
+      headers: { ...headers(DEMO_IDS.master), 'idempotency-key': randomUUID() },
+      payload: { type: 'attendance.location.set', input: otherPoint, expectedVersion: 0 } })).statusCode).toBe(200);
+    const otherStorePosition = await command(app, 'clock.in', { employeeId,
+      location: position({ latitude: otherPoint.latitude, longitude: otherPoint.longitude }) }, 2, DEMO_IDS.staff);
+    expect(otherStorePosition.json().error.code).toBe('HR_CLOCK_LOCATION_OUTSIDE');
+    const key = randomUUID();
+    const clockIn = await command(app, 'clock.in', { employeeId, location: position(), at: '2099-01-01T00:00:00Z' }, 2, DEMO_IDS.staff, key);
+    expect(clockIn.statusCode, clockIn.body).toBe(200);
+    const clockOut = await command(app, 'clock.out', { employeeId, location: position() }, 3, DEMO_IDS.staff);
+    expect(clockOut.statusCode, clockOut.body).toBe(200);
+    const stored = (await repository.get<HrWorkspace>('oda_hr', `hr:${storeId}`))!;
+    expect(stored.attendance.clockEvents.map(row => row.kind)).toEqual(['in', 'out']);
+    for (const row of stored.attendance.clockEvents) {
+      expect(row.at).not.toContain('2099');
+      expect(row.location).toEqual({ distanceMeters: 0, accuracyMeters: 8, verifiedAt: expect.any(String),
+        radiusMeters: 200, locationUpdatedAt: stored.settings.clockLocation!.updatedAt });
+      expect(Object.keys(row.location!).sort()).toEqual(['accuracyMeters', 'distanceMeters', 'locationUpdatedAt', 'radiusMeters', 'verifiedAt']);
+    }
+    expect(JSON.stringify(stored.attendance.clockEvents)).not.toMatch(/latitude|longitude|timestamp/);
+    expect((await read(app, DEMO_IDS.staff)).json().workspace.attendance.clockEvents).toEqual(stored.attendance.clockEvents);
+    expect((await repository.getIdempotency(DEMO_IDS.staff, key))?.response).toEqual({ version: 3 });
+    const clockAudit = (await repository.listAudit()).filter(row => row.action === 'hr.clock.in' || row.action === 'hr.clock.out');
+    expect(clockAudit).toHaveLength(2);
+    expect(JSON.stringify(clockAudit)).not.toMatch(/latitude|longitude|accuracy|서울 금천구/);
+  });
+
+  it('keeps staff manual creations and edits pending under a policy that automatically approves clock work', async () => {
+    const { app } = await setup();
+    const initial = await employee(app, 0, 'SELF', DEMO_IDS.staff); const employeeId = initial.workspace.employees[0]!.id;
+    const policy = await command(app, 'work.policy.create', { name: '자동 승인 근무', kind: 'fixed', effectiveFrom: '2026-01-01',
+      dailyMinutes: 480, breakMinutes: 60, workdays: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00', requireApproval: false }, 1);
+    expect(policy.statusCode, policy.body).toBe(200);
+    const policyId = policy.json().workspace.attendance.workPolicies[0].id;
+    expect((await command(app, 'work.policy.assign', { employeeId, policyId, effectiveFrom: '2026-01-01' }, 2)).statusCode).toBe(200);
+    const input = { employeeId, date: '2026-08-31', startTime: '09:00', endTime: '18:00', breakMinutes: 60, note: '수동 정정 요청' };
+    const created = await command(app, 'work.create', input, 3, DEMO_IDS.staff);
+    expect(created.statusCode, created.body).toBe(200);
+    const entry = created.json().workspace.attendance.workEntries[0]; expect(entry.status).toBe('pending');
+    const approved = await command(app, 'work.approve', { id: entry.id, expectedRevision: entry.revision }, 4);
+    expect(approved.statusCode, approved.body).toBe(200);
+    const revised = await command(app, 'work.update', { ...input, id: entry.id, expectedRevision: entry.revision + 1, endTime: '17:00' }, 5, DEMO_IDS.staff);
+    expect(revised.statusCode, revised.body).toBe(200); expect(revised.json().workspace.attendance.workEntries[0].status).toBe('pending');
+  });
+
+  it('shares published coworker schedule fields without drafts, cancellations, notes or private work records', async () => {
+    const { app } = await setup(); await employee(app, 0, 'SELF', DEMO_IDS.staff);
+    let current = await employee(app, 1, 'OTHER'); const [own, other] = current.workspace.employees;
+    async function save(type: string, input: Record<string, unknown>) {
+      const result = await command(app, type, input, current.workspace.version);
+      expect(result.statusCode, result.body).toBe(200); current = result.json<HrResponse>(); return current;
+    }
+    await save('shift.template.create', { name: '오전', startTime: '09:00', endTime: '18:00', breakMinutes: 60, kind: 'work' });
+    const templateId = current.workspace.attendance.shiftTemplates[0]!.id;
+    await save('shift.save', { employeeId: own!.id, templateId, date: '2026-10-01', note: '본인 일정 메모' });
+    await save('shift.save', { employeeId: other!.id, templateId, date: '2026-10-01', note: '동료의 비공개 메모 76543' });
+    const published = current.workspace.attendance.shifts.map(row => ({ ...row }));
+    await save('shift.publish', { ids: published.map(row => row.id), revisions: Object.fromEntries(published.map(row => [row.id, row.revision])) });
+    await save('shift.save', { employeeId: other!.id, templateId, date: '2026-10-02', note: '동료 초안 65432' });
+    await save('shift.save', { employeeId: other!.id, templateId, date: '2026-10-03', note: '취소할 일정 54321' });
+    const cancelled = current.workspace.attendance.shifts.at(-1)!;
+    await save('shift.cancel', { id: cancelled.id, expectedRevision: cancelled.revision });
+    await save('work.create', { employeeId: other!.id, date: '2026-08-31', startTime: '09:00', endTime: '18:00', note: '동료 실제 근무 사유 43210' });
+    const expected = published.map(row => ({ id: row.id, employeeId: row.employeeId,
+      employeeName: current.workspace.employees.find(employee => employee.id === row.employeeId)!.name,
+      date: row.date, startTime: row.startTime, endTime: row.endTime, breakMinutes: row.breakMinutes, kind: row.kind }));
+    expect(current.storeSchedule).toEqual(expected);
+    const staffResponse = await read(app, DEMO_IDS.staff); const staff = staffResponse.json<HrResponse>();
+    expect(staff.storeSchedule).toEqual(expected);
+    expect(staff.workspace.attendance.shifts.map(row => row.employeeId)).toEqual([own!.id]);
+    expect(staff.workspace.attendance.workEntries).toEqual([]);
+    expect(staffResponse.body).not.toMatch(/76543|65432|54321|43210/);
+    for (const row of staff.storeSchedule!) expect(Object.keys(row).sort()).toEqual(
+      ['breakMinutes', 'date', 'employeeId', 'employeeName', 'endTime', 'id', 'kind', 'startTime']);
+    const foreign = await app.inject({ method: 'GET', url: `/api/v2/oda/${DEMO_IDS.storeHapjeong}/hr`, headers: headers(DEMO_IDS.master) });
+    expect(foreign.json().storeSchedule).toEqual([]);
   });
 });

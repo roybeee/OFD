@@ -10,6 +10,7 @@ export * from "./types.ts";
 export * from "./oda-settlement.ts";
 export * from "./oda-hr.ts";
 export * from "./oda-hr-attendance.ts";
+export * from "./oda-hr-location.ts";
 export * from "./oda-hr-payroll.ts";
 export * from "./oda-hr-talent.ts";
 export * from "./oda-hr-workflow.ts";

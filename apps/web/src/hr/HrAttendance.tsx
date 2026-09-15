@@ -1,12 +1,13 @@
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { HrDialog, hrError, hrToday, type HrPanelProps } from './shared';
 import { Button } from '../components/ui';
+import { getCurrentHrPosition } from '../lib/hr-location';
 import { getHrLeaveBalance, isHrAttendanceLocked, type HrAttendanceState, type HrWorkEntry } from '../../../../packages/domain/src/oda-hr-attendance';
 
-type AttendanceProps = HrPanelProps & { tab: 'attendance' | 'leave' | 'shifts' };
+type AttendanceProps = HrPanelProps & { tab: 'attendance' | 'leave' | 'shifts'; hideClock?: boolean };
 type Employee = { id: string; name: string };
 type Command = (type: string, input: Record<string, unknown>, message?: string) => Promise<boolean>;
-type Panel = { state: HrAttendanceState; settings: HrPanelProps['workspace']['settings']; employees: Employee[]; employeeId?: string; manage: boolean; busy: boolean; run: Command; filterEmployee: string; month: string; error: string };
+type Panel = { state: HrAttendanceState; settings: HrPanelProps['workspace']['settings']; employees: Employee[]; employeeId?: string; manage: boolean; busy: boolean; run: Command; filterEmployee: string; month: string; error: string; hideClock?: boolean };
 const duration = (minutes: number) => `${Math.floor(Math.abs(minutes) / 60)}시간${Math.abs(minutes) % 60 ? ` ${Math.abs(minutes) % 60}분` : ''}${minutes < 0 ? ' 차감' : ''}`;
 const policyKinds: Record<string, string> = { fixed: '고정', staggered: '시차', selective: '선택적', shift: '교대' };
 const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
@@ -41,7 +42,7 @@ function Form({ children, busy, onSave, submit = '저장', reset = true }: { chi
   return <form className="hr-form" onSubmit={event => void handle(event)}><fieldset disabled={busy || saving}>{children}<div className="hr-actions"><Button type="submit" disabled={busy || saving}>{saving ? '저장 중…' : submit}</Button></div></fieldset></form>;
 }
 
-export function HrAttendance({ workspace, permissions, mutate, busy, employeeId, tab }: AttendanceProps) {
+export function HrAttendance({ workspace, permissions, mutate, busy, employeeId, tab, hideClock }: AttendanceProps) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -62,7 +63,7 @@ export function HrAttendance({ workspace, permissions, mutate, busy, employeeId,
     {message && <p className="hr-success" role="status">{message}</p>}
     {!permissions.manage && !employeeId && <div className="hr-empty">계정에 연결된 구성원이 없습니다. 인사 관리자에게 구성원 계정 연결을 요청해 주세요.</div>}
     <div className="hr-toolbar"><Field title="조회 월"><input type="month" value={month} onChange={event => setMonth(event.target.value)} /></Field>{permissions.manage && <Field title="조회 구성원"><select value={filterEmployee} onChange={event => setFilterEmployee(event.target.value)}><option value="">전체 구성원</option>{employees.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>}<span className="hr-muted">모든 근무 일자와 출퇴근 시간은 한국 시간 기준입니다.</span></div>
-    {tab === 'attendance' && <WorkPanel {...props} />}
+    {tab === 'attendance' && <WorkPanel {...props} hideClock={hideClock} />}
     {tab === 'leave' && <LeavePanel {...props} />}
     {tab === 'shifts' && <ShiftPanel {...props} />}
   </div>;
@@ -95,18 +96,42 @@ function WorkPanel(props: Panel) {
   const events = state.clockEvents.filter(row => row.employeeId === selectedClockEmployee).slice().reverse();
   const clockedIn = events[0]?.kind === 'in';
   const editable = manage || Boolean(employeeId);
+  const canClock = !props.hideClock && (manage || Boolean(employeeId));
+  const [clockPending, setClockPending] = useState(false);
+  const [clockError, setClockError] = useState('');
+  const clockLock = useRef(false);
+  const clockGeneration = useRef(0);
+  useEffect(() => {
+    clockGeneration.current++; clockLock.current = false; setClockPending(false); setClockError('');
+    return () => { clockGeneration.current++; clockLock.current = false; };
+  }, [employeeId]);
+  const clockDisabled = busy || clockPending || (!manage && !props.settings.clockLocation);
+  async function saveClock(kind: 'in' | 'out') {
+    if (clockLock.current || clockDisabled || !canClock || !selectedClockEmployee) return;
+    const generation = clockGeneration.current;
+    clockLock.current = true; setClockPending(true); setClockError('');
+    try {
+      const location = manage ? undefined : await getCurrentHrPosition();
+      if (clockGeneration.current !== generation) return;
+      await run(`clock.${kind}`, { employeeId: selectedClockEmployee, ...(location ? { location } : {}) }, kind === 'in' ? '출근을 기록했습니다.' : '퇴근을 기록했습니다.');
+    } catch (error) {
+      if (clockGeneration.current === generation) setClockError(hrError(error));
+    } finally {
+      if (clockGeneration.current === generation) { clockLock.current = false; setClockPending(false); }
+    }
+  }
   return <>
     <div className="hr-metrics"><div className="hr-metric"><span>승인된 근무</span><strong>{duration(entries.filter(row => row.status === 'approved').reduce((sum, row) => sum + row.recognizedMinutes, 0))}</strong></div><div className="hr-metric"><span>승인 대기</span><strong>{entries.filter(row => row.status === 'pending').length}건</strong></div><div className="hr-metric"><span>조회 기록</span><strong>{entries.length}건</strong></div></div>
-    {editable && <Card title="출퇴근 기록" description="버튼을 누른 시각으로 실제 출퇴근 기록을 남깁니다.">
-      <div className="hr-toolbar">{manage && <Field title="출퇴근 구성원"><select value={clockEmployee} onChange={event => setClockEmployee(event.target.value)}><option value="">구성원 선택</option>{employees.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>}<span>{selectedClockEmployee ? `${employeeName(selectedClockEmployee)} · ${clockedIn ? '근무 중' : '출근 전'}` : '구성원을 선택해 주세요.'}</span><Button disabled={busy || !selectedClockEmployee || clockedIn} onClick={() => void run('clock.in', { employeeId: selectedClockEmployee }, '출근을 기록했습니다.')}>출근</Button><Button variant="secondary" disabled={busy || !selectedClockEmployee || !clockedIn} onClick={() => void run('clock.out', { employeeId: selectedClockEmployee }, '퇴근을 기록했습니다.')}>퇴근</Button></div>
-      {events.length > 0 && <details><summary>최근 실제 출퇴근 기록 {Math.min(events.length, 20)}건</summary><ul className="hr-list">{events.slice(0, 20).map(row => <li key={row.id}>{row.correction ? '미퇴근 정리' : row.kind === 'in' ? '출근' : '퇴근'}{row.note ? ` (${row.note})` : ''} · {new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(row.at))}</li>)}</ul></details>}
+    {editable && <Card title="출퇴근 기록" description={props.hideClock ? '출퇴근은 직원 홈에서 위치를 확인한 뒤 기록해 주세요.' : manage ? '관리자가 현재 시각으로 출퇴근을 기록합니다. 위치 확인 없는 기록으로 구분됩니다.' : '본인의 현재 위치를 확인한 뒤 매장 반경 200m 안에서 출퇴근을 기록합니다.'}>
+      {canClock && <div className="hr-toolbar">{manage && <Field title="출퇴근 구성원"><select value={clockEmployee} disabled={clockDisabled} onChange={event => setClockEmployee(event.target.value)}><option value="">구성원 선택</option>{employees.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>}<span>{selectedClockEmployee ? `${employeeName(selectedClockEmployee)} · ${clockedIn ? '근무 중' : '출근 전'}` : '구성원을 선택해 주세요.'}</span><Button disabled={clockDisabled || !selectedClockEmployee || clockedIn} onClick={() => void saveClock('in')}>출근</Button><Button variant="secondary" disabled={clockDisabled || !selectedClockEmployee || !clockedIn} onClick={() => void saveClock('out')}>퇴근</Button>{clockPending && <p role="status">{manage ? '출퇴근 기록을 저장하고 있습니다.' : '현재 위치 확인과 출퇴근 등록을 진행하고 있습니다.'}</p>}{!manage && !props.settings.clockLocation && <p className="hr-note">관리자에게 매장 출퇴근 위치 설정을 요청해 주세요.</p>}{clockError && <p className="hr-error" role="alert">{clockError}</p>}</div>}
+      {events.length > 0 && <details><summary>최근 실제 출퇴근 기록 {Math.min(events.length, 20)}건</summary><ul className="hr-list">{events.slice(0, 20).map(row => <li key={row.id}>{row.correction ? '미퇴근 정리' : row.kind === 'in' ? '출근' : '퇴근'}{row.note ? ` (${row.note})` : ''} · {new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(row.at))}<p className="hr-muted">{row.location ? `매장 반경 확인 · 거리 ${Math.round(row.location.distanceMeters)}m / 오차 ±${Math.ceil(row.location.accuracyMeters)}m` : '위치 확인 없는 관리자 또는 기존 기록'}</p></li>)}</ul></details>}
       {manage && clockedIn && <details><summary>미퇴근 기록 정리</summary><p className="hr-muted">선택한 구성원의 열린 출근 기록을 종료합니다. 실제 근무 시간은 아래 근무 기록 추가에서 별도로 입력해 주세요.</p><Form busy={busy} submit="미퇴근 기록 정리" onSave={data => run('clock.resolve', { employeeId: selectedClockEmployee, note: textField(data, 'note') }, '미퇴근 기록을 정리했습니다. 실제 근무 시간이 있다면 근무 기록을 별도로 추가해 주세요.')}><Field title="미퇴근 기록 정리 사유"><input name="note" required maxLength={2000} /></Field></Form></details>}
     </Card>}
-    {editable && <Card title="근무 기록 추가" description="실제 근무 시간과 휴게 시간을 입력하세요. 밤을 넘겨 근무했다면 종료일을 다음 날로 지정하세요."><Form busy={busy} submit="근무 기록 저장" onSave={data => run('work.create', workInput(data))}><WorkFields employees={employees} employeeId={employeeId} manage={manage} /></Form></Card>}
+    {editable && <Card title="근무 기록 추가" description={manage ? "실제 근무 시간과 휴게 시간을 입력하세요. 밤을 넘겨 근무했다면 종료일을 다음 날로 지정하세요." : "실제 근무 시간과 휴게 시간을 입력하면 관리자 승인 후 반영됩니다. 밤을 넘긴 근무는 종료일을 다음 날로 지정하세요."}><Form busy={busy} submit="근무 기록 저장" onSave={data => run('work.create', workInput(data))}><WorkFields employees={employees} employeeId={employeeId} manage={manage} /></Form></Card>}
     <Card title="근무 기록"><div className="hr-toolbar"><Field title="근무 상태"><select value={status} onChange={event => setStatus(event.target.value)}><option value="">모든 상태</option><option value="pending">승인 대기</option><option value="approved">승인 완료</option><option value="rejected">반려</option><option value="cancelled">취소</option></select></Field></div>
       {entries.length ? <div className="hr-table-wrap"><table className="hr-table"><thead><tr><th>구성원</th><th>근무 일시</th><th>휴게</th><th>인정 시간</th><th>출처·메모</th><th>상태</th><th>처리</th></tr></thead><tbody>{entries.map(row => { const locked = isHrAttendanceLocked(state, row.employeeId, row.date) || isHrAttendanceLocked(state, row.employeeId, row.endDate); const actionable = editable && !locked && (manage || row.employeeId === employeeId); return <tr key={row.id}><td>{employeeName(row.employeeId)}</td><td>{row.date} {row.startTime}<br />~ {row.endDate} {row.endTime}</td><td>{row.breakMinutes}분</td><td>{duration(row.recognizedMinutes)}</td><td>{{ manual: '직접 입력', clock: '출퇴근 기록', shift: '교대근무표' }[row.source]}{row.note && <small>{row.note}</small>}</td><td><State state={row.status} />{locked && <span className="hr-badge">마감</span>}</td><td><div className="hr-actions">{actionable && (row.status === 'pending' || row.status === 'approved') && <><Button variant="secondary" disabled={busy} onClick={() => setEditing(row)}>수정</Button><Button variant="secondary" disabled={busy} onClick={() => void run('work.cancel', { id: row.id, expectedRevision: row.revision }, '근무 기록을 취소했습니다.')}>취소</Button></>}{manage && actionable && row.status === 'pending' && <><Button disabled={busy} onClick={() => void run('work.approve', { id: row.id, expectedRevision: row.revision }, '근무 기록을 승인했습니다.')}>승인</Button><Button variant="secondary" disabled={busy} onClick={() => void run('work.reject', { id: row.id, expectedRevision: row.revision }, '근무 기록을 반려했습니다.')}>반려</Button></>}</div></td></tr>; })}</tbody></table></div> : <Empty>조회 조건에 맞는 근무 기록이 없습니다.</Empty>}
     </Card>
-    {editing && <HrDialog title="근무 기록 수정" onClose={() => setEditing(null)} busy={busy}><p className="hr-muted">수정 내용은 적용된 근무유형의 승인 설정에 따라 다시 검토됩니다.</p>{props.error && <p className="hr-error" role="alert">{props.error}</p>}<Form busy={busy} submit="수정 저장" onSave={async data => { const saved = await run('work.update', { id: editing.id, expectedRevision: editing.revision, ...workInput(data) }); if (saved) setEditing(null); return saved; }}><WorkFields employees={employees} employeeId={employeeId} manage={manage} entry={editing} /></Form></HrDialog>}
+    {editing && <HrDialog title="근무 기록 수정" onClose={() => setEditing(null)} busy={busy}><p className="hr-muted">{manage ? "수정 내용은 적용된 근무유형의 승인 설정에 따라 다시 검토됩니다." : "수정한 근무 기록은 관리자 승인을 거쳐 반영됩니다."}</p>{props.error && <p className="hr-error" role="alert">{props.error}</p>}<Form busy={busy} submit="수정 저장" onSave={async data => { const saved = await run('work.update', { id: editing.id, expectedRevision: editing.revision, ...workInput(data) }); if (saved) setEditing(null); return saved; }}><WorkFields employees={employees} employeeId={employeeId} manage={manage} entry={editing} /></Form></HrDialog>}
     {manage && <><PolicySettings {...props} /><HolidaySettings {...props} /><AttendanceLocks {...props} /></>}
   </>;
 }

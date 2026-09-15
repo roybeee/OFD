@@ -68,7 +68,10 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
   /* 마스터가 지정한 순서를 적용한다 — 저장된 순서에 없는 페이지는 원래 자리 뒤에 남는다 */
   const local = isOdaBrand && appMode === 'local';
   const localPaths = new Set(['/store/oda-settlement', '/hq/oda-settlement', '/hq/oda-master', '/hq/oda-stores', '/hq/accounts', '/store/oda-hr', '/hq/oda-hr']);
-  const nav = applyMenuOrder(navByRole[role].filter((item) => (!local || localPaths.has(item.path)) && (isOdaBrand || !item.path.includes('/oda-')) && (!isOdaBrand || item.path !== '/hq/design') && capabilities.includes(pathCapability[item.path])), menuOrder);
+  const staffHome = isOdaBrand && actorRole === 'store_staff';
+  const nav = applyMenuOrder(navByRole[role].filter((item) => (!local || localPaths.has(item.path)) && (isOdaBrand || !item.path.includes('/oda-')) && (!isOdaBrand || item.path !== '/hq/design') && capabilities.includes(pathCapability[item.path])), menuOrder)
+    .map(item => staffHome && item.path === '/store/oda-hr' ? { ...item, label: '직원 홈' } : item);
+  const firstPath = staffHome && capabilities.includes('oda.hr.read') ? '/store/oda-hr' : nav[0]?.path ?? path;
   const contextName = local ? storeName : isOdaBrand && actorRole === 'hq_master' ? 'ODA 마스터 작업공간' : role === 'store' ? storeName : role === 'driver' ? `오늘 배송 ${deliveryCount}곳` : '본사 운영센터';
   const actorRoleLabel = local && actorRole === 'hq_finance' ? '운영 지원자 B' : local && actorRole === 'store_owner' ? '매장 운영자 A' : role === 'hq' ? actorRole === 'auditor' ? '감사 · 읽기 전용' : actorRole === 'hq_master' || actorRole === 'master' ? '마스터' : actorRole === 'hq_finance' ? '재무' : '운영' : role === 'driver' ? '배송기사' : actorRole === 'store_staff' ? '매장 직원' : '점주';
 
@@ -77,7 +80,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <header className="app-header">
         <div className="header-main">
-          <button className="brand" type="button" onClick={() => onNavigate(nav[0]?.path ?? path)} aria-label={isOdaBrand ? "ODA 월 정산 첫 화면" : "통합 발주·정산 첫 화면"}>
+          <button className="brand" type="button" onClick={() => onNavigate(firstPath)} aria-label={staffHome ? 'ODA 직원 홈' : isOdaBrand ? "ODA 워크스테이션 첫 화면" : "통합 발주·정산 첫 화면"}>
             <span className="brand-mark" aria-hidden="true">{isOdaBrand ? <b className="oda-wordmark">ODA.</b> : <img src={`${import.meta.env.BASE_URL}ofd-logo.png`} alt="" />}</span>
             <span className="brand-copy"><strong>{isOdaBrand ? workstationName : "OFD 워크스테이션 · 통합 발주·정산"}</strong><small>{isOdaBrand ? "PIZZERIA · OPERATIONS" : "ORDER · DELIVERY · FINANCE"}</small></span>
           </button>
@@ -111,7 +114,7 @@ export function AppShell({ role, path, actorName, actorRole, storeName, delivery
       </header>
       {children}
       <footer className="app-footer">
-        <span>{isOdaBrand ? "ODA PIZZERIA · MONTHLY SETTLEMENT" : "OLD FERRY DONUT · DONUT WORRY, BE HAPPY"}</span><span>업무 문의는 계정 관리자에게 요청해 주세요.</span>
+        <span>{isOdaBrand ? staffHome ? "ODA PIZZERIA · OUR TEAM" : "ODA PIZZERIA · OPERATIONS" : "OLD FERRY DONUT · DONUT WORRY, BE HAPPY"}</span><span>업무 문의는 계정 관리자에게 요청해 주세요.</span>
       </footer>
     </div>
   );

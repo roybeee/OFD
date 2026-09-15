@@ -11,6 +11,7 @@ OFD 기반 ODA 운영 서비스입니다. 계약 기반 월 손익, 증빙 업�
 - 운영 빌드: `npm run build:oda`
 - [매장 사용 흐름·계약 적용·배포](docs/oda-phase1.md)
 - [인사관리 사용 순서·권한·구현 범위](docs/oda-hr-implementation.md): 직원·조직, 근무·휴가·교대, 결재·비용, 급여, 목표·평가·미팅, 채용·계약, 문서·공지·설정. 사이드바 **인사관리**에서 매장을 선택합니다. 직원의 로그인 계정은 직원 정보에 명시적으로 연결합니다. 세무 신고·전자서명·보험·은행 등 외부 공급자 연동은 별도이며 FLEX 전체 기능과 동등하다는 의미는 아닙니다.
+- [직원 홈·200m 출퇴근 사용 안내](docs/oda-staff-workspace.md): 직원 로그인 시 출퇴근·당월 근무표·매장 공지를 먼저 표시합니다. 관리자가 매장 주소와 기준 위치를 설정하면 해당 위치의 200m 안에서 출퇴근을 등록합니다.
 - HR 검증: `npm run test:oda-hr`; DB 재시작 검증: `npm ci --prefix infra/testing/pglite --ignore-scripts` 후 `npm run test:oda-hr:durable`. 합성 데이터를 쓰는 격리 환경만 사용합니다.
 - [OFD·ODA 서버 자원 공용 검토](docs/oda-shared-hosting-review.md)
 - 현재 온라인 구성: `render.oda.shared.yaml` — ODA 전용 DB·운영 계정과 웹/API를 사용합니다. 정산 원본은 ODA DB에 저장하며 별도 ODA worker와 외부 발행·메일 공급자는 사용하지 않습니다.

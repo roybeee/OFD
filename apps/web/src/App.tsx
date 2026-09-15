@@ -90,9 +90,9 @@ function WorkstationApp() {
     loadBootstrap()
       .then((result) => {
         if (!mounted) return;
-        if (postLoginRedirect.current || (isOdaBrand && result.data.capabilities.includes('oda.master.manage')
+        if (postLoginRedirect.current || (isOdaBrand && (result.data.capabilities.includes('oda.master.manage') || result.data.actor.role === 'store_staff')
           && logicalPathFromLocation(window.location.pathname, import.meta.env.BASE_URL) === '/')) {
-          const permittedPath = defaultPathFor(result.data.capabilities);
+          const permittedPath = defaultPathFor(result.data.capabilities, result.data.actor.role);
           postLoginRedirect.current = false;
           window.history.replaceState({}, '', browserPathFor(permittedPath, import.meta.env.BASE_URL));
           setPath(permittedPath);
@@ -104,7 +104,7 @@ function WorkstationApp() {
           return;
         }
         if (!canAccessPath(path, result.data.capabilities)) {
-          const permittedPath = defaultPathFor(result.data.capabilities);
+          const permittedPath = defaultPathFor(result.data.capabilities, result.data.actor.role);
           if (permittedPath === '/unauthorized') {
             window.history.replaceState({}, '', browserPathFor(permittedPath, import.meta.env.BASE_URL));
             setAuthorizationDenied(true);

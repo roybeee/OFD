@@ -57,7 +57,7 @@ describe('ODA HR workspace integration', () => {
     expect(defaultPathFor(['oda.hr.read'])).toBe('/store/oda-hr');
     expect(defaultPathFor(['oda.master.manage', 'oda.hr.hq.read'])).toBe('/hq/oda-master');
     await act(async () => root.render(<AppShell role="store" path="/store/oda-hr" appMode="local" actorName="직원" actorRole="store_staff" storeName="매장" deliveryCount={0} capabilities={['oda.hr.read']} onNavigate={vi.fn()} onLogout={vi.fn()}><div /></AppShell>));
-    expect(container.querySelector('nav[aria-label="주요 메뉴"] [aria-current="page"]')?.textContent).toContain('인사관리');
+    expect(container.querySelector('nav[aria-label="주요 메뉴"] [aria-current="page"]')?.textContent).toContain('직원 홈');
     expect(container.querySelector('nav')?.textContent).not.toContain('월 손익');
   });
 

@@ -1,5 +1,6 @@
 import { DomainError } from "./errors.js";
 import type { HrCommand, HrContext, HrWorkspace } from "./oda-hr.js";
+import { verifyHrClockLocation, type HrClockLocationEvidence } from "./oda-hr-location.ts";
 
 export interface HrWorkPolicy {
   id: string; name: string; kind: "fixed" | "staggered" | "selective" | "shift";
@@ -18,7 +19,7 @@ export interface HrWorkEntry {
   rawClockIds: string[];
 }
 /** Raw clock events are append-only and always use the authenticated server time. */
-export interface HrClockEvent { id: string; employeeId: string; kind: "in" | "out"; at: string; actorId: string; workEntryId: string; correction?: boolean; note?: string }
+export interface HrClockEvent { id: string; employeeId: string; kind: "in" | "out"; at: string; actorId: string; workEntryId: string; correction?: boolean; note?: string; location?: HrClockLocationEvidence }
 export interface HrLeaveType { id: string; name: string; paid: boolean; deductBalance: boolean; unitMinutes: number; requireApproval: boolean }
 export interface HrLeaveSlot { date: string; startTime: string; endTime: string; minutes: number }
 export interface HrLeaveRequest {
@@ -163,7 +164,7 @@ function makeWork(w: HrWorkspace, input: Record<string, unknown>, ctx: HrContext
   if (input.recognizedMinutes !== undefined) { manager(ctx); recognized = num(input.recognizedMinutes, "인정 근무 분", 0, interval[1] - interval[0] - rest); }
   noOverlap(state, e.id, interval, old?.id);
   return { id: old?.id ?? ctx.id(), employeeId: e.id, date: d, endDate, startTime: start, endTime: end,
-    breakMinutes: rest, recognizedMinutes: recognized, status: policy?.requireApproval === false ? "approved" : "pending",
+    breakMinutes: rest, recognizedMinutes: recognized, status: !ctx.manager && (source === "manual" || old) ? "pending" : policy?.requireApproval === false ? "approved" : "pending",
     source, policyId: policy?.id ?? "", note: input.note === undefined ? "" : txt(input.note, "사유", false),
     revision: (old?.revision ?? 0) + 1, createdAt: old?.createdAt ?? ctx.now, createdBy: old?.createdBy ?? ctx.actorId,
     reviewedAt: "", reviewedBy: "", rawClockIds: old?.rawClockIds ?? [] };
@@ -222,22 +223,23 @@ function runAttendance(w: HrWorkspace, command: HrCommand, ctx: HrContext): bool
       const at = new Date(ctx.now); if (!Number.isFinite(at.getTime())) fail("서버 시간이 올바르지 않습니다.");
       const local = new Date(at.getTime() + 9 * 3600000).toISOString(); const d = local.slice(0, 10); const t = local.slice(11, 16);
       const e = employee(w, i.employeeId, ctx, d); unlocked(s, e.id, d);
+      const location = ctx.manager ? undefined : verifyHrClockLocation(w.settings.clockLocation, i.location, ctx.now);
       const last = s.clockEvents.filter((r) => r.employeeId === e.id).at(-1);
       if (command.type === "clock.in") {
         if (last?.kind === "in") fail("이미 출근 상태입니다.", "hr_conflict", 409);
         if (s.leaveRequests.some((r) => r.employeeId === e.id && ["pending", "approved"].includes(r.status) && r.slots.some((slot) => slot.date === d && slot.startTime <= t && t < slot.endTime))) fail("휴가 시간에는 출근할 수 없습니다.", "hr_overlap", 409);
-        s.clockEvents.push({ id: ctx.id(), employeeId: e.id, kind: "in", at: ctx.now, actorId: ctx.actorId, workEntryId: "" }); return true;
+        s.clockEvents.push({ id: ctx.id(), employeeId: e.id, kind: "in", at: ctx.now, actorId: ctx.actorId, workEntryId: "", ...(location ? { location } : {}) }); return true;
       }
       if (!last || last.kind !== "in") fail("출근 기록이 없습니다.", "hr_conflict", 409);
       const beginning = new Date(Date.parse(last.at) + 9 * 3600000).toISOString();
       const elapsed = Math.floor((at.getTime() - Date.parse(last.at)) / 60000);
       if (elapsed < 0) fail("퇴근 시각이 출근 시각보다 빠릅니다.");
       if (beginning.slice(0, 16) === local.slice(0, 16)) {
-        s.clockEvents.push({ id: ctx.id(), employeeId: e.id, kind: "out", at: ctx.now, actorId: ctx.actorId, workEntryId: "" }); return true;
+        s.clockEvents.push({ id: ctx.id(), employeeId: e.id, kind: "out", at: ctx.now, actorId: ctx.actorId, workEntryId: "", ...(location ? { location } : {}) }); return true;
       }
       const work = makeWork(w, { employeeId: e.id, date: beginning.slice(0, 10), startTime: beginning.slice(11, 16), endDate: d, endTime: t }, ctx, "clock");
       work.recognizedMinutes = Math.min(work.recognizedMinutes, Math.max(0, elapsed - work.breakMinutes));
-      const out: HrClockEvent = { id: ctx.id(), employeeId: e.id, kind: "out", at: ctx.now, actorId: ctx.actorId, workEntryId: work.id };
+      const out: HrClockEvent = { id: ctx.id(), employeeId: e.id, kind: "out", at: ctx.now, actorId: ctx.actorId, workEntryId: work.id, ...(location ? { location } : {}) };
       work.rawClockIds = [last.id, out.id]; s.clockEvents.push(out); s.workEntries.push(work); return true;
     }
     case "leave.type.create": {

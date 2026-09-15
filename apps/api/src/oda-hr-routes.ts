@@ -45,8 +45,9 @@ async function validateActorLink(repository: StateRepository, workspace: HrWorks
   const actor = await repository.get<Actor>('actor', input.actorId.trim());
   if (!actor?.active || !linkableRoles.includes(actor.role) || (!actor.storeIds.includes(workspace.storeId) && !(actor.id === currentActor.id && actor.role === 'hq_master'))) throw new DomainError('HR_ACTOR_SCOPE', '이 매장에 배정된 활성 인사관리 계정만 구성원에게 연결할 수 있습니다.', 422);
 }
-async function response(repository: StateRepository, workspace: HrWorkspace, actor: Actor): Promise<HrResponse> {
+async function response(repository: StateRepository, workspace: HrWorkspace, actor: Actor, store: Store): Promise<HrResponse> {
   const ctx = context(actor, workspace); const result = projectHrWorkspace(workspace, ctx);
+  result.storeAddress = store.roadAddress || store.business.address || '';
   if (ctx.manager) result.accounts = (await repository.list<Actor>('actor')).filter(row => row.active && linkableRoles.includes(row.role)
     && (row.storeIds.includes(workspace.storeId) || (row.id === actor.id && row.role === 'hq_master')))
     .map(row => ({ id: row.id, name: row.name, role: row.role }));
@@ -85,7 +86,7 @@ export function registerOdaHrRoutes(app: FastifyInstance, repository: StateRepos
     const { storeId } = paramsSchema.parse(request.params);
     const store = await scope(repository, request.actor, storeId);
     const workspace = await load(repository, store);
-    return response(repository, workspace, request.actor);
+    return response(repository, workspace, request.actor, store);
   });
   app.post(`${base}/commands`, async (request, reply) => {
     const { storeId } = paramsSchema.parse(request.params);
@@ -109,6 +110,6 @@ export function registerOdaHrRoutes(app: FastifyInstance, repository: StateRepos
     }));
     const currentStore = await scope(repository, request.actor, storeId);
     const current = await load(repository, currentStore);
-    return response(repository, current, request.actor);
+    return response(repository, current, request.actor, currentStore);
   });
 }
