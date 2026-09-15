@@ -2,15 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BootstrapData } from '../types';
 import { Button } from '../components/ui';
 import { AlertTriangle, ArrowDownToLine, ArrowRight, CalendarDays, Check, ChevronDown, CircleDollarSign, Clock3, FileCheck2, ImagePlus, Info, LockKeyhole, Plus, ReceiptText, RefreshCcw, Search, Send, ShieldCheck, X } from '../components/icons';
-import { downloadOdaText, getOdaMonth, odaMutation, odaUrl, prepareOdaFile, previewOdaImport } from '../api/oda-client';
-import type { OdaImport, OdaLine, OdaPolicy, OdaPreview, OdaResponse, OdaSource, OdaSourceKind, OdaSummary } from '../api/oda-client';
+import { downloadOdaText, getOdaMonth, getOdaImportProfile, resetOdaImportProfile, odaMutation, odaUrl, prepareOdaFile, previewOdaImport } from '../api/oda-client';
+import type { OdaImport, OdaImportProfile as ImportProfile, OdaLine, OdaPolicy, OdaPreview, OdaResponse, OdaSource, OdaSourceKind, OdaSummary } from '../api/oda-client';
 import '../oda.css';
 
 type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void };
 type Tab = 'overview' | 'transactions' | 'policy' | 'history';
 type Filter = 'review' | 'all' | 'revenue' | 'expense' | 'bank' | 'excluded';
 type PendingFile = { id: string; input: OdaImport; preview: OdaPreview | null; error?: string };
-type ImportProfile = { headerRow: number; sheetName: string; headers: string[]; columnMap: Record<string, string> };
 const profileKey = (storeId: string, kind: string, channel: string) => `oda:import-profile:v1:${storeId}:${kind}:${channel}`;
 function readImportProfile(key: string): ImportProfile | null {
   try {
@@ -18,11 +17,6 @@ function readImportProfile(key: string): ImportProfile | null {
     if (!value || !Number.isInteger(value.headerRow) || value.headerRow < 1 || value.headerRow > 100 || typeof value.sheetName !== 'string' || !Array.isArray(value.headers) || !value.headers.every((header) => typeof header === 'string') || !value.columnMap || typeof value.columnMap !== 'object' || !Object.values(value.columnMap).every((header) => typeof header === 'string')) return null;
     return value;
   } catch { return null; }
-}
-function rememberImportProfile(storeId: string, file: PendingFile) {
-  if (!file.preview?.workbook || file.error || file.preview.errors.length) return;
-  const profile: ImportProfile = { headerRow: file.input.headerRow || 1, sheetName: file.input.sheetName || '', headers: file.preview.workbook.headers, columnMap: file.input.columnMap || {} };
-  try { localStorage.setItem(profileKey(storeId, file.input.kind, file.input.channel || ''), JSON.stringify(profile)); } catch { /* Import remains available when browser storage is unavailable. */ }
 }
 const categories = [{ value: 'ingredients', label: '식재료비' }, { value: 'labor', label: '인건비' }, { value: 'rent', label: '임차료' }, { value: 'utilities', label: '관리비·공과금' }, { value: 'fees', label: '수수료' }, { value: 'marketing', label: '마케팅비' }, { value: 'supplies', label: '소모품비' }, { value: 'other', label: '기타 운영비' }];
 const exclusions = [{ value: 'capex', label: '시설·설비 투자비' }, { value: 'deposit', label: '보증금' }, { value: 'a_priority', label: 'A 우선배분금' }, { value: 'depreciation', label: '감가상각비' }, { value: 'b_distribution', label: 'B 배분금' }, { value: 'owner_transfer', label: '사업주 자금이체' }];
@@ -113,7 +107,7 @@ export function OdaSettlementPage({ data, notify }: Props) {
         const response = await odaMutation(storeId, month, '/import', version.current, file.input);
         added += response.importResult?.added ?? 0;
         if (context.current === requestedContext) accept(response);
-        rememberImportProfile(storeId, file); onSaved?.(file);
+        onSaved?.(file);
       }
       notify(`자료 ${files.length}개를 저장했습니다.${added ? ` 거래 ${added}건이 반영되었습니다.` : ''}`, 'success');
       return true;
@@ -210,7 +204,11 @@ function UploadBox({ storeId, month, disabled, busy, onImport, onReading, notify
   const [dragging, setDragging] = useState(false);
   const [reading, setReading] = useState(false);
   const [mappingWorking, setMappingWorking] = useState(false);
-  const checking = reading || mappingWorking;
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileVersion, setProfileVersion] = useState(0);
+  const [profileRefresh, setProfileRefresh] = useState(0);
+  const [profileError, setProfileError] = useState('');
+  const checking = reading || mappingWorking || profileLoading;
   const [readProgress, setReadProgress] = useState({ done: 0, total: 0 });
   const [saveProgress, setSaveProgress] = useState<{ done: number; total: number } | null>(null);
   const [headerRow, setHeaderRow] = useState(1);
@@ -218,15 +216,24 @@ function UploadBox({ storeId, month, disabled, busy, onImport, onReading, notify
   const [savedProfile, setSavedProfile] = useState<ImportProfile | null>(null);
   const [localError, setLocalError] = useState('');
   useEffect(() => {
-    const profile = readImportProfile(profileKey(storeId, kind, channel));
-    setSavedProfile(profile); setHeaderRow(profile?.headerRow || 1); setSheetName(profile?.sheetName || '');
-  }, [storeId, kind, channel]);
+    const controller = new AbortController();
+    setProfileLoading(true); setProfileError(''); setSavedProfile(null); setProfileVersion(0); setHeaderRow(1); setSheetName('');
+    void getOdaImportProfile(storeId, kind, channel, controller.signal).then(result => {
+      if (controller.signal.aborted) return;
+      // Only migrate browser settings if the server has never stored or reset this source.
+      const profile = result.version === 0 ? readImportProfile(profileKey(storeId, kind, channel)) : result.profile;
+      setProfileVersion(result.version); setSavedProfile(profile); setHeaderRow(profile?.headerRow || 1); setSheetName(profile?.sheetName || '');
+    }).catch(error => {
+      if (!controller.signal.aborted) setProfileError(error instanceof Error ? error.message : '엑셀 설정을 불러오지 못했습니다.');
+    }).finally(() => { if (!controller.signal.aborted) setProfileLoading(false); });
+    return () => controller.abort();
+  }, [storeId, kind, channel, profileRefresh]);
   useEffect(() => { onReading(checking); return () => onReading(false); }, [checking, onReading]);
   async function preview(list: File[]) {
     if (disabled || checking || !list.length) return;
     if (!Number.isInteger(headerRow) || headerRow < 1 || headerRow > 100) { setLocalError('열 제목 행은 1~100 사이의 정수로 입력해 주세요.'); return; }
     setReading(true); setLocalError(''); setReadProgress({ done: 0, total: list.length });
-    const profile = readImportProfile(profileKey(storeId, kind, channel));
+    const profile = savedProfile;
     const settled = await Promise.allSettled(list.map(async (file) => {
       const id = crypto.randomUUID();
       try {
@@ -262,8 +269,19 @@ function UploadBox({ storeId, month, disabled, busy, onImport, onReading, notify
         setFiles((current) => current.filter((item) => item !== file));
         setSaveProgress((current) => current ? { ...current, done: current.done + 1 } : current);
       });
-      setSavedProfile(readImportProfile(profileKey(storeId, kind, channel)));
+      setProfileRefresh(value => value + 1);
     } finally { setSaveProgress(null); }
+  }
+  async function resetProfile() {
+    if (disabled || checking) return;
+    setProfileLoading(true); setProfileError('');
+    try {
+      const result = await resetOdaImportProfile(storeId, kind, channel, profileVersion);
+      try { localStorage.removeItem(profileKey(storeId, kind, channel)); } catch { /* Legacy preference storage is optional. */ }
+      setProfileVersion(result.version); setSavedProfile(null); setHeaderRow(1); setSheetName('');
+      notify('이 매장·출처의 저장한 양식을 초기화했습니다. 다음 파일부터 적용됩니다.', 'info');
+    } catch (error) { setProfileError(error instanceof Error ? error.message : '엑셀 설정을 초기화하지 못했습니다.'); }
+    finally { setProfileLoading(false); }
   }
   function template() {
     const lineKind = kind === 'bank' ? 'bank' : kind === 'expense' || kind === 'evidence' ? 'expense' : 'revenue';
@@ -275,8 +293,10 @@ function UploadBox({ storeId, month, disabled, busy, onImport, onReading, notify
     <div className="oda-upload-top"><div><h2>자료 넣기</h2><p>POS·배달·비용 자료를 차례로 추가한 뒤 한 번에 반영하세요.</p></div><Button variant="ghost" onClick={template}><ArrowDownToLine size={16} /> 양식</Button></div>
     <div className="oda-upload-controls"><label className="oda-field">어떤 자료인가요?<select value={kind} disabled={disabled || checking} onChange={(e) => { const value = e.target.value as OdaSourceKind; setKind(value); setChannel(value === 'platform' ? 'baemin' : value === 'pos' ? 'pos' : value === 'bank' ? 'bank' : 'manual'); }}><option value="pos">매장 POS 매출</option><option value="platform">배달 플랫폼 매출</option><option value="expense">운영 비용 내역</option><option value="bank">계좌 입출금 내역</option><option value="evidence">영수증·계약서 증빙</option></select></label><label className="oda-field">자료 출처{kind === 'platform' ? <select value={channel} disabled={disabled || checking} onChange={(e) => setChannel(e.target.value)}>{channels.filter((item) => item.value !== 'pos').map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : <input value={kind === 'pos' ? '매장 POS' : kind === 'bank' ? '계좌 대사 · 손익 별도' : '운영 비용·증빙'} readOnly />}</label></div>
     <button className={`oda-drop ${dragging ? 'dragging' : ''}`} type="button" disabled={disabled || checking} onClick={() => inputRef.current?.click()} onDragOver={(e) => { e.preventDefault(); if (!disabled && !checking) setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false); if (!disabled) void preview(Array.from(e.dataTransfer.files)); }}><ImagePlus size={34} /><span><strong>{reading ? `자료 확인 중 · ${readProgress.done}/${readProgress.total}개` : files.length ? '다음 파일을 추가하세요 · 선택한 자료는 유지됩니다' : '파일을 끌어 놓거나 눌러서 선택하세요'}</strong><small>XLSX·CSV·TSV · PDF·JPG·PNG / 파일당 2MB</small></span></button><input ref={inputRef} className="sr-only" type="file" multiple accept=".xlsx,.csv,.tsv,.pdf,.jpg,.jpeg,.png" aria-label="정산 파일 선택" disabled={disabled || checking} onChange={(e) => { void preview(Array.from(e.target.files || [])); e.target.value = ''; }} />
+    {profileLoading && <p className="oda-upload-note" role="status">저장한 엑셀 설정을 확인하고 있습니다…</p>}
+    {profileError && <p className="oda-error" role="alert">{profileError} <Button variant="ghost" disabled={disabled || checking} onClick={() => setProfileRefresh(value => value + 1)}>설정 다시 불러오기</Button></p>}
     {savedProfile && <p className="oda-upload-note"><Check size={16} /><span>이 매장의 {channelLabel(channel) === 'manual' ? '비용' : channelLabel(channel)} 엑셀 설정을 불러왔습니다. 열 구성이 같으면 저장한 연결을 자동 적용합니다.</span></p>}
-    <details className="oda-upload-settings"><summary className="oda-quiet-link">엑셀 시트·제목 행 설정</summary><div className="oda-form-grid" style={{ marginTop: 12 }}><label className="oda-field">시트 이름<input value={sheetName} onChange={(e) => setSheetName(e.target.value)} placeholder="비워두면 기본 시트" maxLength={100} disabled={disabled || checking} /></label><label className="oda-field">열 제목이 있는 행<input type="number" min="1" max="100" value={headerRow} onChange={(e) => setHeaderRow(Number(e.target.value))} disabled={disabled || checking} /></label></div><p className="oda-mini-note" style={{ marginTop: 10 }}>다음에 추가하는 파일부터 적용합니다. 반영한 엑셀의 설정은 이 브라우저에서 다음 달에도 사용합니다.</p>{savedProfile && <Button variant="ghost" disabled={disabled || checking} onClick={() => { try { localStorage.removeItem(profileKey(storeId, kind, channel)); } catch { /* Optional preference storage. */ } setSavedProfile(null); setHeaderRow(1); setSheetName(''); }}>저장한 양식 초기화</Button>}</details>
+    <details className="oda-upload-settings"><summary className="oda-quiet-link">엑셀 시트·제목 행 설정</summary><div className="oda-form-grid" style={{ marginTop: 12 }}><label className="oda-field">시트 이름<input value={sheetName} onChange={(e) => setSheetName(e.target.value)} placeholder="비워두면 기본 시트" maxLength={100} disabled={disabled || checking} /></label><label className="oda-field">열 제목이 있는 행<input type="number" min="1" max="100" value={headerRow} onChange={(e) => setHeaderRow(Number(e.target.value))} disabled={disabled || checking} /></label></div><p className="oda-mini-note" style={{ marginTop: 10 }}>다음에 추가하는 파일부터 적용합니다. 반영한 엑셀 설정은 매장·자료 출처별로 저장되어 다른 PC에서도 다음 달에 재사용합니다.</p>{savedProfile && <Button variant="ghost" disabled={disabled || checking} onClick={() => void resetProfile()}>저장한 양식 초기화</Button>}</details>
     <p className="oda-upload-note"><Info size={16} /><span>반영 전 미리보기로 확인합니다. PDF·사진은 증빙으로 보관하며 금액을 자동 인식하지 않습니다. 파일의 중복과 거래번호를 확인합니다.</span></p>
     {reading && <div className="oda-upload-progress" role="status" aria-live="polite"><progress value={readProgress.done} max={readProgress.total} aria-label="자료 확인 진행" /><span>{readProgress.total}개 중 {readProgress.done}개 확인</span></div>}
     {saveProgress && <div className="oda-upload-progress" role="status" aria-live="polite"><progress value={saveProgress.done} max={saveProgress.total} aria-label="자료 저장 진행" /><span>{saveProgress.total}개 중 {saveProgress.done}개 저장 완료 · 저장 중에는 창을 유지해 주세요.</span></div>}

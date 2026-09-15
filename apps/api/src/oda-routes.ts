@@ -7,6 +7,8 @@ import { z } from "zod";
 import { audit } from "./events.ts";
 import { readOdaWorkbook } from "./oda-spreadsheet.ts";
 import { buildOdaReport } from "./oda-report.ts";
+import { getImportProfile, saveImportProfile } from "./oda-import-profile.ts";
+import { idempotentMutation } from "./idempotency.ts";
 
 /** Original bytes are repository-private. Never serialize this object to a client or audit ledger. */
 interface OdaRecord extends OdaMonth {
@@ -187,7 +189,7 @@ function parseFile(file: PreparedFile, kind: OdaSourceKind, channel: string | un
 export function registerOdaRoutes(app: FastifyInstance, repository: StateRepository): void {
   const base = "/api/v2/oda/:storeId/:month";
   const mutate = async (request: FastifyRequest, expectedVersion: number, action: string,
-    run: (record: OdaRecord) => void | Promise<void>, options: { owner?: boolean; allowLocked?: boolean; metadata?: Record<string, unknown> } = {}) => {
+    run: (record: OdaRecord, scoped: StateRepository) => void | Promise<void>, options: { owner?: boolean; allowLocked?: boolean; metadata?: Record<string, unknown> } = {}) => {
     const { storeId, month } = paramsSchema.parse(request.params);
     await scope(repository, request.actor, storeId, true, options.owner === true);
     return repository.exclusiveTransaction(`oda:${storeId}:${month}`, async (scoped) => {
@@ -196,7 +198,7 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       if (!options.allowLocked) ensureDraft(record);
       const before = { version: record.version, status: record.status, summary: calculateOdaMonth(record), policy: structuredClone(record.policy) };
       const previousLines = new Map(record.lines.map((line) => [line.id, structuredClone(line)]));
-      await run(record);
+      await run(record, scoped);
       if (record.lines.length > MAX_LINES) throw new DomainError("ODA_LINE_LIMIT", "월 정산 내역은 최대 5,000행입니다.", 422);
       for (const line of record.lines) checkLine(line, record);
       record.version += 1;
@@ -209,6 +211,22 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       return result(record, request.actor);
     });
   };
+
+  const profilePath = '/api/v2/oda/:storeId/import-profile';
+  const profileQuery = z.object({ kind: kindSchema, channel: z.string().trim().max(80).default('') }).strict();
+  app.get(profilePath, async request => {
+    const { storeId } = z.object({ storeId: z.string().min(1).max(120) }).parse(request.params);
+    await scope(repository, request.actor, storeId);
+    const { kind, channel } = profileQuery.parse(request.query);
+    return getImportProfile(repository, storeId, kind, channel);
+  });
+  app.post(`${profilePath}/reset`, async (request, reply) => {
+    const { storeId } = z.object({ storeId: z.string().min(1).max(120) }).parse(request.params);
+    await scope(repository, request.actor, storeId, true);
+    const { kind, channel, expectedVersion } = profileQuery.extend({ expectedVersion: versionSchema }).parse(request.body);
+    return idempotentMutation(request, reply, repository, request.actor, 200, tx =>
+      saveImportProfile(tx, request.actor, storeId, kind, channel, null, expectedVersion));
+  });
 
   app.get(base, async (request) => {
     const { storeId, month } = paramsSchema.parse(request.params);
@@ -245,7 +263,7 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
     const file = await prepareFile(body);
     const sourceId = randomUUID();
     let added = 0; let duplicates = 0;
-    const response = await mutate(request, expectedVersion, "ODA 원본 자료 가져오기", (record) => {
+    const response = await mutate(request, expectedVersion, "ODA 원본 자료 가져오기", async (record, scoped) => {
       if (record.sources.some((source) => source.sha256 === file.sha256)) throw new DomainError("ODA_DUPLICATE_FILE", "이미 첨부한 동일한 원본 파일입니다.", 409);
       if (record.sources.reduce((total, source) => total + source.sizeBytes, 0) + file.bytes.length > MAX_MONTH_BYTES) {
         throw new DomainError("ODA_MONTH_FILE_LIMIT", "정산월 원본 자료는 총 10MB까지 보관할 수 있습니다.", 422);
@@ -260,6 +278,9 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       record.lines.push(...parsed.lines.map((line) => ({ ...line, id: randomUUID() })));
       record.evidenceBytes[sourceId] = file.bytes.toString("base64");
       added = parsed.lines.length; duplicates = parsed.duplicateCount;
+      if (file.workbook) await saveImportProfile(scoped, request.actor, record.storeId, body.kind, body.channel, {
+        headerRow: file.headerRow, sheetName: body.sheetName ?? '', headers: file.workbook.headers, columnMap: body.columnMap ?? {},
+      });
     }, { metadata: { sourceId, filename: file.filename, sha256: file.sha256 } });
     return { ...response, importResult: { added, duplicates } };
   });

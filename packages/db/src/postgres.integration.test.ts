@@ -42,6 +42,17 @@ test("PostgreSQL repository applies and exercises the complete durable contract"
     assert.deepEqual(await repository.listOdaOverviewMonths("2026-08", [randomUUID()]), []);
     assert.deepEqual(await repository.listOdaOverviewMonths("2026-08", []), []);
 
+    const profileId = randomUUID();
+    const profile = { id: profileId, storeId: odaStore, version: 1, profile: { headerRow: 2, headers: ["날짜", "금액"], sheetName: "", columnMap: {} } };
+    await repository.commit({ changes: [{ type: "oda_import_profile", id: profileId, storeId: odaStore, expectedVersion: null, value: profile }] });
+    assert.deepEqual(await repository.get("oda_import_profile", profileId), profile);
+    assert.deepEqual(await repository.list("oda_import_profile", [randomUUID()]), []);
+    await assert.rejects(repository.exclusiveTransaction(`oda:profile-test:${profileId}`, async tx => {
+      await tx.commit({ changes: [{ type: "oda_import_profile", id: profileId, storeId: odaStore, expectedVersion: 1, value: { ...profile, version: 2, profile: null } }] });
+      throw new Error("rollback monthly import");
+    }), /rollback monthly import/);
+    assert.deepEqual(await repository.get("oda_import_profile", profileId), profile);
+
     const aggregateId = randomUUID();
     await repository.commit({ changes: [{ type: "product", id: aggregateId, expectedVersion: null,
       value: { id: aggregateId, name: "integration product", version: 1 } }] });

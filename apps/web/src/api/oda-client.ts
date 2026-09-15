@@ -15,6 +15,18 @@ export type OdaResponse = {
 };
 export type OdaImport = { filename: string; kind: OdaSourceKind; content?: string; contentBase64?: string; mediaType?: string; channel?: string; sheetName?: string; headerRow?: number; columnMap?: Record<string, string> };
 export type OdaPreview = OdaCsvResult & { workbook?: { sheetNames: string[]; sheetName: string; headers: string[] } };
+export type OdaImportProfile = { headerRow: number; sheetName: string; headers: string[]; columnMap: Record<string, string> };
+export type OdaImportProfileResponse = { version: number; profile: OdaImportProfile | null };
+const profileBase = (storeId: string) => `/oda/${encodeURIComponent(storeId)}/import-profile`;
+export async function getOdaImportProfile(storeId: string, kind: OdaSourceKind, channel: string, signal?: AbortSignal): Promise<OdaImportProfileResponse> {
+  const query = new URLSearchParams({ kind, channel });
+  const response = await fetch(`${import.meta.env.VITE_API_BASE ?? '/api/v2'}${profileBase(storeId)}?${query}`, { credentials: 'same-origin', signal, headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new ApiError(response.status, 'ODA_PROFILE_FAILED', '저장한 엑셀 설정을 불러오지 못했습니다. 기본 설정으로 파일을 확인하거나 다시 불러와 주세요.');
+  return response.json();
+}
+export function resetOdaImportProfile(storeId: string, kind: OdaSourceKind, channel: string, expectedVersion: number) {
+  return mutateV2<OdaImportProfileResponse>(`${profileBase(storeId)}/reset`, { kind, channel, expectedVersion }, { idempotencyKey: newIdempotencyKey() });
+}
 const base = (storeId: string, month: string) => `/oda/${encodeURIComponent(storeId)}/${encodeURIComponent(month)}`;
 export const odaUrl = (storeId: string, month: string, suffix: string) => `${import.meta.env.VITE_API_BASE ?? '/api/v2'}${base(storeId, month)}${suffix}`;
 

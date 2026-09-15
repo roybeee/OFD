@@ -85,6 +85,62 @@ describe("ODA monthly settlement API", () => {
     expect(downloaded.rawPayload.equals(bytes)).toBe(true);
   });
 
+  it("persists workbook profiles by store and source only after a successful import, with audited versioned reset", async () => {
+    const { app, repository } = await setup();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("월매출");
+    sheet.addRow(["월 매출 원본"]); sheet.addRow(["일자", "결제원"]); sheet.addRow(["2026-08-31", 11000]);
+    const file = { filename: "매출.xlsx", kind: "pos", channel: "pos", headerRow: 2,
+      columnMap: { date: "일자", amount: "결제원" }, contentBase64: Buffer.from(await workbook.xlsx.writeBuffer()).toString("base64") };
+    const profileUrl = `/api/v2/oda/${STORE}/import-profile`;
+    const get = (client = app, query = 'kind=pos&channel=pos', headers = owner) => client.inject({ method: 'GET', url: `${profileUrl}?${query}`, headers });
+    expect((await get()).json()).toEqual({ version: 0, profile: null });
+    expect((await request(app, '/import/preview', file)).statusCode).toBe(200);
+    expect((await get()).json().version).toBe(0);
+    expect((await request(app, '/import', { ...file, expectedVersion: 7 })).statusCode).toBe(409);
+    expect((await get()).json().version).toBe(0);
+    expect((await request(app, '/import', { ...file, expectedVersion: 0 })).statusCode).toBe(200);
+    const expected = { version: 1, profile: { headerRow: 2, sheetName: '', headers: ['일자', '결제원'], columnMap: file.columnMap } };
+    expect((await get(await open(repository), undefined, finance)).json()).toEqual(expected);
+    expect((await get(app, 'kind=platform&channel=pos')).json().profile).toBeNull();
+    expect((await get(app, 'kind=pos&channel=coupang')).json().profile).toBeNull();
+    const other = `/api/v2/oda/${DEMO_IDS.storeHapjeong}/import-profile?kind=pos&channel=pos`;
+    expect((await app.inject({ method: 'GET', url: other, headers: owner })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: other, headers: master })).json().profile).toBeNull();
+    expect((await request(app, '/import', { ...file, expectedVersion: 1, sheetName: '월매출' })).statusCode).toBe(409);
+    expect((await get()).json()).toEqual(expected);
+    const reset = (version: number, headers = owner) => app.inject({ method: 'POST', url: `${profileUrl}/reset`,
+      headers: { ...headers, 'idempotency-key': `reset-profile-${version}` }, payload: { kind: 'pos', channel: 'pos', expectedVersion: version } });
+    expect((await reset(1, { 'x-demo-actor-id': DEMO_IDS.auditor })).statusCode).toBe(403);
+    expect((await reset(0)).statusCode).toBe(409);
+    expect((await reset(1)).json()).toEqual({ version: 2, profile: null });
+    expect((await reset(1)).headers['idempotency-replayed']).toBe('true');
+    expect((await get()).json()).toEqual({ version: 2, profile: null });
+    const stored = await repository.list('oda_import_profile', [STORE]);
+    expect(stored).toHaveLength(1);
+    expect(JSON.stringify(stored)).not.toContain(file.contentBase64);
+    const audits = (await repository.listAudit(100, [STORE])).filter(event => event.aggregateType === 'oda_import_profile');
+    expect(audits.map(event => event.action).sort()).toEqual(['ODA 엑셀 양식 기억', 'ODA 엑셀 양식 초기화'].sort());
+    expect((await app.inject({ method: 'GET', url: base, headers: owner })).json().version).toBe(1);
+  });
+
+  it("rolls back the shared workbook profile if the monthly commit fails", async () => {
+    const { app, repository } = await setup();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sheet1'); sheet.addRow(['날짜', '금액']); sheet.addRow(['2026-08-31', 1000]);
+    // Overflow is detected after the profile write, exercising whole-transaction rollback.
+    const initial = (await app.inject({ method: 'GET', url: base, headers: owner })).json().data;
+    initial.lines = Array.from({ length: 5000 }, (_, i) => ({ id: `row-${i}`, date: '2026-08-31', kind: 'revenue', amount: 1000, vat: 0, description: '기존 매출', category: 'sales', channel: 'pos', sourceId: '', sourceRow: 0, externalId: '', reviewed: true, note: '' }));
+    initial.version = 1; initial.evidenceBytes = {};
+    await repository.commit({ changes: [{ type: 'oda_month', id: initial.id, storeId: STORE, expectedVersion: null, value: initial }] });
+    const rejected = await request(app, '/import', { filename: '매출.xlsx', kind: 'pos', expectedVersion: 1,
+      contentBase64: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
+    expect(rejected.statusCode, rejected.body).toBe(422);
+    expect(rejected.json().error.code).toBe('ODA_LINE_LIMIT');
+    expect(await repository.list('oda_import_profile', [STORE])).toHaveLength(0);
+    expect((await repository.get<OdaMonth>('oda_month', initial.id))?.version).toBe(1);
+  });
+
   it("previews without mutation, validates atomically, hashes actual bytes, deduplicates files and cross-file transaction IDs", async () => {
     const { app, repository } = await setup();
     const preview = await request(app, "/import/preview", { filename: "pos.csv", kind: "pos", content: CSV });

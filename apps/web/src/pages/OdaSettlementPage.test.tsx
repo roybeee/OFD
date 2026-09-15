@@ -6,10 +6,10 @@ import type { BootstrapData } from '../types';
 import type { OdaResponse } from '../api/oda-client';
 import { OdaSettlementPage } from './OdaSettlementPage';
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), mutate: vi.fn(), prepare: vi.fn(), preview: vi.fn() }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), mutate: vi.fn(), prepare: vi.fn(), preview: vi.fn(), profile: vi.fn(), resetProfile: vi.fn() }));
 vi.mock('../api/oda-client', async (importOriginal) => ({
   ...await importOriginal<typeof import('../api/oda-client')>(),
-  getOdaMonth: mocks.get, odaMutation: mocks.mutate, prepareOdaFile: mocks.prepare, previewOdaImport: mocks.preview,
+  getOdaMonth: mocks.get, odaMutation: mocks.mutate, prepareOdaFile: mocks.prepare, previewOdaImport: mocks.preview, getOdaImportProfile: mocks.profile, resetOdaImportProfile: mocks.resetProfile,
 }));
 
 const baseData: BootstrapData = {
@@ -42,7 +42,7 @@ describe('ODA 월 정산 업무 흐름', () => {
   let container: HTMLDivElement;
   let root: Root;
   const notify = vi.fn();
-  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
+  beforeEach(() => { vi.clearAllMocks(); mocks.profile.mockReset().mockResolvedValue({ version: 0, profile: null }); mocks.resetProfile.mockReset(); localStorage.clear(); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
   async function render(data = baseData) { await act(async () => { root.render(<OdaSettlementPage data={data} notify={notify} />); }); }
   function button(text: string, parent: ParentNode = container): HTMLButtonElement {
@@ -205,6 +205,52 @@ describe('ODA 월 정산 업무 흐름', () => {
     await chooseFile('다른양식.xlsx');
     expect(mocks.preview).toHaveBeenCalledTimes(3);
     expect(mocks.preview.mock.lastCall?.[2]).not.toHaveProperty('columnMap');
+  });
+
+  it('다른 PC의 서버 양식을 우선 적용하고 초기화 후 브라우저의 오래된 양식을 되살리지 않는다', async () => {
+    const profile = { headerRow: 2, sheetName: '', headers: ['사용일', '총결제액'], columnMap: { date: '사용일', amount: '총결제액' } };
+    localStorage.setItem('oda:import-profile:v1:oda-1:pos:pos', JSON.stringify({ ...profile, headerRow: 9 }));
+    mocks.profile.mockResolvedValue({ version: 4, profile });
+    mocks.resetProfile.mockResolvedValue({ version: 5, profile: null });
+    mocks.get.mockResolvedValue(response());
+    await render(); await click('거래·증빙');
+    expect((field('열 제목이 있는 행') as HTMLInputElement).value).toBe('2');
+    await click('저장한 양식 초기화');
+    expect(mocks.resetProfile).toHaveBeenCalledWith('oda-1', 'pos', 'pos', 4);
+    expect((field('열 제목이 있는 행') as HTMLInputElement).value).toBe('1');
+    // A different browser can still retain the old local preference after a server reset.
+    localStorage.setItem('oda:import-profile:v1:oda-1:pos:pos', JSON.stringify(profile));
+    mocks.profile.mockResolvedValue({ version: 5, profile: null });
+    await set(container.querySelector<HTMLInputElement>('[aria-label="정산월"]')!, '2026-08');
+    expect((field('열 제목이 있는 행') as HTMLInputElement).value).toBe('1');
+    expect(container.textContent).not.toContain('열 구성이 같으면 저장한 연결을 자동 적용합니다.');
+  });
+
+  it('서버 양식 로딩 중 업로드를 막고 실패하면 명시적으로 알리며 기본 설정으로 업로드를 허용한다', async () => {
+    let reject!: (error: Error) => void;
+    mocks.profile.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    mocks.get.mockResolvedValue(response());
+    await render();
+    expect(container.querySelector<HTMLInputElement>('[aria-label="정산 파일 선택"]')!.disabled).toBe(true);
+    await act(async () => reject(new Error('설정을 불러오지 못했습니다.')));
+    expect(container.textContent).toContain('설정을 불러오지 못했습니다.');
+    expect(container.querySelector<HTMLInputElement>('[aria-label="정산 파일 선택"]')!.disabled).toBe(false);
+    await click('설정 다시 불러오기');
+    expect(mocks.profile).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain('설정을 불러오지 못했습니다.');
+  });
+
+  it('이전 매장의 늦은 서버 응답을 새 매장의 양식에 적용하지 않는다', async () => {
+    let finish!: (result: unknown) => void;
+    mocks.profile.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    mocks.get.mockResolvedValue(response());
+    await render();
+    const signal = mocks.profile.mock.calls[0][3] as AbortSignal;
+    await set(container.querySelector<HTMLSelectElement>('[aria-label="정산 매장"]')!, 'oda-2');
+    expect(signal.aborted).toBe(true);
+    await act(async () => finish({ version: 1, profile: { headerRow: 8, sheetName: '다른 매장', headers: [], columnMap: {} } }));
+    expect((field('열 제목이 있는 행') as HTMLInputElement).value).toBe('1');
+    expect((field('시트 이름') as HTMLInputElement).value).toBe('');
   });
 
   it('여러 파일을 순서대로 저장하며 첫 반영 후에도 남은 파일과 진행률을 유지한다', async () => {
