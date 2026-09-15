@@ -154,7 +154,7 @@ function OdaHrWorkspacePage({ data, notify, personalTab, onHome }: Props & { per
       {commandError && <div className="hr-error" role="alert">{commandError}</div>}
       {loading && <p className="hr-loading" role="status">선택한 매장의 인사 정보를 불러오고 있습니다.</p>}
       {panel && <HrRecoveryContext.Provider value={{ error: loadError, pending: busy || loading, retry: () => setRetry(value => value + 1) }}><section className="hr-content" aria-label={title} aria-busy={busy || loading} key={storeId}>
-        {(['overview', 'people', 'documents', 'settings', 'help'] as string[]).includes(tab) && <HrPersonnel {...panel} accounts={response?.accounts || []} tab={tab as 'overview' | 'people' | 'documents' | 'settings' | 'help'} onTabChange={next => select(storeId, next)} />}
+        {(['overview', 'people', 'documents', 'settings', 'help'] as string[]).includes(tab) && <HrPersonnel {...panel} accounts={response?.accounts || []} tab={tab as 'overview' | 'people' | 'documents' | 'settings' | 'help'} onTabChange={next => select(storeId, next)} onStaffHome={onHome} />}
         {(tab === 'attendance' || tab === 'leave' || tab === 'shifts') && <HrAttendance {...panel} tab={tab} hideClock={personal} />}
         {(tab === 'approvals' || tab === 'expenses') && <HrWorkflow {...panel} tab={tab} />}
         {tab === 'payroll' && <HrPayroll {...panel} />}

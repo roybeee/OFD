@@ -51,6 +51,26 @@ async function employeeForm() {
 }
 
 describe('ODA HR workspace integration', () => {
+  it('routes staff help to working personal pages and back to the same store home without writes', async () => {
+    const staffData = normalizeBootstrap({ currentActor: { id: 'staff-1', name: '직원', role: 'store_staff' },
+      stores: [{ id: 'store-1', name: '첫 매장', business: {} }, { id: 'store-2', name: '둘째 매장', business: {} }],
+      capabilities: ['oda.hr.read'], meta: { appMode: 'production', odaSettlementOnly: true } });
+    api.get.mockImplementation(async (storeId: string) => ({ ...response(storeId), permissions: { manage: false, payroll: false, self: false }, accounts: undefined }));
+    window.history.replaceState({}, '', '/store/oda-hr?store=store-2');
+    await act(async () => root.render(<OdaHrPage data={staffData} notify={vi.fn()} />));
+    await click('인사 도움말›');
+    expect(container.textContent).toContain('직원 이용 안내');
+    expect(container.textContent).not.toContain('조직과 직원 등록');
+    expect(container.textContent).not.toContain('직원 화면 준비 현황');
+    await click('내 근무 기록 열기');
+    expect(container.querySelector('.hr-content')?.getAttribute('aria-label')).toBe('근무 기록');
+    await click('인사 도움말', container.querySelector('nav[aria-label="인사관리 메뉴"]')!);
+    await click('직원 홈에서 일정·공지 확인');
+    expect(container.querySelector('.oda-staff-page')).toBeTruthy();
+    expect(new URLSearchParams(window.location.search).get('store')).toBe('store-2');
+    expect(api.command).not.toHaveBeenCalled();
+  });
+
   it('adds HR to ODA navigation for assigned staff and preserves financial home priorities', async () => {
     expect(canAccessPath('/store/oda-hr', ['oda.hr.read'])).toBe(true);
     expect(canAccessPath('/hq/oda-hr', ['oda.hr.read'])).toBe(false);

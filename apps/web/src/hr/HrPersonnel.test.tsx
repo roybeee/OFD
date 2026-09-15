@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHrWorkspace, type HrEmployee } from '../../../../packages/domain/src/oda-hr';
 import { HrPersonnel } from './HrPersonnel';
+import { hrToday } from './shared';
 
 let root: Root; let container: HTMLDivElement;
 const employee: HrEmployee = { id: 'e1', employeeNumber: '001', name: '직원', departmentId: '', jobTitle: '', employmentType: 'regular', status: 'active', hireDate: '2026-01-01', payType: 'monthly', basePay: 0, history: [] };
@@ -57,4 +58,45 @@ it('saves explicit personnel defaults without implying the informational contact
   expect(container.textContent).toContain('승인 권한이나 결재선에 자동 적용되지 않습니다');
   await field('workdayHours', '7.5'); await field('annualLeaveDays', '17'); await field('approvalEmployeeId', 'e1'); await submit();
   expect(mutate).toHaveBeenCalledWith('settings.update', { companyName: '실제 매장', workdayHours: 7.5, weeklyDays: 5, annualLeaveDays: 17, approvalEmployeeId: 'e1', timezone: 'Asia/Seoul', reason: '' });
+});
+
+it('shows saved staff setup gaps without treating inactive account links, drafts or future hires as ready', async () => {
+  const w = fixture(); const today = hrToday(); const month = today.slice(0, 7);
+  w.employees = [
+    { ...employee, id: 'linked', name: '연결 직원', actorId: 'valid', hireDate: today },
+    { ...employee, id: 'stale', name: '확인 직원', actorId: 'disabled', hireDate: today },
+    { ...employee, id: 'future', name: '입사 예정', hireDate: '9999-01-01' },
+    { ...employee, id: 'retired', status: 'retired', name: '퇴직 직원' },
+  ];
+  const shift = { templateId: '', startTime: '09:00', endTime: '18:00', breakMinutes: 60, kind: 'work' as const, revision: 1, publishedAt: '', note: '' };
+  w.attendance.shifts = [
+    { ...shift, id: 'posted', employeeId: 'linked', date: today, status: 'published' },
+    { ...shift, id: 'draft', employeeId: 'stale', date: today, status: 'draft' },
+    { ...shift, id: 'old', employeeId: 'stale', date: '2000-01-01', status: 'published' },
+  ];
+  w.notices = [{ id: 'draft', title: '초안', body: '', pinned: false, status: 'draft', createdBy: 'manager', createdAt: today, updatedAt: today }];
+  const mutate = vi.fn(); const onTabChange = vi.fn();
+  await act(async () => root.render(<HrPersonnel workspace={w} accounts={[{ id: 'valid', name: '계정', role: 'store_staff' }]} permissions={{ manage: true, payroll: true, self: false }} actorId="manager" busy={false} mutate={mutate} tab="overview" onTabChange={onTabChange} />));
+  const setup = container.querySelector('[aria-label="직원 화면 준비 현황"]')!;
+  expect(setup.textContent).toContain('설정 필요');
+  expect(setup.textContent).toContain('1/2명 연결');
+  expect(setup.textContent).toContain('연결 확인 필요: 확인 직원');
+  expect(setup.textContent).toContain(`${Number(month.slice(5))}월 근무표`);
+  expect(setup.textContent).toContain('1/2명 게시');
+  expect(setup.textContent).toContain('0건 게시');
+  await click('출퇴근 위치 설정', setup); expect(onTabChange).toHaveBeenLastCalledWith('settings');
+  await click('직원 계정 연결 확인', setup); expect(onTabChange).toHaveBeenLastCalledWith('people');
+  await click('당월 근무표 관리', setup); expect(onTabChange).toHaveBeenLastCalledWith('shifts');
+  const scroll = vi.fn(); container.querySelector('#hr-store-notices')!.scrollIntoView = scroll;
+  await click('매장 공지 보기', setup); expect(scroll).toHaveBeenCalledOnce();
+  expect(mutate).not.toHaveBeenCalled();
+});
+
+it('never calls an empty employee list complete and hides manager readiness from employees', async () => {
+  const w = fixture(); w.employees = [];
+  const common = { workspace: w, actorId: 'manager', busy: false, mutate: vi.fn(), onTabChange: vi.fn(), tab: 'overview' as const };
+  await act(async () => root.render(<HrPersonnel {...common} permissions={{ manage: true, payroll: true, self: false }} />));
+  expect(container.querySelector('[aria-label="직원 화면 준비 현황"] .hr-setup-ready')).toBeNull();
+  await act(async () => root.render(<HrPersonnel {...common} permissions={{ manage: false, payroll: false, self: false }} />));
+  expect(container.querySelector('[aria-label="직원 화면 준비 현황"]')).toBeNull();
 });

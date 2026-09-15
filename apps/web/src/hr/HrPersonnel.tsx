@@ -5,10 +5,12 @@ import { ArrowDownToLine, Plus } from '../components/icons';
 import type { HrTab } from '../pages/OdaHrPage';
 import { HrDialog, HrEmpty, hrDate, hrError, hrToday, type HrPanelProps } from './shared';
 import { HrClockLocationSettings } from './HrClockLocationSettings';
+import { HrStaffSetup } from './HrStaffSetup';
+import { HrStaffHelp } from './HrStaffHelp';
 
 type PersonnelTab = 'overview' | 'people' | 'documents' | 'settings' | 'help';
 type Account = { id: string; name: string; role: string };
-type Props = HrPanelProps & { tab: PersonnelTab; accounts?: Account[]; onTabChange: (tab: HrTab) => void };
+type Props = HrPanelProps & { tab: PersonnelTab; accounts?: Account[]; onTabChange: (tab: HrTab) => void; onStaffHome?: () => void };
 const employmentNames = { regular: '정규직', contract: '계약직', part_time: '시간제' };
 const statusNames = { active: '재직', leave: '휴직', retired: '퇴직' };
 const categoryNames = { contract: '계약서', certificate: '증명서', policy: '규정·정책', other: '기타' };
@@ -53,7 +55,7 @@ export function HrPersonnel(props: Props) {
   if (props.tab === 'people') return <People {...props} />;
   if (props.tab === 'documents') return <Documents {...props} />;
   if (props.tab === 'settings') return <Settings {...props} />;
-  if (props.tab === 'help') return <Help onTabChange={props.onTabChange} />;
+  if (props.tab === 'help') return props.permissions.manage ? <Help onTabChange={props.onTabChange} /> : <HrStaffHelp onTabChange={props.onTabChange} onHome={props.onStaffHome} busy={props.busy} />;
   return <Overview {...props} />;
 }
 
@@ -68,6 +70,7 @@ function Overview(props: Props) {
   const today = hrToday();
   return <>
     {!permissions.manage && !permissions.self && <p className="hr-note">내 근무·휴가·급여를 이용하려면 인사 담당자가 직원 정보에 로그인 계정을 연결해야 합니다.</p>}
+    {permissions.manage && <HrStaffSetup workspace={w} accounts={props.accounts || []} busy={props.busy} onTabChange={onTabChange} />}
     <div className="hr-metrics">
       <article className="hr-metric"><span>재직 구성원</span><strong>{active.length}<small> 명</small></strong><small>{departments.length}개 조직</small></article>
       <article className="hr-metric"><span>휴직 구성원</span><strong>{employees.filter(row => row.status === 'leave').length}<small> 명</small></strong><small>조회 가능한 구성원 기준</small></article>
@@ -187,7 +190,7 @@ function Notices(props: Props) {
   const [expanded, setExpanded] = useState('');
   const notices = w.notices.filter(row => row.status !== 'archived').sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
   const current = editing && editing !== 'new' ? editing : undefined;
-  return <section className="hr-card"><div className="hr-section-heading"><div><h2>공지사항</h2><p>구성원에게 필요한 소식과 안내를 공유합니다.</p></div>{permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => setEditing('new')}><Plus size={16} /> 공지 작성</Button>}</div>
+  return <section className="hr-card" id="hr-store-notices"><div className="hr-section-heading"><div><h2>공지사항</h2><p>구성원에게 필요한 소식과 안내를 공유합니다.</p></div>{permissions.manage && <Button variant="secondary" disabled={busy} onClick={() => setEditing('new')}><Plus size={16} /> 공지 작성</Button>}</div>
     {notices.length ? <div className="hr-list">{notices.map(row => <article key={row.id}><div className="hr-section-heading"><div><h3>{row.pinned && <span className="hr-badge">고정</span>} {row.title}</h3><small>{hrDate(row.updatedAt)} · {row.status === 'draft' ? '임시 저장' : '게시됨'}</small></div><Button variant="ghost" onClick={() => setExpanded(expanded === row.id ? '' : row.id)} aria-expanded={expanded === row.id}>{expanded === row.id ? '접기' : '내용 보기'}</Button></div>{expanded === row.id && <div className="hr-prose">{row.body}</div>}{permissions.manage && <div className="hr-actions"><Button variant="ghost" disabled={busy} onClick={() => setEditing(row)}>수정</Button><Button variant="ghost" disabled={busy} onClick={() => setArchive(row)}>보관</Button></div>}</article>)}</div> : <HrEmpty title="등록된 공지가 없습니다" />}
     {editing && <HrDialog title={current ? '공지 수정' : '공지 작성'} busy={busy} onClose={() => setEditing(null)}><SaveForm busy={busy} onCancel={() => setEditing(null)} submit="공지 저장" onSave={async form => { await mutate(current ? 'notice.update' : 'notice.create', { ...(current ? { id: current.id } : {}), title: txt(form, 'title'), body: txt(form, 'body'), pinned: form.get('pinned') === 'on', status: txt(form, 'status') }); setEditing(null); }}><Field label="제목"><input name="title" required maxLength={200} defaultValue={current?.title} /></Field><Field label="내용"><textarea name="body" required rows={8} maxLength={20000} defaultValue={current?.body} /></Field><Field label="공개 상태"><select name="status" defaultValue={current?.status || 'draft'}><option value="draft">임시 저장 · 관리자만 조회</option><option value="published">구성원에게 게시</option></select></Field><label className="hr-check"><input name="pinned" type="checkbox" defaultChecked={current?.pinned} />목록 상단에 고정</label></SaveForm></HrDialog>}
     {archive && <Confirm title="공지 보관" body={`“${archive.title}” 공지를 목록에서 보관합니다. 구성원에게는 더 이상 표시되지 않습니다.`} busy={busy} onClose={() => setArchive(null)} onConfirm={() => mutate('notice.archive', { id: archive.id })} />}
@@ -226,7 +229,9 @@ function Settings(props: Props) {
 function Help({ onTabChange }: { onTabChange: (tab: HrTab) => void }) {
   const steps: Array<{ title: string; text: string; tab: HrTab; action: string }> = [
     { title: '조직과 직원 등록', text: '직원·조직에서 조직을 추가하고 직원의 사번, 이름, 입사일을 등록하세요. 로그인 계정을 연결하면 직원이 본인의 정보를 이용할 수 있습니다.', tab: 'people', action: '직원·조직 열기' },
+    { title: '출퇴근 기준 위치 저장', text: '설정에서 매장 주소와 기준 좌표를 저장하세요. 현장에서 현재 위치를 사용하거나 검증한 좌표를 입력할 수 있습니다. 직원 출퇴근은 위치 오차까지 포함해 반경 200m 안에서 가능하며, 각 휴대폰에서 위치 접근을 허용해야 합니다.', tab: 'settings', action: '출퇴근 위치 설정 열기' },
     { title: '매장의 근무 기준 설정', text: '근무 기록에서 근무 정책을 만들고 직원에게 적용합니다. 근무 일정을 등록한 뒤 실제 출퇴근 기록을 확인하고 승인하세요.', tab: 'attendance', action: '근무 기록 열기' },
+    { title: '당월 근무표 게시', text: '근무 일정에서 근무·휴무를 등록하고 게시하세요. 초안은 직원에게 보이지 않습니다. 직원 홈에서 당월 본인 일정과 공개된 매장 근무표를 확인할 수 있습니다.', tab: 'shifts', action: '근무 일정 열기' },
     { title: '휴가 종류와 잔액 준비', text: '관리자는 휴가 유형과 발생 내역을 준비합니다. 직원은 사용할 날짜와 시간을 신청하고, 담당자는 승인이나 반려 사유를 남깁니다.', tab: 'leave', action: '휴가 열기' },
     { title: '결재와 비용 처리', text: '전자결재에서 양식과 승인 단계를 설정합니다. 구성원은 문서를 작성해 제출하고 비용 청구에 증빙의 보관 위치와 금액을 기록합니다. 원본 파일은 월 손익·정산에서 보관하세요.', tab: 'approvals', action: '전자결재 열기' },
     { title: '급여 정산과 명세서', text: '급여 권한을 가진 담당자가 정산을 만들고 근무·지급 항목과 공제액을 확인합니다. 확정·공개된 명세서는 연결된 직원 계정으로 조회합니다.', tab: 'payroll', action: '급여 열기' },

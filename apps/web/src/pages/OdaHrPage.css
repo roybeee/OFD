@@ -86,6 +86,23 @@
 .hr-help-step h3 { font-size: 15px; margin-bottom: 7px; }
 .hr-help-step p { color: var(--muted); font-size: 13px; line-height: 1.8; }
 .hr-help-step .button { margin-top: 10px; }
+.hr-staff-setup > ul { list-style: none; padding: 0; margin: 0 0 18px; }
+.hr-staff-setup li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.hr-staff-setup li > div { min-width: 0; }
+.hr-staff-setup li > .button { flex: none; }
+.hr-staff-setup h3 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 16px; }
+.hr-staff-setup h3 span { padding: 4px 8px; border-radius: 6px; font-size: 14px; }
+.hr-setup-ready { background: var(--green-soft); color: var(--green); }
+.hr-setup-pending { background: #fff5d9; color: #856317; }
+.hr-staff-setup li p, .hr-staff-help p { margin-top: 8px; font-size: 14px; line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
+.hr-staff-help > .button { margin-top: 18px; }
+.hr-staff-help .button { min-height: 44px; }
+.hr-staff-faq { margin-top: 18px; }
+.hr-staff-faq details { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.hr-staff-faq summary { cursor: pointer; font-size: 15px; font-weight: 650; line-height: 1.6; }
+.hr-staff-faq summary:focus-visible { outline: 2px solid var(--orange-dark); outline-offset: 4px; }
+#hr-store-notices { scroll-margin-top: 24px; }
+@media (max-width: 700px) { .hr-staff-setup li { align-items: stretch; flex-direction: column; } .hr-staff-setup li > .button { align-self: start; min-height: 44px; } }
 .hr-org-node { padding-left: calc(var(--hr-depth, 0) * 22px); }
 .hr-org-row { padding: 14px 16px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .hr-org-row p { color: var(--muted); font-size: 12px; margin-top: 5px; }
