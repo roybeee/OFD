@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '../components/ui';
 import { ArrowDownToLine, Check, FileCheck2, Plus, Search } from '../components/icons';
 import { getOdaExpenseRules, removeOdaExpenseRule, odaUrl, type OdaExpenseRules, type OdaLine, type OdaResponse } from '../api/oda-client';
@@ -36,19 +36,26 @@ export function OdaExpenses({ state, storeId, month, editable, busy, onBatch, on
   const [rulesRefresh, setRulesRefresh] = useState(0);
   const [rulesSearch, setRulesSearch] = useState('');
   const [rulesLimit, setRulesLimit] = useState(20);
+  const rulesRequest = useRef<AbortController | null>(null);
   useEffect(() => {
-    const controller = new AbortController(); setRulesLoading(true); setRulesError(''); setRules(null);
+    const controller = new AbortController(); rulesRequest.current = controller;
+    setRulesLoading(true); setRulesBusy(false); setRulesError(''); setRules(null);
     void getOdaExpenseRules(storeId, controller.signal).then(value => { if (!controller.signal.aborted) setRules(value); })
       .catch(error => { if (!controller.signal.aborted) setRulesError(error instanceof Error ? error.message : '기억한 분류를 불러오지 못했습니다.'); })
       .finally(() => { if (!controller.signal.aborted) setRulesLoading(false); });
     return () => controller.abort();
   }, [storeId, state, rulesRefresh]);
   async function removeRule(id: string) {
-    if (!rules || !editable || busy || rulesBusy || rulesError) return;
+    const request = rulesRequest.current;
+    if (!rules || !editable || busy || rulesBusy || rulesError || !request || request.signal.aborted) return;
     setRulesBusy(true);
-    try { setRules(await removeOdaExpenseRule(storeId, id, rules.version)); }
-    catch (error) { setRulesError(error instanceof Error ? error.message : '분류 기억을 해제하지 못했습니다. 새로고침해 주세요.'); }
-    finally { setRulesBusy(false); }
+    // A refresh or store change retires this view; its pending writes must not replace the new view.
+    try {
+      const result = await removeOdaExpenseRule(storeId, id, rules.version);
+      if (!request.signal.aborted) setRules(result);
+    }
+    catch (error) { if (!request.signal.aborted) setRulesError(error instanceof Error ? error.message : '분류 기억을 해제하지 못했습니다. 새로고침해 주세요.'); }
+    finally { if (!request.signal.aborted) setRulesBusy(false); }
   }
   const matchingRules = rules?.rules.filter(rule => `${rule.description} ${expenseCategories.find(item => item.value === rule.category)?.label ?? ''}`.toLowerCase().includes(rulesSearch.toLowerCase())) ?? [];
 

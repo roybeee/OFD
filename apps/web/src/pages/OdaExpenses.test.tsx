@@ -169,3 +169,36 @@ it('reloads rules when the same monthly version is refreshed after another user 
   await act(async () => checkbox.click()); await click('분류 일괄 적용');
   expect(batch).toHaveBeenCalledWith(['소모품'], { category: 'labor' }, 7, { rememberCategory: true, expectedExpenseRulesVersion: 2 });
 });
+
+it('does not replace refreshed rules with a late removal response', async () => {
+  const original = { version: 3, rules: [{ id: 'old', description: '이전 분류', category: 'supplies' }] };
+  const refreshed = { version: 5, rules: [{ id: 'current', description: '새로 기억한 분류', category: 'labor' }] };
+  ruleMocks.get.mockResolvedValueOnce(original).mockResolvedValueOnce(refreshed);
+  let finish!: (value: unknown) => void;
+  ruleMocks.remove.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const value = state(); await render(value); await click('기억 해제');
+  await render({ ...value });
+  await act(async () => finish({ version: 4, rules: [] }));
+  expect(container.textContent).toContain('새로 기억한 분류');
+  await selectLine('소모품'); await set(field('선택 비용 분류'), 'labor');
+  const checkbox = [...container.querySelectorAll('label')].find(label => label.textContent?.includes('다음에도 같은 거래 내용'))!.querySelector<HTMLInputElement>('input')!;
+  await act(async () => checkbox.click()); await click('분류 일괄 적용');
+  expect(batch).toHaveBeenCalledWith(['소모품'], { category: 'labor' }, 7, { rememberCategory: true, expectedExpenseRulesVersion: 5 });
+});
+
+it('ignores a previous store removal failure without unlocking the current store removal', async () => {
+  ruleMocks.get.mockResolvedValue({ version: 3, rules: [{ id: 'rule', description: '매장 분류', category: 'supplies' }] });
+  let failPrevious!: (error: Error) => void;
+  let finishCurrent!: (value: unknown) => void;
+  ruleMocks.remove.mockImplementationOnce(() => new Promise((_resolve, reject) => { failPrevious = reject; }))
+    .mockImplementationOnce(() => new Promise(resolve => { finishCurrent = resolve; }));
+  await render(); await click('기억 해제');
+  await render(state(), { storeId: 'oda-2' });
+  expect(button('기억 해제').disabled).toBe(false);
+  await click('기억 해제');
+  await act(async () => failPrevious(new Error('이전 매장 삭제 오류')));
+  expect(container.textContent).not.toContain('이전 매장 삭제 오류');
+  expect(button('기억 해제').disabled).toBe(true);
+  await act(async () => finishCurrent({ version: 4, rules: [] }));
+  expect(container.textContent).toContain('아직 기억한 분류가 없습니다');
+});
