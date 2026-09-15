@@ -39,6 +39,7 @@ describe('ODA master workspace', () => {
     await click('이번 달 자료 넣기'); expect(navigate).toHaveBeenLastCalledWith('/hq/oda-settlement?tab=transactions&store=workspace-1');
     for (const [label, target] of [
       ['월 손익계산서', '/hq/oda-settlement?tab=overview&store=workspace-1'],
+      ['비용 관리', '/hq/oda-settlement?tab=expenses&store=workspace-1'],
       ['정산서 내려받기', '/hq/oda-settlement?tab=overview&store=workspace-1#oda-exports'],
       ['계약·정산 기준', '/hq/oda-settlement?tab=policy&store=workspace-1'],
       ['정산 확정·지급 기록', '/hq/oda-settlement?tab=overview&store=workspace-1#oda-payment'],
@@ -76,6 +77,19 @@ describe('ODA master workspace', () => {
     expect(container.textContent).toContain('양측 합의 근거');
     expect(container.textContent).not.toContain('A 정산 기준 확인');
     expect(container.textContent).not.toContain('B 정산 기준 확인');
+  });
+
+  it('opens the expense shortcut for the selected authorized store and explicit month', async () => {
+    const path = odaMasterSettlementPath('workspace-1', 'expenses', '', '2026-08');
+    window.history.replaceState({}, '', path);
+    expect(odaSettlementLocation(window.location.search, data().stores)).toEqual({ tab: 'expenses', storeId: 'workspace-1', month: '2026-08' });
+    const month = createOdaMonth('workspace-1', '2026-08');
+    mocks.get.mockResolvedValue({ data: month, summary: calculateOdaMonth(month), version: 0, evidence: [], history: [], capabilities: { edit: true, confirmParty: null, finalize: true, pay: true, reopen: true } });
+    await act(async () => root.render(<OdaSettlementPage data={data()} notify={vi.fn()} />));
+    expect(mocks.get).toHaveBeenCalledWith('workspace-1', '2026-08', expect.any(AbortSignal));
+    expect(container.querySelector('[aria-label="정산 상세"] [aria-current="page"]')?.textContent).toBe('비용 관리');
+    expect(container.querySelector('[aria-label="매장 비용 관리"]')).toBeTruthy();
+    expect(container.querySelector('a[href$="/expenses/export.zip"]')?.getAttribute('href')).toBe('/api/v2/oda/workspace-1/2026-08/expenses/export.zip');
   });
 
   it.each(['oda-exports', 'oda-payment'])('focuses the actual %s section when opened from a shortcut', async anchor => {

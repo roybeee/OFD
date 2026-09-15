@@ -7,6 +7,7 @@ import { z } from "zod";
 import { audit } from "./events.ts";
 import { readOdaWorkbook } from "./oda-spreadsheet.ts";
 import { buildOdaReport } from "./oda-report.ts";
+import { buildOdaExpenseExport } from "./oda-expense-export.ts";
 import { getImportProfile, saveImportProfile } from "./oda-import-profile.ts";
 import { idempotentMutation } from "./idempotency.ts";
 import { previousSettlementMonth, recurringCandidates } from "./oda-recurring.ts";
@@ -45,6 +46,16 @@ const changesSchema = z.object({
   approvalSourceId: z.string().max(120).optional(),
   sourceId: z.string().max(120).optional(),
   amount: moneySchema.optional(), date: z.string().optional(), description: z.string().trim().min(1).max(500).optional(),
+}).strict();
+const expenseBatchSchema = z.object({
+  expectedVersion: versionSchema,
+  lineIds: z.array(z.string().min(1).max(120)).min(1).max(200)
+    .refine(ids => new Set(ids).size === ids.length, "같은 비용을 중복 선택할 수 없습니다."),
+  changes: z.object({
+    category: z.enum(["ingredients", "labor", "rent", "utilities", "fees", "marketing", "supplies", "other"]).optional(),
+    reviewed: z.boolean().optional(),
+    sourceId: z.string().min(1).max(120).optional(),
+  }).strict().refine(changes => Object.keys(changes).length > 0, "변경할 항목을 선택해 주세요."),
 }).strict();
 
 function publicMonth(record: OdaRecord): OdaMonth {
@@ -126,6 +137,33 @@ function checkLine(line: OdaLine, record: OdaRecord) {
     }
   }
   if (line.approvalSourceId && !record.sources.some((source) => source.id === line.approvalSourceId)) throw new DomainError("ODA_APPROVAL_SOURCE_INVALID", "사전 동의 증빙을 이 정산월에 첨부해 주세요.", 422);
+}
+function applyLineChanges(line: OdaLine, changes: z.infer<typeof changesSchema>, record: OdaRecord) {
+  const sourceKind = record.sources.find((source) => source.id === line.sourceId)?.kind;
+  if (changes.sourceId !== undefined && line.sourceId && changes.sourceId !== line.sourceId) throw new DomainError("ODA_SOURCE_IMMUTABLE", "가져온 내역의 원본 연결은 변경할 수 없습니다.", 422);
+  if (line.sourceRow !== 0 && (changes.amount !== undefined || changes.date !== undefined || changes.description !== undefined)) throw new DomainError("ODA_SOURCE_LINE_IMMUTABLE", "원본에서 가져온 금액·날짜·내용은 변경할 수 없습니다. 원본 오류는 제외 후 증빙과 함께 수정 내역을 입력해 주세요.", 422);
+  const nextKind = changes.kind ?? line.kind;
+  if (line.kind === "excluded" && nextKind !== "excluded" && line.originalKind && nextKind !== line.originalKind) {
+    throw new DomainError("ODA_KIND_INVALID", "제외한 내역은 제외 전 유형으로만 복원할 수 있습니다.", 422);
+  }
+  if (((sourceKind === "bank" && !line.bankLineId) || line.kind === "bank") && !["bank", "excluded"].includes(nextKind)) throw new DomainError("ODA_BANK_NOT_PL", "통장 원본은 입금 대사에 사용합니다. 출금을 비용에 반영하려면 '비용으로 반영'을 사용해 주세요.", 422);
+  if (nextKind !== line.kind && nextKind !== "excluded" && !["excluded", "bank"].includes(line.kind)) throw new DomainError("ODA_KIND_INVALID", "매출과 비용을 서로 바꿀 수 없습니다. 원본 자료를 확인해 주세요.", 422);
+  if ((sourceKind === "expense" || line.sourceRow === 0) && !["expense", "excluded"].includes(nextKind)) throw new DomainError("ODA_KIND_INVALID", "비용 자료를 매출이나 입금으로 바꿀 수 없습니다.", 422);
+  if (line.kind !== "excluded" && nextKind === "excluded") {
+    line.originalKind = line.kind;
+    line.originalCategory = line.category;
+  } else if (line.kind === "excluded" && nextKind !== "excluded" && changes.category === undefined && line.originalCategory) {
+    line.category = line.originalCategory;
+  }
+  Object.assign(line, changes);
+  checkLine(line, record);
+  if (line.externalId.startsWith('repeat:') && line.kind === 'expense' && line.reviewed
+    && !record.sources.some(source => source.id === line.sourceId)) {
+    throw new DomainError('ODA_REPEAT_SOURCE_REQUIRED', '이번 달 증빙을 연결한 뒤 반복 비용을 확인 완료해 주세요.', 422);
+  }
+  if (changes.reviewed === true && line.kind === 'expense' && !record.sources.some(source => source.id === line.sourceId)) {
+    throw new DomainError('ODA_EXPENSE_SOURCE_REQUIRED', '이번 달 증빙을 연결한 뒤 비용을 확인 완료해 주세요.', 422, { lineId: line.id });
+  }
 }
 function ensureDraft(record: OdaRecord) {
   if (record.status !== "draft") throw new DomainError("ODA_MONTH_LOCKED", "확정된 정산입니다. 사유를 남겨 재개방한 뒤 수정해 주세요.", 409);
@@ -292,32 +330,31 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
     return mutate(request, body.expectedVersion, "ODA 내역 확인·분류", (record) => {
       const line = record.lines.find((item) => item.id === lineId);
       if (!line) throw new DomainError("ODA_LINE_NOT_FOUND", "현재 정산월에서 내역을 찾지 못했습니다.", 404);
-      const sourceKind = record.sources.find((source) => source.id === line.sourceId)?.kind;
-      if (body.changes.sourceId !== undefined && line.sourceId && body.changes.sourceId !== line.sourceId) throw new DomainError("ODA_SOURCE_IMMUTABLE", "가져온 내역의 원본 연결은 변경할 수 없습니다.", 422);
-      if (line.sourceRow !== 0 && (body.changes.amount !== undefined || body.changes.date !== undefined || body.changes.description !== undefined)) throw new DomainError("ODA_SOURCE_LINE_IMMUTABLE", "원본에서 가져온 금액·날짜·내용은 변경할 수 없습니다. 원본 오류는 제외 후 증빙과 함께 수정 내역을 입력해 주세요.", 422);
-      const nextKind = body.changes.kind ?? line.kind;
-      if (line.kind === "excluded" && nextKind !== "excluded" && line.originalKind && nextKind !== line.originalKind) {
-        throw new DomainError("ODA_KIND_INVALID", "제외한 내역은 제외 전 유형으로만 복원할 수 있습니다.", 422);
-      }
-      if (((sourceKind === "bank" && !line.bankLineId) || line.kind === "bank") && !["bank", "excluded"].includes(nextKind)) throw new DomainError("ODA_BANK_NOT_PL", "통장 원본은 입금 대사에 사용합니다. 출금을 비용에 반영하려면 '비용으로 반영'을 사용해 주세요.", 422);
-      if (nextKind !== line.kind && nextKind !== "excluded" && !["excluded", "bank"].includes(line.kind)) throw new DomainError("ODA_KIND_INVALID", "매출과 비용을 서로 바꿀 수 없습니다. 원본 자료를 확인해 주세요.", 422);
-      if ((sourceKind === "expense" || line.sourceRow === 0) && !["expense", "excluded"].includes(nextKind)) throw new DomainError("ODA_KIND_INVALID", "비용 자료를 매출이나 입금으로 바꿀 수 없습니다.", 422);
-      if (line.kind !== "excluded" && nextKind === "excluded") {
-        line.originalKind = line.kind;
-        line.originalCategory = line.category;
-      } else if (line.kind === "excluded" && nextKind !== "excluded" && body.changes.category === undefined && line.originalCategory) {
-        line.category = line.originalCategory;
-      }
-      Object.assign(line, body.changes);
-      checkLine(line, record);
-      if (line.externalId.startsWith('repeat:') && line.kind === 'expense' && line.reviewed
-        && !record.sources.some(source => source.id === line.sourceId)) {
-        throw new DomainError('ODA_REPEAT_SOURCE_REQUIRED', '이번 달 증빙을 연결한 뒤 반복 비용을 확인 완료해 주세요.', 422);
-      }
+      applyLineChanges(line, body.changes, record);
     }, { metadata: { lineId, changes: body.changes, reason: body.changes.note?.trim() || "거래 분류·확인 상태 정정" } });
   };
   app.patch(`${base}/lines/:lineId`, updateLine);
   app.post(`${base}/lines/:lineId`, updateLine);
+
+
+  app.post(`${base}/expenses/batch`, async request => {
+    const body = expenseBatchSchema.parse(request.body);
+    const selectedIds = new Set(body.lineIds);
+    const response = await mutate(request, body.expectedVersion, "ODA 비용 일괄 정리", record => {
+      const lines = new Map(record.lines.map(line => [line.id, line]));
+      for (const lineId of body.lineIds) {
+        const line = lines.get(lineId);
+        if (!line) throw new DomainError("ODA_LINE_NOT_FOUND", "현재 정산월에서 선택한 비용을 찾지 못했습니다.", 404, { lineId });
+        if (line.kind !== "expense") throw new DomainError("ODA_EXPENSE_REQUIRED", "비용 내역만 한 번에 정리할 수 있습니다. 제외·매출·통장 거래는 개별 내역에서 확인해 주세요.", 422, { lineId });
+        applyLineChanges(line, body.changes, record);
+      }
+      if (body.changes.reviewed === true) {
+        const blockers = calculateOdaMonth(record).blockers.filter(issue => issue.lineId && selectedIds.has(issue.lineId));
+        if (blockers.length) throw new DomainError("ODA_EXPENSE_REVIEW_BLOCKED", `선택한 비용을 확인 완료할 수 없습니다. ${blockers[0]!.message}`, 422, { blockers });
+      }
+    }, { metadata: { lineIds: body.lineIds, changes: body.changes, reason: "선택한 비용의 분류·증빙·확인 상태 일괄 정리" } });
+    return { ...response, batchResult: { updated: body.lineIds.length } };
+  });
 
   app.post(`${base}/lines`, async (request) => {
     const body = z.object({ expectedVersion: versionSchema, line: z.object({ date: z.string(), kind: z.enum(["expense", "excluded"]),
@@ -330,6 +367,9 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
         sourceRow: 0, externalId: "", reviewed: body.line.reviewed ?? false, note: body.line.note ?? "",
         ...(body.line.approvalSourceId !== undefined ? { approvalSourceId: body.line.approvalSourceId } : {}) };
       checkLine(line, record);
+      if (line.kind === 'expense' && line.reviewed && !record.sources.some(source => source.id === line.sourceId)) {
+        throw new DomainError('ODA_EXPENSE_SOURCE_REQUIRED', '이번 달 증빙을 연결한 뒤 비용을 확인 완료해 주세요.', 422);
+      }
       record.lines.push(line);
     });
   });
@@ -460,6 +500,17 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
     if (!source || !record.evidenceBytes[evidenceId]) throw new DomainError("ODA_EVIDENCE_NOT_FOUND", "증빙 원본을 찾지 못했습니다.", 404);
     const bytes = Buffer.from(record.evidenceBytes[evidenceId], "base64");
     reply.type(source.mimeType).header("Content-Disposition", `attachment; filename="oda-evidence.${source.fileName.split(".").pop()}"; filename*=UTF-8''${encodeURIComponent(source.fileName)}`);
+    return reply.send(bytes);
+  });
+  app.get(`${base}/expenses/export.zip`, async (request, reply) => {
+    const { storeId, month } = paramsSchema.parse(request.params);
+    await scope(repository, request.actor, storeId);
+    const record = await loadMonth(repository, storeId, month);
+    const store = await repository.get<Store>("store", storeId);
+    const bytes = await buildOdaExpenseExport({ month: publicMonth(record), evidenceBytes: record.evidenceBytes, storeName: store!.name });
+    reply.type("application/zip")
+      .header("Cache-Control", "private, no-store")
+      .header("Content-Disposition", `attachment; filename="ODA-expenses-${month}.zip"`);
     return reply.send(bytes);
   });
   app.get(`${base}/export.xlsx`, async (request, reply) => {

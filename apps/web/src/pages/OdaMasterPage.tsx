@@ -10,6 +10,7 @@ import { OdaOverviewPanel } from './OdaOverviewPanel';
 type Props = { data: BootstrapData; onNavigate: (path: string) => void };
 type Notify = (message: string, tone?: 'success' | 'info' | 'warning') => void;
 const shortcuts = [
+  { title: '비용 관리', description: '모든 비용·빠진 증빙을 한곳에서 정리하고 전달 자료를 받습니다.', tab: 'expenses', icon: FileCheck2 },
   { title: '월 손익계산서', description: '매출·비용·영업이익과 배분액을 한눈에 확인합니다.', tab: 'overview', icon: ReceiptText },
   { title: '매출·비용·증빙', description: '파일을 넣고 중복·누락·분류만 확인합니다.', tab: 'transactions', icon: FileCheck2 },
   { title: '정산서 내려받기', description: '선택한 매장의 월 정산서를 엑셀·CSV로 받습니다.', tab: 'overview', anchor: 'oda-exports', icon: ArrowDownToLine },

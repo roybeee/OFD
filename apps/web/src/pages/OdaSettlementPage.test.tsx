@@ -311,4 +311,39 @@ describe('ODA 월 정산 업무 흐름', () => {
     await click('확인 완료', container.querySelector('.oda-line')!);
     expect(mocks.mutate).toHaveBeenCalledWith('oda-1', '2026-09', '/lines/%EB%B0%B0%EB%8B%AC%20%EC%88%98%EC%88%98%EB%A3%8C%20%EC%A0%9C%EC%99%B8', 4, expect.objectContaining({ changes: expect.objectContaining({ kind: 'expense', category: 'fees' }) }));
   });
+
+  it('비용 관리에서 선택한 거래만 현재 정산 버전으로 일괄 저장한다', async () => {
+    mocks.get.mockResolvedValue(response()); const updated = response(); updated.version = 5; updated.data.version = 5; mocks.mutate.mockResolvedValue(updated);
+    await render(); await click('비용 관리');
+    expect(container.querySelector('h1')?.textContent).toBe('비용 관리');
+    expect(container.querySelector('[aria-label="매장 비용 관리"]')?.textContent).not.toContain('월 마감 매출');
+    await act(async () => container.querySelector<HTMLInputElement>('[aria-label="식재료 매입 선택"]')!.click());
+    await set(field('선택 비용 분류'), 'supplies'); await click('분류 일괄 적용');
+    expect(mocks.mutate).toHaveBeenCalledWith('oda-1', '2026-09', '/expenses/batch', 4, { lineIds: ['식재료 매입'], changes: { category: 'supplies' } });
+    expect(container.textContent).toContain('저장본 v5');
+    expect(container.querySelector<HTMLInputElement>('[aria-label="식재료 매입 선택"]')!.checked).toBe(false);
+  });
+
+  it('미연결 영수증으로 비용 추가를 열면 해당 증빙을 미리 선택하고 확인 대기로 저장한다', async () => {
+    const value = response(); value.data.sources.push({ ...source('receipt', 'evidence'), fileName: '가스영수증.pdf', mimeType: 'application/pdf' });
+    mocks.get.mockResolvedValue(value); mocks.mutate.mockResolvedValue(value);
+    await render(); await click('비용 관리');
+    await click('비용 추가', container.querySelector('.oda-evidence-list')!);
+    expect(field('원본 증빙').value).toBe('receipt');
+    await set(field('거래 내용'), '9월 가스요금'); await set(field('결제 금액'), '110000'); await set(field('포함된 부가세'), '10000');
+    await click('비용 추가', container.querySelector('#oda-expense-manual')!);
+    expect(mocks.mutate).toHaveBeenCalledWith('oda-1', '2026-09', '/lines', 4, { line: expect.objectContaining({ description: '9월 가스요금', amount: 110000, vat: 10000, sourceId: 'receipt', reviewed: false }) });
+  });
+
+  it('확정한 정산은 비용 관리에서 조회와 내려받기만 제공한다', async () => {
+    const value = response(); value.data.status = 'finalized'; mocks.get.mockResolvedValue(value);
+    await render(); await click('비용 관리');
+    const expenses = container.querySelector('[aria-label="매장 비용 관리"]')!;
+    expect(expenses.querySelector('input[type=checkbox]')).toBeNull();
+    expect([...expenses.querySelectorAll('button')].some(item => item.textContent?.includes('비용 직접 추가'))).toBe(false);
+    expect(expenses.querySelector('a[href$="/expenses/export.zip"]')).toBeTruthy();
+    await act(async () => expenses.querySelector<HTMLButtonElement>('[aria-label="식재료 매입 상세 열기"]')!.click());
+    expect(button('확인 완료', expenses).disabled).toBe(true); expect(button('수정만 저장', expenses).disabled).toBe(true);
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
 });
