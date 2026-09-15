@@ -10,6 +10,7 @@ import { buildOdaReport } from "./oda-report.ts";
 import { buildOdaExpenseExport } from "./oda-expense-export.ts";
 import { getImportProfile, saveImportProfile } from "./oda-import-profile.ts";
 import { idempotentMutation } from "./idempotency.ts";
+import { getExpenseRules, changeExpenseRules, expenseRulesLock, requireExpenseRulesVersion, type ExpenseRules } from './oda-expense-rules.ts';
 import { previousSettlementMonth, recurringCandidates } from "./oda-recurring.ts";
 
 /** Original bytes are repository-private. Never serialize this object to a client or audit ledger. */
@@ -26,6 +27,7 @@ const versionSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const moneySchema = z.number().int().min(-1_000_000_000_000).max(1_000_000_000_000);
 const kindSchema = z.enum(["pos", "platform", "bank", "expense", "evidence"]);
 const importSchema = z.object({
+  expectedExpenseRulesVersion: versionSchema.optional(),
   expectedVersion: versionSchema.optional(), filename: z.string().trim().min(1).max(200), kind: kindSchema,
   content: z.string().max(MAX_FILE_BYTES).optional(), contentBase64: z.string().max(Math.ceil(MAX_FILE_BYTES * 4 / 3) + 8).optional(),
   mediaType: z.string().max(120).optional(), channel: z.string().trim().max(80).optional(),
@@ -48,6 +50,8 @@ const changesSchema = z.object({
   amount: moneySchema.optional(), date: z.string().optional(), description: z.string().trim().min(1).max(500).optional(),
 }).strict();
 const expenseBatchSchema = z.object({
+  rememberCategory: z.boolean().optional(),
+  expectedExpenseRulesVersion: versionSchema.optional(),
   expectedVersion: versionSchema,
   lineIds: z.array(z.string().min(1).max(120)).min(1).max(200)
     .refine(ids => new Set(ids).size === ids.length, "같은 비용을 중복 선택할 수 없습니다."),
@@ -56,7 +60,7 @@ const expenseBatchSchema = z.object({
     reviewed: z.boolean().optional(),
     sourceId: z.string().min(1).max(120).optional(),
   }).strict().refine(changes => Object.keys(changes).length > 0, "변경할 항목을 선택해 주세요."),
-}).strict();
+}).strict().refine(body => !body.rememberCategory || (body.changes.category !== undefined && body.expectedExpenseRulesVersion !== undefined), '분류 기억에는 선택한 분류와 최신 분류 목록 버전이 필요합니다.');
 
 function publicMonth(record: OdaRecord): OdaMonth {
   const { evidenceBytes: _bytes, paymentAmount: _amount, paymentDate: _date, ...data } = record;
@@ -214,10 +218,10 @@ async function prepareFile(body: z.infer<typeof importSchema>): Promise<Prepared
   } else if (body.kind !== "evidence") throw new DomainError("ODA_DATA_FILE_REQUIRED", "자동 집계 자료는 CSV 또는 XLSX를 사용해 주세요. 사진·PDF는 증빙으로 보관할 수 있습니다.", 422);
   return prepared;
 }
-function parseFile(file: PreparedFile, kind: OdaSourceKind, channel: string | undefined, record: OdaRecord, sourceId: string): OdaCsvResult {
+function parseFile(file: PreparedFile, kind: OdaSourceKind, channel: string | undefined, record: OdaRecord, sourceId: string, expenseRules?: ExpenseRules): OdaCsvResult {
   if (kind === "evidence") return { lines: [], errors: [], warnings: [], duplicateCount: 0, rowCount: 0 };
   const parsed = parseOdaCsv(file.csv!, { sourceId, kind: kind === "pos" || kind === "platform" ? "revenue" : kind,
-    ...(channel ? { channel } : kind === "pos" ? { channel: "pos" } : {}), month: record.month, existingLines: record.lines });
+    ...(channel ? { channel } : kind === "pos" ? { channel: "pos" } : {}), month: record.month, existingLines: record.lines, ...(expenseRules ? { expenseRules } : {}) });
   if (file.workbook && file.headerRow > 1) {
     for (const line of parsed.lines) line.sourceRow += file.headerRow - 1;
     for (const issue of [...parsed.errors, ...parsed.warnings]) if (issue.row > 0) issue.row += file.headerRow - 1;
@@ -267,6 +271,20 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       saveImportProfile(tx, request.actor, storeId, kind, channel, null, expectedVersion));
   });
 
+  const rulesPath = '/api/v2/oda/:storeId/expense-rules';
+  app.get(rulesPath, async request => {
+    const { storeId } = z.object({ storeId: z.string().min(1).max(120) }).parse(request.params);
+    await scope(repository, request.actor, storeId);
+    return getExpenseRules(repository, storeId);
+  });
+  app.post(`${rulesPath}/:ruleId/remove`, async (request, reply) => {
+    const { storeId, ruleId } = z.object({ storeId: z.string().min(1).max(120), ruleId: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
+    await scope(repository, request.actor, storeId, true);
+    const { expectedVersion } = z.object({ expectedVersion: versionSchema }).strict().parse(request.body);
+    return idempotentMutation(request, reply, repository, request.actor, 200, tx =>
+      changeExpenseRules(tx, request.actor, storeId, expectedVersion, { removeId: ruleId }));
+  });
+
   app.get(base, async (request) => {
     const { storeId, month } = paramsSchema.parse(request.params);
     await scope(repository, request.actor, storeId);
@@ -292,9 +310,10 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
     const body = importSchema.parse(request.body);
     const file = await prepareFile(body);
     const record = await loadMonth(repository, storeId, month);
-    const parsed = parseFile(file, body.kind, body.channel, record, "preview");
+    const expenseRules = await getExpenseRules(repository, storeId);
+    const parsed = parseFile(file, body.kind, body.channel, record, "preview", expenseRules);
     if (record.sources.some((source) => source.sha256 === file.sha256)) parsed.errors.push({ row: 0, code: "DUPLICATE_FILE", message: "이미 첨부한 동일한 원본 파일입니다." });
-    return { ...parsed, ...(file.workbook ? { workbook: file.workbook } : {}) };
+    return { ...parsed, expenseRulesVersion: expenseRules.version, ...(file.workbook ? { workbook: file.workbook } : {}) };
   });
   app.post(`${base}/import`, async (request) => {
     const body = importSchema.parse(request.body);
@@ -307,7 +326,12 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       if (record.sources.reduce((total, source) => total + source.sizeBytes, 0) + file.bytes.length > MAX_MONTH_BYTES) {
         throw new DomainError("ODA_MONTH_FILE_LIMIT", "정산월 원본 자료는 총 10MB까지 보관할 수 있습니다.", 422);
       }
-      const parsed = parseFile(file, body.kind, body.channel, record, sourceId);
+      const expenseRules = body.expectedExpenseRulesVersion === undefined ? undefined : await scoped.exclusiveTransaction(expenseRulesLock(record.storeId), async tx => {
+        const value = await getExpenseRules(tx, record.storeId);
+        requireExpenseRulesVersion(value.version, body.expectedExpenseRulesVersion!);
+        return value;
+      });
+      const parsed = parseFile(file, body.kind, body.channel, record, sourceId, expenseRules);
       if (parsed.errors.length) throw new DomainError("ODA_IMPORT_INVALID", "원본 자료의 오류를 수정해 주세요. 어떤 행도 저장하지 않았습니다.", 422, parsed.errors);
       const source: OdaSource = { id: sourceId, fileName: file.filename, sha256: file.sha256, kind: body.kind,
         channel: normalizeOdaChannel(body.channel ?? (body.kind === "pos" ? "pos" : "")), importedAt: new Date().toISOString(), importedBy: request.actor.id,
@@ -340,7 +364,8 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
   app.post(`${base}/expenses/batch`, async request => {
     const body = expenseBatchSchema.parse(request.body);
     const selectedIds = new Set(body.lineIds);
-    const response = await mutate(request, body.expectedVersion, "ODA 비용 일괄 정리", record => {
+    let expenseRules: ExpenseRules | undefined;
+    const response = await mutate(request, body.expectedVersion, "ODA 비용 일괄 정리", async (record, scoped) => {
       const lines = new Map(record.lines.map(line => [line.id, line]));
       for (const lineId of body.lineIds) {
         const line = lines.get(lineId);
@@ -352,8 +377,11 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
         const blockers = calculateOdaMonth(record).blockers.filter(issue => issue.lineId && selectedIds.has(issue.lineId));
         if (blockers.length) throw new DomainError("ODA_EXPENSE_REVIEW_BLOCKED", `선택한 비용을 확인 완료할 수 없습니다. ${blockers[0]!.message}`, 422, { blockers });
       }
-    }, { metadata: { lineIds: body.lineIds, changes: body.changes, reason: "선택한 비용의 분류·증빙·확인 상태 일괄 정리" } });
-    return { ...response, batchResult: { updated: body.lineIds.length } };
+      if (body.rememberCategory) expenseRules = await changeExpenseRules(scoped, request.actor, record.storeId, body.expectedExpenseRulesVersion!, {
+        descriptions: body.lineIds.map(id => lines.get(id)!.description), category: body.changes.category!,
+      });
+    }, { metadata: { lineIds: body.lineIds, changes: body.changes, rememberCategory: body.rememberCategory === true, reason: "선택한 비용의 분류·증빙·확인 상태 일괄 정리" } });
+    return { ...response, batchResult: { updated: body.lineIds.length }, ...(expenseRules ? { expenseRules } : {}) };
   });
 
   app.post(`${base}/lines`, async (request) => {
@@ -544,7 +572,7 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       ["을 기준 확인", record.policy.acknowledgements.B?.actorName ?? "미확인"], [],
       ["날짜", "유형", "내용", "금액", "부가세", "분류", "채널", "확인", "원본 파일", "원본 행", "거래ID", "비고"]];
     for (const line of record.lines) rows.push([line.date, line.kind, line.description, line.amount, line.vat, line.category,
-      line.channel, line.reviewed ? "확인" : "미확인", record.sources.find((source) => source.id === line.sourceId)?.fileName ?? "증빙 필요", line.sourceRow, line.externalId, line.note]);
+      line.channel, line.reviewed ? "확인" : "미확인", record.sources.find((source) => source.id === line.sourceId)?.fileName ?? "증빙 필요", line.sourceRow, line.externalId, [line.note, line.categoryRule ? `매장 분류 기억 v${line.categoryRule.version}: ${line.categoryRule.description} → ${line.categoryRule.category}${line.category !== line.categoryRule.category ? " (이후 수정)" : ""}` : ""].filter(Boolean).join(" / ")]);
     reply.type("text/csv; charset=utf-8").header("Content-Disposition", `attachment; filename="ODA-settlement-${month}.csv"`);
     return reply.send(`\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`);
   });

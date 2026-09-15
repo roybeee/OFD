@@ -95,7 +95,7 @@ export async function buildOdaExpenseExport(input: OdaExpenseExportInput): Promi
     const linked = relatedLines.get(source.id) ?? [];
     manifest.push([source.id, source.fileName, path, fileState, linked.length ? "거래 연결" : "미연결 · 용도 확인 필요", linked.join(" | "), source.kind, source.sha256, source.sizeBytes, source.importedAt]);
   }
-  const headers = ["귀속일", "내용", "원본 금액 (원·부가세 포함)", "기록된 부가세 (원)", "부가세 확인", "분류", "등록 구분", "제외 전 구분", "검토 상태", "손익 반영 참고", "증빙 연결", "원본 파일 경로", "증빙 ID", "사전동의 증빙 ID", "사전동의 파일 경로", "원본 행", "거래 ID", "거래번호", "비고", "확인 필요"];
+  const headers = ["귀속일", "내용", "원본 금액 (원·부가세 포함)", "기록된 부가세 (원)", "부가세 확인", "분류", "등록 구분", "제외 전 구분", "검토 상태", "손익 반영 참고", "증빙 연결", "원본 파일 경로", "증빙 ID", "사전동의 증빙 ID", "사전동의 파일 경로", "원본 행", "거래 ID", "거래번호", "비고", "확인 필요", "분류 적용 근거"];
   const operating: (string | number | null)[][] = [headers];
   const excluded: (string | number | null)[][] = [headers];
   const issuesById = new Map<string, string[]>();
@@ -108,7 +108,7 @@ export async function buildOdaExpenseExport(input: OdaExpenseExportInput): Promi
       CATEGORY_NAMES[normalizeOdaCategory(line.category)] ?? line.category, line.kind, line.originalKind ?? "", line.reviewed ? "확인 완료" : "확인 필요",
       proposal ? "반복 비용 제안 · 손익 미반영" : isExcluded ? "손익 제외" : "월 정산 계산 결과 참고",
       sourceState, filePaths.get(line.sourceId) ?? "", line.sourceId, line.approvalSourceId ?? "", filePaths.get(line.approvalSourceId ?? "") ?? "",
-      line.sourceRow, line.id, line.externalId, line.note, (issuesById.get(line.id) ?? []).join(" | ")];
+      line.sourceRow, line.id, line.externalId, line.note, (issuesById.get(line.id) ?? []).join(" | "), line.categoryRule ? `매장 분류 기억 v${line.categoryRule.version}: ${line.categoryRule.description} → ${line.categoryRule.category}${line.category !== line.categoryRule.category ? " (이후 수정)" : ""}` : ""];
     (isExcluded ? excluded : operating).push(row);
   }
   zip.file("운영비등록.csv", csv(operating), fileOptions);

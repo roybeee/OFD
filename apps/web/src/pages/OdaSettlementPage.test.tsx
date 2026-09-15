@@ -346,4 +346,14 @@ describe('ODA 월 정산 업무 흐름', () => {
     expect(button('확인 완료', expenses).disabled).toBe(true); expect(button('수정만 저장', expenses).disabled).toBe(true);
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
+  it('파일 미리보기를 새로고침한 분류 버전으로 저장해 다른 담당자의 변경을 놓치지 않는다', async () => {
+    const value = response(); mocks.get.mockResolvedValue(value); mocks.mutate.mockResolvedValue(value);
+    mocks.prepare.mockResolvedValue({ filename: 'rules.csv', kind: 'expense', content: 'date,description,amount\n2026-09-01,ABC 매장,1000' });
+    const shown = { lines: [], errors: [], warnings: [], duplicateCount: 0, rowCount: 1 };
+    mocks.preview.mockReset().mockResolvedValueOnce({ ...shown, expenseRulesVersion: 2 }).mockResolvedValueOnce({ ...shown, expenseRulesVersion: 3 });
+    await render(); await click('거래·증빙'); await chooseFile('rules.csv');
+    await click('미리보기 새로고침'); await click('1개 자료 반영');
+    expect(mocks.mutate).toHaveBeenCalledWith('oda-1', '2026-09', '/import', 4, expect.objectContaining({ filename: 'rules.csv', expectedExpenseRulesVersion: 3 }));
+  });
+
 });

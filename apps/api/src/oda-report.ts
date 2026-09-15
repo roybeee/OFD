@@ -122,7 +122,7 @@ export async function buildOdaReport(input: OdaReportInput): Promise<Buffer> {
     const issues = issuesByLine.get(line.id) ?? [];
     const row = detail.addRow([dateCell(line.date), kind, line.description, line.amount, line.vat, CATEGORIES[line.category] ?? line.category,
       CHANNELS[line.channel] ?? line.channel, line.reviewed ? "확인" : "미확인", source?.fileName ?? "증빙 미연결", line.sourceId, line.sourceRow,
-      line.externalId, line.id, line.bankLineId ?? "", [line.note, ...issues, line.approvalSourceId ? `사전동의 증빙: ${line.approvalSourceId}` : ""].filter(Boolean).join("\n")]);
+      line.externalId, line.id, line.bankLineId ?? "", [line.note, line.categoryRule ? `매장 분류 기억 v${line.categoryRule.version}: ${line.categoryRule.description} → ${line.categoryRule.category}${line.category !== line.categoryRule.category ? " (이후 수정)" : ""}` : "", ...issues, line.approvalSourceId ? `사전동의 증빙: ${line.approvalSourceId}` : ""].filter(Boolean).join("\n")]);
     row.getCell(1).numFmt = "yyyy-mm-dd"; row.getCell(4).numFmt = MONEY; row.getCell(5).numFmt = MONEY;
     if (!line.reviewed) row.getCell(8).fill = { type: "pattern", pattern: "solid", fgColor: { argb: AMBER } };
   }

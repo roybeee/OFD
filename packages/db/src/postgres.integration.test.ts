@@ -53,6 +53,17 @@ test("PostgreSQL repository applies and exercises the complete durable contract"
     }), /rollback monthly import/);
     assert.deepEqual(await repository.get("oda_import_profile", profileId), profile);
 
+    const rulesId = randomUUID();
+    const rules = { id: rulesId, storeId: odaStore, version: 1, rules: [{ id: 'rule-1', description: 'ABC 식자재', category: 'ingredients' }] };
+    await repository.commit({ changes: [{ type: 'oda_expense_rules', id: rulesId, storeId: odaStore, expectedVersion: null, value: rules }] });
+    assert.deepEqual(await repository.get('oda_expense_rules', rulesId), rules);
+    assert.deepEqual(await repository.list('oda_expense_rules', [randomUUID()]), []);
+    await assert.rejects(repository.exclusiveTransaction(`oda:rules-test:${rulesId}`, async tx => {
+      await tx.commit({ changes: [{ type: 'oda_expense_rules', id: rulesId, storeId: odaStore, expectedVersion: 1, value: { ...rules, version: 2, rules: [] } }] });
+      throw new Error('rollback cost classification');
+    }), /rollback cost classification/);
+    assert.deepEqual(await repository.get('oda_expense_rules', rulesId), rules);
+
     const aggregateId = randomUUID();
     await repository.commit({ changes: [{ type: "product", id: aggregateId, expectedVersion: null,
       value: { id: aggregateId, name: "integration product", version: 1 } }] });

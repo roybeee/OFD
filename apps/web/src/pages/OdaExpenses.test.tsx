@@ -5,6 +5,8 @@ import { calculateOdaMonth, createOdaMonth, type OdaLine, type OdaSource } from 
 import type { OdaResponse } from '../api/oda-client';
 import { OdaExpenses } from './OdaExpenses';
 
+const ruleMocks = vi.hoisted(() => ({ get: vi.fn(), remove: vi.fn() }));
+vi.mock('../api/oda-client', async original => ({ ...await original<typeof import('../api/oda-client')>(), getOdaExpenseRules: ruleMocks.get, removeOdaExpenseRule: ruleMocks.remove }));
 const batch = vi.fn(); const add = vi.fn(); const upload = vi.fn();
 let container: HTMLDivElement; let root: Root;
 function source(id = 'cost', kind: OdaSource['kind'] = 'expense'): OdaSource {
@@ -18,7 +20,7 @@ function state(lines: OdaLine[] = [line('소모품')], sources = [source()]): Od
   data.version = 7; data.policy.vatBasis = 'net'; data.lines = lines; data.sources = sources;
   return { data, version: 7, summary: calculateOdaMonth(data), evidence: sources, history: [], capabilities: { edit: true, confirmParty: 'A', finalize: true, pay: true, reopen: true } };
 }
-beforeEach(() => { vi.clearAllMocks(); batch.mockReset().mockResolvedValue(true); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
+beforeEach(() => { vi.clearAllMocks(); ruleMocks.get.mockReset().mockResolvedValue({ version: 0, rules: [] }); ruleMocks.remove.mockReset(); batch.mockReset().mockResolvedValue(true); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 async function render(value = state(), extra: Partial<ComponentProps<typeof OdaExpenses>> = {}) {
   await act(async () => root.render(<OdaExpenses state={value} storeId="oda-1" month="2026-09" editable busy={false} onBatch={batch} onAdd={add} onUpload={upload} renderLine={item => <article data-line-id={item.id}>{item.description}</article>} manual={null} recurring={null} {...extra} />));
@@ -126,4 +128,44 @@ it('keeps read-only and finalized costs viewable and limits exports to the displ
   const bundle = [...container.querySelectorAll('a')].find(item => item.textContent?.includes('비용·증빙 묶음 받기'))!;
   expect(bundle.getAttribute('href')).toBe('/api/v2/oda/oda%2F2/2026-08/expenses/export.zip');
   expect(container.textContent).toContain('확정 금액'); expect(batch).not.toHaveBeenCalled();
+});
+
+
+it('remembers a category only when explicitly selected and sends the loaded rule version with the monthly version', async () => {
+  ruleMocks.get.mockResolvedValue({ version: 3, rules: [] }); await render(); await selectLine('소모품');
+  await set(field('선택 비용 분류'), 'ingredients');
+  const checkbox = [...container.querySelectorAll('label')].find(label => label.textContent?.includes('다음에도 같은 거래 내용'))!.querySelector<HTMLInputElement>('input')!;
+  expect(checkbox.checked).toBe(false); await act(async () => checkbox.click()); await click('분류 일괄 적용');
+  expect(batch).toHaveBeenCalledWith(['소모품'], { category: 'ingredients' }, 7, { rememberCategory: true, expectedExpenseRulesVersion: 3 });
+});
+it('shows stored classifications, removes future matching only, and reloads after a rule conflict', async () => {
+  const remembered = { version: 3, rules: [{ id: 'rule-1', description: 'ABC 매장', category: 'supplies', updatedAt: '2026-09-01T00:00:00Z' }] };
+  ruleMocks.get.mockResolvedValue(remembered); ruleMocks.remove.mockRejectedValueOnce(new Error('분류가 변경되었습니다'));
+  await render(); expect(container.textContent).toContain('기억한 분류 1개 관리'); expect(container.textContent).toContain('ABC 매장');
+  await click('기억 해제'); expect(ruleMocks.remove).toHaveBeenCalledWith('oda-1', 'rule-1', 3); expect(container.querySelector('[role=alert]')?.textContent).toContain('분류가 변경');
+  await click('분류 목록 새로고침'); ruleMocks.remove.mockResolvedValue({ version: 4, rules: [] }); await click('기억 해제');
+  expect(rows()).toEqual(['소모품']); expect(batch).not.toHaveBeenCalled(); expect(container.textContent).toContain('아직 기억한 분류가 없습니다');
+});
+it('keeps ordinary editing available after rule retrieval fails and ignores a late reply for a different store', async () => {
+  ruleMocks.get.mockRejectedValueOnce(new Error('분류 연결 오류')); await render(); await selectLine('소모품');
+  const checkbox = [...container.querySelectorAll('label')].find(label => label.textContent?.includes('다음에도 같은 거래 내용'))!.querySelector<HTMLInputElement>('input')!;
+  expect(checkbox.disabled).toBe(true); await set(field('선택 비용 분류'), 'labor'); await click('분류 일괄 적용'); expect(batch).toHaveBeenCalledWith(['소모품'], { category: 'labor' }, 7);
+  let resolve!: (value: unknown) => void; ruleMocks.get.mockImplementationOnce(() => new Promise(finish => { resolve = finish; }));
+  await click('분류 목록 새로고침'); const signal = ruleMocks.get.mock.calls.at(-1)![1] as AbortSignal;
+  await render(state(), { storeId: 'oda-2' }); expect(signal.aborted).toBe(true);
+  await act(async () => resolve({ version: 10, rules: [{ id: 'foreign', description: '다른 매장 거래', category: 'labor' }] }));
+  expect(container.textContent).not.toContain('다른 매장 거래');
+});
+it('keeps the applied rule visible after manual corrections for later evidence review', async () => {
+  await render(state([line('ABC 매장', { category: 'labor', categoryRule: { id: 'rule-1', version: 2, description: 'ABC 매장', category: 'supplies' } })]));
+  expect(container.textContent).toContain('기억한 분류 적용 후 수정');
+});
+
+it('reloads rules when the same monthly version is refreshed after another user changes only the rules', async () => {
+  ruleMocks.get.mockResolvedValueOnce({ version: 1, rules: [] }).mockResolvedValueOnce({ version: 2, rules: [] });
+  const value = state(); await render(value); await render({ ...value }); await selectLine('소모품');
+  await set(field('선택 비용 분류'), 'labor');
+  const checkbox = [...container.querySelectorAll('label')].find(label => label.textContent?.includes('다음에도 같은 거래 내용'))!.querySelector<HTMLInputElement>('input')!;
+  await act(async () => checkbox.click()); await click('분류 일괄 적용');
+  expect(batch).toHaveBeenCalledWith(['소모품'], { category: 'labor' }, 7, { rememberCategory: true, expectedExpenseRulesVersion: 2 });
 });

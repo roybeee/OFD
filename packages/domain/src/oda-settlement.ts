@@ -41,6 +41,8 @@ export interface OdaLine {
   /** Server-retained classification before exclusion, used for an exact restoration. */
   originalKind?: Exclude<OdaLineKind, "excluded">;
   originalCategory?: string;
+  /** Applied store rule at import time; retained after a later manual correction. */
+  categoryRule?: { id: string; version: number; description: string; category: string };
 }
 export interface OdaSource {
   id: string;
@@ -127,7 +129,10 @@ export interface OdaCsvOptions {
   month?: string;
   /** Optional external identity keys already imported from other sources. */
   existingLines?: readonly OdaLine[];
+  expenseRules?: { version: number; rules: readonly { id: string; description: string; category: string }[] };
 }
+/** Exact matching only: ignore width, repeated whitespace and letter case, never dates or substrings. */
+export const normalizeOdaExpenseDescription = (value: string): string => value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase();
 export interface OdaCsvError { row: number; code: string; message: string }
 export interface OdaCsvResult { lines: OdaLine[]; errors: OdaCsvError[]; warnings: OdaCsvError[]; duplicateCount: number; rowCount: number }
 
@@ -390,6 +395,7 @@ function inferredCategory(description: string, kind: OdaLineKind): string {
 /** RFC-4180 CSV/TSV reader with row-local diagnostics. It never guesses VAT or treats bank payouts as revenue. */
 export function parseOdaCsv(text: string, options: OdaCsvOptions): OdaCsvResult {
   const result: OdaCsvResult = { lines: [], errors: [], warnings: [], duplicateCount: 0, rowCount: 0 };
+  const remembered = new Map(options.expenseRules?.rules.map(rule => [normalizeOdaExpenseDescription(rule.description), rule]) ?? []);
   if (!options.sourceId.trim()) { result.errors.push({ row: 0, code: "source_id_required", message: "원본 자료 ID가 필요합니다." }); return result; }
   if (options.month !== undefined && !validMonth(options.month)) { result.errors.push({ row: 0, code: "invalid_month", message: "정산월은 YYYY-MM 형식이어야 합니다." }); return result; }
   const tokenized = tokenizeCsv(text);
@@ -479,16 +485,24 @@ export function parseOdaCsv(text: string, options: OdaCsvOptions): OdaCsvResult 
     if (categoryConflict) category = inferred;
     if (kind === "bank") category = "bank";
     const channel = normalizeOdaChannel(value("channel") || options.channel || (kind === "revenue" ? "pos" : ""));
-    const reviewed = category !== "uncategorized" && !EXCLUDED_CATEGORIES.has(category);
+    const rule = kind === 'expense' && !explicitCategory && !EXCLUDED_CATEGORIES.has(category)
+      ? remembered.get(normalizeOdaExpenseDescription(description)) : undefined;
+    const appliedRule = rule && ODA_EXPENSE_CATEGORIES.some(item => item.value === rule.category) ? rule : undefined;
+    if (appliedRule) category = appliedRule.category;
+    const reviewed = !appliedRule && category !== "uncategorized" && !EXCLUDED_CATEGORIES.has(category);
     let note = value("note");
     if (categoryConflict) { note = [note, `내용이 제외 항목과 일치하여 원본 분류(${explicitCategory}) 재확인 필요`].filter(Boolean).join(" / "); result.warnings.push({ row: record.row, code: "excluded_category_conflict", message: "내용이 A 선공제·감가상각·B 배분·투자 등 제외 항목과 일치합니다. 원본 분류를 확인해 주세요." }); }
     if (explicitCategory && category === "uncategorized") note = [note, `원본 분류: ${explicitCategory}`].filter(Boolean).join(" / ");
     if (EXCLUDED_CATEGORIES.has(category)) note = [note, "운영비 제외 항목: 원본 및 분류 확인 필요"].filter(Boolean).join(" / ");
-    const line: OdaLine = { id: `${options.sourceId}:${record.row}`, date, kind, description, amount, vat, category, channel, sourceId: options.sourceId, sourceRow: record.row, externalId: value("externalId"), reviewed, note };
+    const line: OdaLine = { id: `${options.sourceId}:${record.row}`, date, kind, description, amount, vat, category, channel, sourceId: options.sourceId, sourceRow: record.row, externalId: value("externalId"), reviewed, note,
+      ...(appliedRule ? { categoryRule: { id: appliedRule.id, version: options.expenseRules!.version, description: appliedRule.description, category: appliedRule.category } } : {}) };
     append(line);
-    if (fee !== null && fee !== 0) append({ ...line, id: `${line.id}:fee`, kind: "expense", description: `${description} 수수료`, amount: fee, vat: feeVat, category: "fees", reviewed: true, note: value("note") });
-    if (payout !== null && payout !== 0) append({ ...line, id: `${line.id}:payout`, kind: "bank", description: `${description} 정산입금`, amount: payout, vat: null, category: "bank", reviewed: true, note: value("note") });
+    const { categoryRule: _rule, ...derived } = line;
+    if (fee !== null && fee !== 0) append({ ...derived, id: `${line.id}:fee`, kind: "expense", description: `${description} 수수료`, amount: fee, vat: feeVat, category: "fees", reviewed: true, note: value("note") });
+    if (payout !== null && payout !== 0) append({ ...derived, id: `${line.id}:payout`, kind: "bank", description: `${description} 정산입금`, amount: payout, vat: null, category: "bank", reviewed: true, note: value("note") });
   }
   if (!result.rowCount) result.errors.push({ row: header.row + 1, code: "no_rows", message: "가져올 거래 행이 없습니다." });
+  const rememberedCount = result.lines.filter(line => line.categoryRule).length;
+  if (rememberedCount) result.warnings.push({ row: 0, code: 'expense_rule_applied', message: `이 매장에서 기억한 분류를 비용 ${rememberedCount}건에 적용했습니다. 금액·증빙 확인은 필요합니다.` });
   return result;
 }

@@ -19,7 +19,8 @@ export type AggregateType =
   | "admin_invariant"
   | "access_policy"
   | "oda_month"
-  | "oda_import_profile";
+  | "oda_import_profile"
+  | "oda_expense_rules";
 
 export interface AggregateChange<T = unknown> {
   type: AggregateType;

@@ -10,11 +10,22 @@ export type OdaResponse = {
   history: OdaMonth['history'];
   capabilities: { edit: boolean; confirmParty: 'A' | 'B' | null; finalize: boolean; pay: boolean; reopen: boolean };
   importResult?: { added: number; duplicates: number };
+  expenseRules?: OdaExpenseRules;
   audit?: Array<{ id: string; action: string; actorId: string; at: string; metadata: { lineChanges?: Array<{ before: OdaLine | null; after: OdaLine }>; [key: string]: unknown } }>;
   payment?: { date: string; amount: number; reference: string } | null;
 };
-export type OdaImport = { filename: string; kind: OdaSourceKind; content?: string; contentBase64?: string; mediaType?: string; channel?: string; sheetName?: string; headerRow?: number; columnMap?: Record<string, string> };
-export type OdaPreview = OdaCsvResult & { workbook?: { sheetNames: string[]; sheetName: string; headers: string[] } };
+export type OdaImport = { filename: string; kind: OdaSourceKind; content?: string; contentBase64?: string; mediaType?: string; channel?: string; sheetName?: string; headerRow?: number; columnMap?: Record<string, string>; expectedExpenseRulesVersion?: number };
+export type OdaPreview = OdaCsvResult & { expenseRulesVersion?: number; workbook?: { sheetNames: string[]; sheetName: string; headers: string[] } };
+export type OdaExpenseRules = { version: number; rules: Array<{ id: string; description: string; category: string; updatedAt: string }> };
+const rulesBase = (storeId: string) => `/oda/${encodeURIComponent(storeId)}/expense-rules`;
+export async function getOdaExpenseRules(storeId: string, signal?: AbortSignal): Promise<OdaExpenseRules> {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE ?? '/api/v2'}${rulesBase(storeId)}`, { credentials: 'same-origin', signal, headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new ApiError(response.status, 'ODA_RULES_FAILED', '기억한 비용 분류를 불러오지 못했습니다. 다시 불러와 주세요.');
+  return response.json();
+}
+export function removeOdaExpenseRule(storeId: string, ruleId: string, expectedVersion: number) {
+  return mutateV2<OdaExpenseRules>(`${rulesBase(storeId)}/${encodeURIComponent(ruleId)}/remove`, { expectedVersion }, { idempotencyKey: newIdempotencyKey() });
+}
 export type OdaImportProfile = { headerRow: number; sheetName: string; headers: string[]; columnMap: Record<string, string> };
 export type OdaImportProfileResponse = { version: number; profile: OdaImportProfile | null };
 const profileBase = (storeId: string) => `/oda/${encodeURIComponent(storeId)}/import-profile`;
