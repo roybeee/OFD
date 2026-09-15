@@ -46,6 +46,45 @@ async function ready(app: FastifyInstance): Promise<number> {
 }
 
 describe("ODA monthly settlement API", () => {
+  it("persists per-channel POS scopes, requires renewed agreement, rejects legacy overwrite and carries scopes forward", async () => {
+    const { app } = await setup();
+    await ready(app);
+    const current = (await app.inject({ method: "GET", url: base, headers: owner })).json();
+    const { acknowledgements: _acks, ...policy } = current.data.policy;
+    const scopes = { baemin: "included", coupang: "excluded", yogiyo: "included", ddangyo: "excluded" };
+    const activeChannels = ["pos", "baemin", "coupang", "yogiyo", "ddangyo"];
+    const saved = await request(app, "/save", { expectedVersion: 5, policy: { ...policy, activeChannels, posDeliveryScopes: scopes } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().data.policy.posDeliveryScopes).toEqual(scopes);
+    expect(saved.json().data.policy.posDeliveryScope).toBe("unresolved");
+    expect(saved.json().data.policy.acknowledgements).toEqual({});
+    const stale = await request(app, "/save", { expectedVersion: 6, policy: { ...policy, posDeliveryScope: "included" } });
+    expect(stale.statusCode).toBe(409); expect(stale.json().error.code).toBe("ODA_CHANNEL_POLICY_REQUIRED");
+    const invalid = await request(app, "/save", { expectedVersion: 6, policy: { ...policy, posDeliveryScopes: { ...scopes, ddangyo: "automatic" } } });
+    expect(invalid.statusCode).toBe(422);
+    expect((await app.inject({ method: "GET", url: base, headers: owner })).json().version).toBe(6);
+    let version = 6;
+    for (const channel of activeChannels.slice(1)) {
+      const csv = `날짜,내용,금액,부가세,채널,거래ID\n2026-08-31,${channel} 매출,1100000,100000,${channel === "ddangyo" ? "땡겨요" : channel},${channel}-1`;
+      const preview = await request(app, "/import/preview", { filename: `${channel}.csv`, kind: "platform", channel, content: csv });
+      expect(preview.statusCode).toBe(200); expect(preview.json().lines[0].channel).toBe(channel);
+      const imported = await request(app, "/import", { expectedVersion: version, filename: `${channel}.csv`, kind: "platform", channel, content: csv });
+      expect(imported.statusCode, imported.body).toBe(200); version = imported.json().version;
+    }
+    for (const who of [owner, finance]) {
+      const confirmed = await request(app, "/confirm-policy", { expectedVersion: version }, who);
+      expect(confirmed.statusCode, confirmed.body).toBe(200); version = confirmed.json().version;
+    }
+    const finalized = await request(app, "/finalize", { expectedVersion: version });
+    expect(finalized.statusCode, finalized.body).toBe(200);
+    expect(finalized.json().summary).toMatchObject({ revenue: 32000000, ignoredRevenueCount: 2 });
+    expect(finalized.json().data.history.at(-1).policy.posDeliveryScopes).toEqual(scopes);
+    const next = (await app.inject({ method: "GET", url: `/api/v2/oda/${STORE}/2026-09`, headers: owner })).json();
+    expect(next.data.policy.posDeliveryScopes).toEqual(scopes);
+    const csv = await app.inject({ method: "GET", url: `${base}/export.csv`, headers: owner });
+    expect(csv.body).toContain('"POS 포함 · 땡겨요","별도 합산","운영 중"');
+  });
+
   it("enforces authentication, own-store isolation, restricted HQ membership, read-only auditors, and assigned contract B", async () => {
     const { app } = await setup();
     for (const id of [DEMO_IDS.staff, DEMO_IDS.driver, DEMO_IDS.ops]) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateOdaMonth, createOdaMonth, parseOdaCsv, type OdaLine, type OdaMonth, type OdaSource } from "./oda-settlement.ts";
+import { calculateOdaMonth, createOdaMonth, parseOdaCsv, getOdaPosDeliveryScopes, normalizeOdaChannel, type OdaLine, type OdaMonth, type OdaSource } from "./oda-settlement.ts";
 
 const NOW = "2026-10-01T00:00:00.000Z";
 function source(id: string, kind: OdaSource["kind"], channel = "pos"): OdaSource {
@@ -103,6 +103,63 @@ test("POS에 배달 포함이면 플랫폼 매출만 제외하고 플랫폼 비�
   data.lines.push(line("배달", "revenue", 1_000_000, { sourceId: "platform", channel: "coupang" }), line("수수료", "expense", 200_000, { sourceId: "platform", channel: "coupang", category: "fees" }));
   const result = calculateOdaMonth(data);
   assert.equal(result.revenue, 30_000_000); assert.equal(result.expenses, 20_200_000); assert.equal(result.ignoredRevenueCount, 1);
+});
+
+test("배민·요기요는 POS 포함, 쿠팡·땡겨요는 별도 매출로 집계하며 환불·수수료·입금을 보존", () => {
+  const data = ready();
+  data.policy.vatBasis = "net";
+  data.policy.posDeliveryScope = "unresolved";
+  data.policy.posDeliveryScopes = { baemin: "included", coupang: "excluded", yogiyo: "included", ddangyo: "excluded" };
+  data.policy.activeChannels = ["pos", "baemin", "coupang", "yogiyo", "ddangyo"];
+  const scopes = ["배달의민족", "쿠팡이츠", "요기요", "땡겨요"];
+  for (const name of scopes) {
+    const channel = normalizeOdaChannel(name);
+    data.sources.push(source(channel, "platform", name));
+    data.lines.push(
+      line(`${name} 매출`, "revenue", 1_100_000, { sourceId: channel, channel: name, vat: 100_000 }),
+      line(`${name} 환불`, "revenue", -110_000, { sourceId: channel, channel: name, vat: -10_000 }),
+      line(`${name} 수수료`, "expense", 110_000, { sourceId: channel, channel: name, vat: 10_000, category: "fees" }),
+      line(`${name} 지급 예정`, "bank", 880_000, { sourceId: channel, channel: name, vat: null, category: "bank" }),
+    );
+  }
+  // A delivery row inside the POS original remains recognized, even when its platform is included.
+  data.lines.push(line("POS 배민 주문", "revenue", 110_000, { channel: "baemin", vat: 10_000 }));
+  const originals = structuredClone(data);
+  const result = calculateOdaMonth(data);
+  assert.equal(result.revenue, 31_900_000); assert.equal(result.revenueVat, 190_000);
+  assert.equal(result.expenses, 20_400_000); assert.equal(result.expenseVat, 40_000);
+  assert.equal(result.ignoredRevenueCount, 4); assert.equal(result.platformPayout, 3_520_000);
+  assert.equal(result.canFinalize, true); assert.deepEqual(data, originals);
+  assert.equal(result.revenueByChannel.find(item => item.category === "ddangyo")?.amount, 900_000);
+});
+
+test("운영 채널의 POS 포함 여부가 미확인이면 채널명을 안내하고 확정을 막는다", () => {
+  const data = ready(); data.policy.posDeliveryScopes = getOdaPosDeliveryScopes(data.policy);
+  assert.equal(calculateOdaMonth(data).canFinalize, true); // Inactive unresolved channels do not block POS-only stores.
+  data.policy.activeChannels.push("ddangyo");
+  data.sources.push(source("ddangyo", "platform", "땡겨요"));
+  data.lines.push(line("땡겨요 매출", "revenue", 1_000_000, { sourceId: "ddangyo", channel: "땡겨요" }));
+  const result = calculateOdaMonth(data);
+  assert.equal(result.canFinalize, false);
+  assert.equal(result.blockers.some(issue => issue.code === "pos_scope_unresolved" && issue.message.includes("땡겨요")), true);
+  data.policy.posDeliveryScopes.ddangyo = "excluded";
+  assert.equal(calculateOdaMonth(data).canFinalize, true);
+  data.policy.posDeliveryScopes.ddangyo = "included";
+  assert.equal(calculateOdaMonth(data).revenue, 30_000_000);
+});
+
+test("기존 전체 포함·제외 기준은 유지하며 채널 편집 시 새 땡겨요 설정은 확인 필요로 시작", () => {
+  for (const scope of ["included", "excluded"] as const) {
+    const data = ready(); data.policy.posDeliveryScope = scope; data.policy.activeChannels.push("baemin");
+    data.sources.push(source("platform", "platform", "baemin"));
+    data.lines.push(line("배민", "revenue", 1_000_000, { sourceId: "platform", channel: "baemin" }));
+    const before = calculateOdaMonth(data);
+    data.policy.posDeliveryScopes = getOdaPosDeliveryScopes(data.policy);
+    assert.equal(data.policy.posDeliveryScopes.ddangyo, "unresolved");
+    assert.deepEqual(calculateOdaMonth(data), before);
+  }
+  const csv = parseOdaCsv("날짜,내용,금액,부가세,채널\n2026-09-30,주문,11000,1000,땡겨요", { sourceId: "s", kind: "revenue", channel: "ddangyo", month: "2026-09" });
+  assert.equal(csv.errors.length, 0); assert.equal(csv.lines[0]?.channel, "ddangyo");
 });
 
 test("부가세 제외 기준은 실제 VAT를 사용하고 면세 0을 허용하며 누락은 HOLD", () => {

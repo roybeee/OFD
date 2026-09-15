@@ -255,3 +255,8 @@
 .oda-recurring-match { margin: 10px 0 0 32px; padding: 12px; border-radius: 8px; background: #fff7e8; color: #795518; font-size: 12px; line-height: 1.6; }
 .oda-recurring-match ul { padding-left: 16px; margin-top: 6px; }
 @media (max-width: 600px) { .oda-recurring { padding: 0 16px 16px; } .oda-recurring-row > label { grid-template-columns: 20px minmax(0, 1fr); } .oda-recurring-row b { grid-column: 2; } }
+
+.oda-delivery-scopes { min-width: 0; margin: 0; padding: 18px; border: 1px solid var(--oda-line); border-radius: 12px; }
+.oda-delivery-scopes legend { padding: 0 6px; font-weight: 700; }
+.oda-delivery-scopes > .oda-mini-note { margin: 0 0 16px; }
+@media (max-width: 640px) { .oda-delivery-scopes .oda-form-grid { grid-template-columns: minmax(0, 1fr); } }

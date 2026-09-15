@@ -60,6 +60,41 @@ describe('ODA 월 정산 업무 흐름', () => {
     await act(async () => { Object.defineProperty(input, 'files', { configurable: true, value: [new File(['test'], filename)] }); input.dispatchEvent(new Event('change', { bubbles: true })); });
   }
 
+  it('배달 채널별 POS 포함을 따로 저장하고 땡겨요 원본을 업로드할 수 있다', async () => {
+    const original = response(); original.data.policy.posDeliveryScope = 'included';
+    original.data.policy.activeChannels = ['pos', 'baemin', 'coupang', 'yogiyo'];
+    mocks.get.mockResolvedValue(original); mocks.mutate.mockResolvedValue(original);
+    await render(); await click('정산 기준');
+    const select = (label: string) => container.querySelector<HTMLSelectElement>(`[aria-label="${label} POS 포함 여부"]`)!;
+    expect(select('배달의민족').value).toBe('included');
+    expect(select('쿠팡이츠').value).toBe('included');
+    expect(select('땡겨요').value).toBe('unresolved'); expect(select('땡겨요').disabled).toBe(true);
+    const ddangyo = [...container.querySelectorAll('label')].find(item => item.textContent?.trim() === '땡겨요')!.querySelector<HTMLInputElement>('input')!;
+    await act(async () => ddangyo.click()); expect(select('땡겨요').disabled).toBe(false);
+    await set(select('쿠팡이츠'), 'excluded'); await set(select('땡겨요'), 'excluded');
+    expect(select('배달의민족').value).toBe('included'); expect(select('요기요').value).toBe('included');
+    await click('정산 기준 저장');
+    const call = mocks.mutate.mock.calls.at(-1)!;
+    expect(call[4].policy.activeChannels).toEqual(['pos', 'baemin', 'coupang', 'yogiyo', 'ddangyo']);
+    expect(call[4].policy.posDeliveryScopes).toEqual({ baemin: 'included', coupang: 'excluded', yogiyo: 'included', ddangyo: 'excluded' });
+    expect(original.data.policy).not.toHaveProperty('posDeliveryScopes');
+    await click('거래·증빙');
+    // The channel catalog used for policy choices is also used by the import controls.
+    await set(field('어떤 자료인가요?'), 'platform');
+    await set(field('자료 출처'), 'ddangyo');
+    expect(field('자료 출처').value).toBe('ddangyo');
+  });
+
+  it('확정본에서는 채널별 포함 기준을 볼 수 있고 변경할 수 없다', async () => {
+    const saved = response(); saved.data.status = 'finalized';
+    saved.data.policy.activeChannels = ['pos', 'baemin', 'coupang', 'ddangyo'];
+    saved.data.policy.posDeliveryScopes = { baemin: 'included', coupang: 'excluded', yogiyo: 'unresolved', ddangyo: 'included' };
+    mocks.get.mockResolvedValue(saved); await render(); await click('정산 기준');
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="땡겨요 POS 포함 여부"]')!.value).toBe('included');
+    expect([...container.querySelectorAll<HTMLSelectElement>('.oda-delivery-scopes select')].every(select => select.disabled)).toBe(true);
+    expect(button('정산 기준 저장').disabled).toBe(true);
+  });
+
   it('선택된 매장·정산월을 읽고 저이익 배분은 확인 필요로 표시하며 확정을 막는다', async () => {
     const first = response(); first.data.lines[0]!.amount = 22_000_000; first.summary = calculateOdaMonth(first.data);
     mocks.get.mockResolvedValue(first);

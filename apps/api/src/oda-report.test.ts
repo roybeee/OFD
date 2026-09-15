@@ -44,6 +44,19 @@ function value(book: ExcelJS.Workbook, label: string, sheet = "월손익·배분
 }
 
 describe("ODA monthly report", () => {
+  it("shows each delivery channel POS scope in the accounting report", async () => {
+    const data = fixture();
+    data.policy.activeChannels = ["pos", "baemin", "coupang", "yogiyo", "ddangyo"];
+    data.policy.posDeliveryScopes = { baemin: "included", coupang: "excluded", yogiyo: "unresolved", ddangyo: "excluded" };
+    const report = await workbook(data);
+    expect(value(report, "POS 포함 · 배달의민족", "기준·확인")).toBe("포함 · POS 기준");
+    expect(value(report, "POS 포함 · 쿠팡이츠", "기준·확인")).toBe("별도 합산");
+    expect(value(report, "POS 포함 · 요기요", "기준·확인")).toBe("확인 필요");
+    expect(value(report, "POS 포함 · 땡겨요", "기준·확인")).toBe("별도 합산");
+    expect(value(report, "사용 매출 채널", "기준·확인")).toContain("땡겨요");
+    expect(value(report, "POS 배달매출 포함 여부", "기준·확인")).toBeNull();
+  });
+
   it("exports exact server amounts, keeps priority out of costs, and distinguishes bank cash from platform payout", async () => {
     const data = fixture();
     const report = await workbook(data);

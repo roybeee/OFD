@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { StateRepository } from "@ofd/db";
-import { DomainError, calculateOdaMonth, createOdaMonth, parseOdaCsv, normalizeOdaChannel, normalizeOdaCategory, type Actor, type OdaMonth,
+import { DomainError, calculateOdaMonth, createOdaMonth, parseOdaCsv, normalizeOdaChannel, normalizeOdaCategory, ODA_DELIVERY_CHANNELS, getOdaPosDeliveryScope, type Actor, type OdaMonth,
   type OdaLine, type OdaSource, type OdaSourceKind, type OdaCsvResult, type Store } from "@ofd/domain";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -35,12 +35,14 @@ const importSchema = z.object({
   sheetName: z.string().max(100).optional(), headerRow: z.number().int().min(1).max(100).optional(),
   columnMap: z.record(z.string().max(80), z.string().max(200)).optional(),
 }).strict();
+const posScopeSchema = z.enum(["unresolved", "included", "excluded"]);
 const policySchema = z.object({
   vatBasis: z.enum(["unresolved", "gross", "net"]), posDeliveryScope: z.enum(["unresolved", "included", "excluded"]),
+  posDeliveryScopes: z.object({ baemin: posScopeSchema, coupang: posScopeSchema, yogiyo: posScopeSchema, ddangyo: posScopeSchema }).strict().optional(),
   attributionBasis: z.enum(["unresolved", "accrual"]), bVatPolicy: z.enum(["unresolved", "add10", "none"]),
   lowProfitPolicy: z.enum(["hold", "available_profit_only"]), partialMonthPolicy: z.enum(["hold", "full_priority", "prorate"]),
   partialMonth: z.boolean(), operatingDays: z.number().int().min(0).max(31), roundingBeneficiary: z.enum(["A", "B"]),
-  activeChannels: z.array(z.enum(["pos", "baemin", "coupang", "yogiyo"])).min(1).max(4),
+  activeChannels: z.array(z.enum(["pos", "baemin", "coupang", "yogiyo", "ddangyo"])).min(1).max(5),
   agreementNote: z.string().trim().max(4000),
 }).strict();
 const changesSchema = z.object({
@@ -298,8 +300,18 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
   const save = async (request: FastifyRequest) => {
     const body = z.object({ expectedVersion: versionSchema, policy: policySchema }).strict().parse(request.body);
     return mutate(request, body.expectedVersion, "ODA 정산 기준 저장", (record) => {
+      if (!body.policy.posDeliveryScopes && (record.policy.posDeliveryScopes || body.policy.activeChannels.includes("ddangyo"))) {
+        throw new DomainError("ODA_CHANNEL_POLICY_REQUIRED", "채널별 POS 포함 설정이 필요합니다. 화면을 새로고침한 뒤 정산 기준을 저장해 주세요.", 409);
+      }
+      if (body.policy.posDeliveryScopes) {
+        const scopes = ODA_DELIVERY_CHANNELS.filter(channel => body.policy.activeChannels.includes(channel.value)).map(channel => body.policy.posDeliveryScopes![channel.value]);
+        body.policy.posDeliveryScope = !scopes.length || scopes.every(value => value === "excluded") ? "excluded"
+          : scopes.every(value => value === "included") ? "included" : "unresolved";
+      }
       const { acknowledgements: _acks, ...before } = record.policy;
-      if (Object.entries(body.policy).some(([key, value]) => JSON.stringify(before[key as keyof typeof before]) !== JSON.stringify(value))) record.policy = { ...body.policy, acknowledgements: {} };
+      const { posDeliveryScopes, ...rest } = body.policy;
+      const next = { ...rest, ...(posDeliveryScopes ? { posDeliveryScopes } : {}) };
+      if (Object.entries(next).some(([key, value]) => JSON.stringify(before[key as keyof typeof before]) !== JSON.stringify(value))) record.policy = { ...next, acknowledgements: {} };
     });
   };
   app.put(base, save);
@@ -568,7 +580,11 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       ["을 지급 부가세", summary.vatB], ["을 실제 지급액", summary.payableB],
       ["정산서 기한", summary.statementDueDate], ["지급 기한", summary.paymentDueDate],
       ["실제 지급일", record.paymentDate ?? ""], ["실제 이체금액", record.paymentAmount ?? null], ["이체 확인번호", record.paymentReference ?? ""],
-      ["손익 부가세 기준", record.policy.vatBasis], ["POS 배달매출 포함", record.policy.posDeliveryScope], ["을 부가세 가산", record.policy.bVatPolicy],
+      ["손익 부가세 기준", record.policy.vatBasis],
+      ...(record.policy.posDeliveryScopes ? ODA_DELIVERY_CHANNELS.map(({ value, label }) =>
+        [`POS 포함 · ${label}`, { included: "포함", excluded: "별도 합산", unresolved: "확인 필요" }[getOdaPosDeliveryScope(record.policy, value)], record.policy.activeChannels.includes(value) ? "운영 중" : "미사용"])
+        : [["POS 배달매출 포함", record.policy.posDeliveryScope]]),
+      ["을 부가세 가산", record.policy.bVatPolicy],
       ["기준 합의 내용", record.policy.agreementNote], ["갑 기준 확인", record.policy.acknowledgements.A?.actorName ?? "미확인"],
       ["을 기준 확인", record.policy.acknowledgements.B?.actorName ?? "미확인"], [],
       ["날짜", "유형", "내용", "금액", "부가세", "분류", "채널", "확인", "원본 파일", "원본 행", "거래ID", "비고"]];

@@ -2,12 +2,21 @@
 export type OdaLineKind = "revenue" | "expense" | "bank" | "excluded";
 export type OdaSourceKind = "pos" | "platform" | "bank" | "expense" | "evidence";
 export type OdaParty = "A" | "B";
+export const ODA_DELIVERY_CHANNELS = [
+  { value: "baemin", label: "배달의민족" }, { value: "coupang", label: "쿠팡이츠" },
+  { value: "yogiyo", label: "요기요" }, { value: "ddangyo", label: "땡겨요" },
+] as const;
+export type OdaDeliveryChannel = typeof ODA_DELIVERY_CHANNELS[number]["value"];
+export type OdaPosDeliveryScope = "unresolved" | "included" | "excluded";
 export interface OdaAcknowledgement { actorId: string; actorName: string; at: string }
 export interface OdaPolicy {
   attributionBasis: "unresolved" | "accrual";
   activeChannels: string[];
   vatBasis: "unresolved" | "gross" | "net";
-  posDeliveryScope: "unresolved" | "included" | "excluded";
+  /** Legacy all-channel setting, retained for existing records and snapshots. */
+  posDeliveryScope: OdaPosDeliveryScope;
+  /** When present, this takes precedence over the legacy all-channel setting. */
+  posDeliveryScopes?: Record<OdaDeliveryChannel, OdaPosDeliveryScope>;
   bVatPolicy: "unresolved" | "add10" | "none";
   lowProfitPolicy: "hold" | "available_profit_only";
   partialMonthPolicy: "hold" | "full_priority" | "prorate";
@@ -173,8 +182,19 @@ export function normalizeOdaCategory(value: string): string {
 }
 export function normalizeOdaChannel(value: string): string {
   const key = normalizeText(value);
-  const aliases: Record<string, string> = { pos: "pos", 매장: "pos", 홀: "pos", 매장pos: "pos", baemin: "baemin", 배민: "baemin", 배달의민족: "baemin", coupang: "coupang", 쿠팡: "coupang", 쿠팡이츠: "coupang", coupangeats: "coupang", yogiyo: "yogiyo", 요기요: "yogiyo" };
+  const aliases: Record<string, string> = { pos: "pos", 매장: "pos", 홀: "pos", 매장pos: "pos", baemin: "baemin", 배민: "baemin", 배달의민족: "baemin", coupang: "coupang", 쿠팡: "coupang", 쿠팡이츠: "coupang", coupangeats: "coupang", yogiyo: "yogiyo", 요기요: "yogiyo", ddangyo: "ddangyo", 땡겨요: "ddangyo" };
   return aliases[key] ?? key;
+}
+export function getOdaPosDeliveryScope(policy: OdaPolicy, channel: string): OdaPosDeliveryScope {
+  if (!policy.posDeliveryScopes) return policy.posDeliveryScope;
+  const known = ODA_DELIVERY_CHANNELS.find(item => item.value === normalizeOdaChannel(channel));
+  return known ? policy.posDeliveryScopes[known.value] ?? "unresolved" : "unresolved";
+}
+/** Prepare the channel editor without rewriting saved historical policies. */
+export function getOdaPosDeliveryScopes(policy: OdaPolicy): Record<OdaDeliveryChannel, OdaPosDeliveryScope> {
+  return Object.fromEntries(ODA_DELIVERY_CHANNELS.map(({ value }) => [value,
+    !policy.posDeliveryScopes && value === "ddangyo" ? "unresolved" : getOdaPosDeliveryScope(policy, value),
+  ])) as Record<OdaDeliveryChannel, OdaPosDeliveryScope>;
 }
 function validMonth(value: string): boolean { return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) && Number(value.slice(0, 4)) >= 1900; }
 function monthDays(month: string): number { return new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate(); }
@@ -217,7 +237,7 @@ export function calculateOdaMonth(data: OdaMonth): OdaSummary {
   const policy = data.policy;
   if (policy.attributionBasis !== "accrual") block("attribution_unresolved", "매출·비용은 발생한 귀속월로 기록하고 입금월과 구분하는 기준을 확인해 주세요.");
   if (policy.vatBasis !== "gross" && policy.vatBasis !== "net") block("vat_basis_unresolved", "부가세 포함·제외 손익 기준에 대한 합의가 필요합니다.");
-  if (policy.posDeliveryScope !== "included" && policy.posDeliveryScope !== "excluded") block("pos_scope_unresolved", "POS 매출에 배달 매출이 포함되는지 확인해 주세요.");
+  if (!policy.posDeliveryScopes && policy.posDeliveryScope !== "included" && policy.posDeliveryScope !== "excluded") block("pos_scope_unresolved", "POS 매출에 배달 매출이 포함되는지 확인해 주세요.");
   if (policy.bVatPolicy !== "add10" && policy.bVatPolicy !== "none") block("b_vat_unresolved", "계약 제9조의 참조 오류를 확인하고 월 정산의 B 부가세 가산 여부를 합의해 주세요.");
   if (!policy.agreementNote.trim()) block("agreement_missing", "정산 기준의 합의 내용을 기록해 주세요.");
   const ackA = policy.acknowledgements.A;
@@ -230,10 +250,20 @@ export function calculateOdaMonth(data: OdaMonth): OdaSummary {
   if (policy.partialMonth && policy.partialMonthPolicy === "hold") block("partial_month_unresolved", "월중 개업·종료월은 A의 300만원 전액 또는 일할 적용을 별도로 합의해야 합니다.");
   if (!policy.partialMonth && policy.operatingDays !== days) block("partial_month_flag_required", "월 전체보다 짧은 정산 기간은 월중 개업·종료 여부를 확인해 주세요.");
   const channels = [...new Set(policy.activeChannels.map(normalizeOdaChannel).filter(Boolean))];
+  if (policy.posDeliveryScopes) {
+    const deliveryChannels = new Set([...channels.filter(channel => channel !== "pos"),
+      ...data.lines.filter(line => line.kind === "revenue" && data.sources.some(source => source.id === line.sourceId && source.kind === "platform")).map(line => normalizeOdaChannel(line.channel))]);
+    for (const channel of deliveryChannels) {
+      if (!["included", "excluded"].includes(getOdaPosDeliveryScope(policy, channel))) {
+        const label = ODA_DELIVERY_CHANNELS.find(item => item.value === channel)?.label ?? channel;
+        block("pos_scope_unresolved", `${label}: POS 매출 포함 여부를 확인해 주세요.`);
+      }
+    }
+  }
   if (!channels.includes("pos")) block("pos_channel_required", "매장 POS 채널을 활성 매출자료 목록에 포함해 주세요.");
   for (const channel of channels) {
     const source = data.sources.some((s) => channel === "pos" ? s.kind === "pos" : s.kind === "platform" && normalizeOdaChannel(s.channel) === channel);
-    if (!source) block("sales_source_missing", channel === "pos" ? "POS 월 마감 원본을 첨부해 주세요." : `${channel} 월 마감 원본을 첨부해 주세요.`);
+    if (!source) block("sales_source_missing", channel === "pos" ? "POS 월 마감 원본을 첨부해 주세요." : `${ODA_DELIVERY_CHANNELS.find(item => item.value === channel)?.label ?? channel} 월 마감 원본을 첨부해 주세요.`);
   }
   if (!data.lines.length) block("lines_missing", "당월 매출·비용 자료를 추가해 주세요.");
   if (!data.sources.some((s) => s.kind === "expense") && !data.lines.some((line) => line.kind === "expense")) warn("cost_list_empty", "운영비 목록이 비어 있습니다. 누락된 비용이 없는지 확인해 주세요.");
@@ -285,7 +315,7 @@ export function calculateOdaMonth(data: OdaMonth): OdaSummary {
       continue;
     }
     if (category === "uncategorized") block("category_unresolved", "미분류 거래의 운영비 해당 여부를 확인해 주세요.", line.id);
-    if (line.kind === "revenue" && data.sources.some((source) => source.id === line.sourceId && source.kind === "platform") && policy.posDeliveryScope === "included") {
+    if (line.kind === "revenue" && data.sources.some((source) => source.id === line.sourceId && source.kind === "platform") && getOdaPosDeliveryScope(policy, channel) === "included") {
       ignoredRevenueCount++;
       if (!channels.includes(channel)) block("inactive_channel", "업로드한 매출 채널을 정산 기준의 활성 채널에 추가해 주세요.", line.id);
       continue;

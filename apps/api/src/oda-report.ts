@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { ODA_EXPENSE_CATEGORIES, type AuditEvent, type OdaMonth, type OdaSummary } from "@ofd/domain";
+import { ODA_EXPENSE_CATEGORIES, ODA_DELIVERY_CHANNELS, getOdaPosDeliveryScope, type AuditEvent, type OdaMonth, type OdaSummary } from "@ofd/domain";
 
 const INK = "FF253B32";
 const GREEN = "FF426950";
@@ -7,7 +7,7 @@ const PALE = "FFF1F5F0";
 const AMBER = "FFFFF1CE";
 const MONEY = '#,##0;[Red](#,##0);"–"';
 const STATUS = { draft: "작성 중 · 미확정", finalized: "정산 확정", paid: "지급 기록 완료" } as const;
-const CHANNELS: Record<string, string> = { pos: "매장 POS", baemin: "배달의민족", coupang: "쿠팡이츠", yogiyo: "요기요", manual: "직접 등록" };
+const CHANNELS: Record<string, string> = { pos: "매장 POS", ...Object.fromEntries(ODA_DELIVERY_CHANNELS.map(item => [item.value, item.label])), manual: "직접 등록" };
 const CATEGORIES: Record<string, string> = { ...Object.fromEntries(ODA_EXPENSE_CATEGORIES.map((item) => [item.value, item.label])),
   sales: "매출", bank: "계좌·정산 대사", capex: "투자비", deposit: "보증금", a_priority: "A 우선배분", depreciation: "감가상각",
   b_distribution: "B 배분금", owner_transfer: "사업주 이체", uncategorized: "미분류" };
@@ -138,7 +138,11 @@ export async function buildOdaReport(input: OdaReportInput): Promise<Buffer> {
   header(checks, ["항목", "적용 값", "식별자 / 상태", "설명 / 확인 시각"]);
   checks.addRow(["정산 귀속", policy.attributionBasis === "accrual" ? "발생월 기준" : "미합의"]);
   checks.addRow(["손익 부가세 기준", { unresolved: "미합의", gross: "부가세 포함", net: "실제 부가세 제외" }[policy.vatBasis]]);
-  checks.addRow(["POS 배달매출 포함 여부", { unresolved: "미합의", included: "포함", excluded: "미포함" }[policy.posDeliveryScope]]);
+  if (policy.posDeliveryScopes) {
+    for (const { value, label } of ODA_DELIVERY_CHANNELS) checks.addRow([`POS 포함 · ${label}`,
+      { unresolved: "확인 필요", included: "포함 · POS 기준", excluded: "별도 합산" }[getOdaPosDeliveryScope(policy, value)],
+      policy.activeChannels.includes(value) ? "운영 중" : "미사용", "포함된 채널은 플랫폼 매출을 다시 더하지 않습니다. 플랫폼 수수료는 별도 비용입니다."]);
+  } else checks.addRow(["POS 배달매출 포함 여부", { unresolved: "미합의", included: "포함", excluded: "미포함" }[policy.posDeliveryScope]]);
   checks.addRow(["B 부가세 가산", { unresolved: "미합의", add10: "10% 가산", none: "가산 없음" }[policy.bVatPolicy]]);
   checks.addRow(["우선배분 미달 이익", policy.lowProfitPolicy === "hold" ? "합의 전 보류" : "당월 가용이익 한도 배분"]);
   checks.addRow(["부분월 여부", policy.partialMonth ? "부분월" : "전체월", "운영 일수", policy.operatingDays]);
