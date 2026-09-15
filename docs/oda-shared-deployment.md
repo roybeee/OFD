@@ -96,3 +96,12 @@ GitHub의 첫 배포 브랜치 업로드는 성공했다. 기존 V2 검사에서
 - [GitHub 검사 34908976066](https://github.com/roybeee/OFD/actions/runs/34908976066)의 quality·E2E 성공. PostgreSQL 통합 검사에 월·매장 범위와 확정본 조회, 원본 bytes 제외 검증을 추가해 실제 CI DB에서 통과했다. ODA 전용 선택적 네이티브 검사 1개는 별도로 건너뛰며 통과로 계산하지 않는다.
 - 외부 확인: ODA `/`·`/hq/oda-master`·`/readyz` HTTP 200, 비로그인 현황 API 401, 기존 OFD `/readyz` HTTP 200. 배포된 `index-1qZmRkjh.js`에서 새 현황판과 API 연결을 확인했다. 배포 이후 ODA API·웹 오류 로그는 없었다.
 - 기존 OFD 소스·설정, 공용 DB 계정 분리와 ODA 최초 마스터 등록 방식은 이번 배포에서 변경하지 않았다.
+
+## 매장별 엑셀 양식 공유 적용 결과 — 2026-09-15 UTC
+
+- 앱 소스 `457bab4395d7e8692647069432f93229df14aeea`, API 배포 `dep-dak8qo0u01pc73e8cg2g`, 웹 배포 `dep-dak8rk942hec739m7ccg`가 모두 live다.
+- 정상 반영한 XLSX의 열 제목 행·시트·열 연결을 ODA 전용 DB의 `oda_import_profile`에 매장·종류·출처별로 저장한다. 다른 PC에서도 재사용하며 원본 파일 내용·거래 금액은 설정에 복제하지 않는다. DB 구조 변경 없이 기존 매장 범위 제약을 사용한다.
+- 실제 열 제목과 순서가 일치할 때만 저장한 연결을 적용한다. 미리보기와 직접 반영 절차를 유지하며, 오류·중복·월 저장 실패 시 양식 변경도 취소된다. 초기화는 버전 충돌과 중복 요청을 검사하고 변경 기록을 남긴다. 서버에서 초기화한 양식을 오래된 브라우저 설정으로 복원하지 않는다.
+- [GitHub 검사 34911988395](https://github.com/roybeee/OFD/actions/runs/34911988395)의 quality·E2E가 모두 성공했다. 실제 CI PostgreSQL에서 새 저장 유형·매장 격리·트랜잭션 롤백을 검증했다. 로컬 ODA API 86개·웹 54개 검사와 ODA 빌드도 통과했다. 선택적 ODA 네이티브 통합 검사 1개는 별도로 건너뛰었다.
+- 외부 확인: ODA `/`·`/hq/oda-master`·`/readyz` HTTP 200, readiness `ok=true`. 실제 제공된 `index-Cc35AttS.js`에서 새 공유 설정 안내·API 경로·재시도 버튼을 확인했다. 비로그인 설정 조회는 401, 기존 OFD `/readyz`는 HTTP 200·`ok=true`다. API live 이후 조회한 ODA API·웹 오류 로그는 없었다.
+- 기존 OFD 서비스·환경설정·main·GitHub workflow는 변경하지 않았다. 운영 DB에 가짜 매장이나 테스트 정산을 만들지 않았으며, 로그인한 실제 사용자 기기에서의 사용 확인은 자동 테스트·배포 확인과 구분한다.
