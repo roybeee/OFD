@@ -310,6 +310,10 @@ export function registerOdaRoutes(app: FastifyInstance, repository: StateReposit
       }
       Object.assign(line, body.changes);
       checkLine(line, record);
+      if (line.externalId.startsWith('repeat:') && line.kind === 'expense' && line.reviewed
+        && !record.sources.some(source => source.id === line.sourceId)) {
+        throw new DomainError('ODA_REPEAT_SOURCE_REQUIRED', '이번 달 증빙을 연결한 뒤 반복 비용을 확인 완료해 주세요.', 422);
+      }
     }, { metadata: { lineId, changes: body.changes, reason: body.changes.note?.trim() || "거래 분류·확인 상태 정정" } });
   };
   app.patch(`${base}/lines/:lineId`, updateLine);

@@ -375,6 +375,8 @@ describe("ODA monthly settlement API", () => {
     expect(success.json().data.lines[1]).toMatchObject({ reviewed: false, sourceId: '', channel: 'manual', sourceRow: 0, amount: 11000000 });
     expect(success.json().data.lines[1]).not.toHaveProperty('bankLineId');
     expect(success.json().summary.expenses).toBe(12000000);
+    const missingSource = await post(`/lines/${success.json().data.lines[1].id}`, { expectedVersion: 2, changes: { reviewed: true } });
+    expect(missingSource.statusCode).toBe(422); expect(missingSource.json().error.code).toBe('ODA_REPEAT_SOURCE_REQUIRED');
     expect((await get()).json().rows[0].status).toBe('already_added');
     const duplicate = await post('/repeat-previous', { ...selected, expectedVersion: 2, confirmedSimilarLineIds: [row.lineId] });
     expect(duplicate.json().error.code).toBe('ODA_REPEAT_EXISTS');
@@ -385,6 +387,11 @@ describe("ODA monthly settlement API", () => {
     const refinalized = await request(app, '/finalize', { expectedVersion: 9 });
     expect(refinalized.statusCode, refinalized.body).toBe(200);
     expect((await post('/repeat-previous', { ...selected, expectedVersion: 2 })).json().error.code).toBe('VERSION_CONFLICT');
+    const evidence = await post('/import', { expectedVersion: 2, filename: 'proof.pdf', kind: 'evidence', contentBase64: Buffer.from('%PDF-1.4\nreceipt').toString('base64') });
+    expect(evidence.statusCode, evidence.body).toBe(200);
+    const confirmed = await post(`/lines/${success.json().data.lines[1].id}`, { expectedVersion: 3, changes: { sourceId: evidence.json().evidence[0].id, reviewed: true } });
+    expect(confirmed.statusCode, confirmed.body).toBe(200); expect(confirmed.json().summary.expenses).toBe(22000000);
+
   });
 
   it("bank cash is never automatic P&L; explicit confirmed outflow converts once with linked evidence", async () => {

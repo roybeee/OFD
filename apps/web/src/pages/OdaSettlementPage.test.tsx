@@ -127,6 +127,21 @@ describe('ODA 월 정산 업무 흐름', () => {
       { previousVersion: 8, lineIds: ['old-rent'], confirmedSimilarLineIds: [] });
   });
 
+  it('반복 비용은 이번 달 증빙 선택 전까지 확인 완료를 막는다', async () => {
+    const state = response(); state.data.lines.push(line('repeat-rent', 'expense', 1100000,
+      { description: '전월 임차료 제안', sourceId: '', sourceRow: 0, externalId: 'repeat:2026-08:rent', reviewed: false, category: 'rent' }));
+    state.summary = calculateOdaMonth(state.data); mocks.get.mockResolvedValue(state); mocks.mutate.mockResolvedValue(state);
+    await render();
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[aria-label="정산 상세"] button')].find(item => item.textContent?.startsWith('거래·증빙'))!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="전월 임차료 제안 상세 열기"]')!.click());
+    const row = container.querySelector('[aria-label="전월 임차료 제안 상세 닫기"]')!.closest('article')!;
+    expect(button('확인 완료', row).disabled).toBe(true); expect(row.textContent).toContain('이번 달 증빙을 연결하면');
+    await set(field('이번 달 증빙 연결'), 'cost');
+    expect(button('확인 완료', row).disabled).toBe(false);
+    await click('확인 완료', row);
+    expect(mocks.mutate).toHaveBeenCalledWith('oda-1', '2026-09', '/lines/repeat-rent', 4, { changes: expect.objectContaining({ reviewed: true, sourceId: 'cost' }) });
+  });
+
   it('파일 선택으로 미리보기를 실행하고 오류가 있으면 원본 반영을 실행하지 않는다', async () => {
     const state = response(); state.data.lines = []; state.data.sources = []; state.summary = calculateOdaMonth(state.data); mocks.get.mockResolvedValue(state);
     mocks.prepare.mockResolvedValue({ filename: '매출.csv', kind: 'pos', channel: 'pos', contentBase64: 'dGVzdA==' });
