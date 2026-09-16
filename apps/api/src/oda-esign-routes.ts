@@ -200,6 +200,50 @@ export function registerOdaEsignRoutes(app: FastifyInstance, repository: StateRe
     const { actor: current } = await scope(repository, actor, storeId);
     return { ...await overview(repository, current, storeId), contract: detail(await contractFor(repository, storeId, receipt!.id, current)) };
   });
+  app.post(`${base}/contracts/batch`, async (request, reply) => {
+    privateResponse(reply);
+    const { storeId } = paramsSchema.parse(request.params);
+    const { actor } = await scope(repository, request.actor, storeId); requireManager(actor);
+    const body = z.object({
+      expectedVersion: z.literal(0), savedTemplateId: z.string().min(1).max(120), savedTemplateVersion: z.number().int().positive(),
+      expectedEmployerVersion: z.number().int().positive(), expectedHrVersion: z.number().int().nonnegative(),
+      title: z.string().trim().min(1).max(200), effectiveDate: z.string().max(10), endDate: z.string().max(10),
+      employeeIds: z.array(z.string().min(1).max(120)).min(1).max(50),
+    }).strict().parse(request.body);
+    if (new Set(body.employeeIds).size !== body.employeeIds.length) throw new DomainError('ESIGN_BATCH_DUPLICATE', '같은 직원을 두 번 선택할 수 없습니다.', 422);
+    const receipt = await idempotentMutation(request, reply, repository, actor, 200,
+      tx => tx.exclusiveTransaction(`oda:hr:${storeId}`, async scoped => {
+        const { actor: current } = await scope(scoped, actor, storeId); requireManager(current);
+        const template = await templateFor(scoped, storeId, body.savedTemplateId);
+        if (!template.active || template.version !== body.savedTemplateVersion) throw new DomainError('ESIGN_TEMPLATE_CHANGED', '양식이 변경되었습니다. 목록에서 다시 선택해 주세요.', 409);
+        const employer = await employerFor(scoped, storeId, template.employerId);
+        if (!employer.active || employer.version !== body.expectedEmployerVersion) throw new DomainError('ESIGN_EMPLOYER_CHANGED', '고용주 정보가 변경되었습니다. 다시 확인해 주세요.', 409);
+        await signerAccount(scoped, storeId, employer.signerActorId);
+        const hr = await workspace(scoped, storeId);
+        if (hr.version !== body.expectedHrVersion) throw new DomainError('ESIGN_PERSONNEL_CHANGED', '직원 정보가 변경되었습니다. 인사정보를 새로 불러온 뒤 대상자를 다시 확인해 주세요.', 409);
+        const existing = await scoped.list<NativeContract>('oda_contract', [storeId]);
+        if (existing.length + body.employeeIds.length > 5000) throw new DomainError('ESIGN_CONTRACT_LIMIT', '매장별 계약 보관 한도를 초과합니다.', 422);
+        const contracts: NativeContract[] = [], accounts = new Set<string>();
+        const templateKey = `saved:${template.id}:v${template.version}`;
+        for (const employeeId of body.employeeIds) {
+          const employee = await employeeFor(scoped, storeId, employeeId);
+          if (accounts.has(employee.actorId!)) throw new DomainError('ESIGN_BATCH_DUPLICATE', '선택한 직원들에게 같은 로그인 계정이 연결되어 있습니다. 직원 계정을 확인해 주세요.', 422);
+          accounts.add(employee.actorId!);
+          if (existing.some(row => row.employeeId === employeeId && row.employer.id === employer.id && row.templateKey.startsWith(`saved:${template.id}:v`)
+            && row.terms.effectiveDate === body.effectiveDate && ['draft', 'pending'].includes(row.status))) {
+            throw new DomainError('ESIGN_BATCH_EXISTING', `${employee.name}: 같은 양식과 시작일의 작성 중·서명 진행 계약이 있습니다. 기존 계약을 확인해 주세요.`, 409);
+          }
+          contracts.push(createNativeContract({ storeId, employeeId, employeeActorId: employee.actorId, employeeName: employee.name,
+            title: body.title, templateKey, terms: { ...template.terms, effectiveDate: body.effectiveDate, endDate: body.endDate } }, employer, context(current, request)));
+        }
+        // Validate every recipient before a single atomic commit. No signing requests are generated.
+        await scoped.commit({ changes: contracts.map(contract => ({ type: 'oda_contract' as const, id: contract.id, storeId, expectedVersion: null, value: contract })),
+          audits: contracts.map(contract => audit(current, 'oda_contract', contract.id, 'esign.draft.batch_create', storeId, { version: 0 }, { version: 1, status: 'draft' }, { templateId: template.id })) });
+        return { createdContractIds: contracts.map(contract => contract.id) };
+      }));
+    const { actor: current } = await scope(repository, actor, storeId); requireManager(current);
+    return { ...await overview(repository, current, storeId), createdContractIds: receipt!.createdContractIds };
+  });
   for (const editing of [false, true]) {
     app.post(editing ? `${base}/templates/:id` : `${base}/templates`, async (request, reply) => {
       privateResponse(reply);

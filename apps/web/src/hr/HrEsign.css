@@ -92,3 +92,6 @@
 .esign-task-filters strong { margin-left:5px; }
 .esign-template-save { margin:18px 0; }
 .esign-template-value { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+.esign-batch-employees { display: grid; gap: 8px; max-height: 360px; overflow: auto; padding: 8px 0; }
+.esign-batch-review { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }

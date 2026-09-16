@@ -26,6 +26,35 @@ async function input(name: string, value: string) { const element = container.qu
 async function render(storeId = 'store-a') { await act(async () => root.render(<HrEsign workspace={createHrWorkspace(storeId, '매장', new Date().toISOString())} actorId="staff" employeeId="employee" permissions={{ manage: false, payroll: false, self: true }} mutate={vi.fn()} busy={false} accounts={[]} />)); }
 
 describe('native employee electronic contract safety', () => {
+  it('reviews a batch before saving, preserves retry identity and opens only newly created drafts', async () => {
+    const { contract, overview } = fixture(); overview.permissions.manage = true;
+    const { effectiveDate: _start, endDate: _end, ...terms } = contract.terms;
+    const template = { id: 'batch-template', storeId: 'store-a', employerId: contract.employer.id, version: 1, name: '공통 시급', active: true, terms, createdAt: contract.createdAt, createdBy: 'owner', updatedAt: contract.createdAt, updatedBy: 'owner' };
+    overview.templates = [template]; overview.accounts = [{ id: 'staff', name: '김직원', role: 'store_staff' }];
+    api.get.mockResolvedValue(overview);
+    const draft = { ...contract, id: 'batch-draft', title: '공통 시급 근로계약서', status: 'draft', version: 1, signatures: [] };
+    api.mutate.mockRejectedValueOnce(new Error('응답 연결 끊김')).mockResolvedValueOnce({ ...overview, contracts: [...overview.contracts, draft], createdContractIds: [draft.id] });
+    api.detail.mockResolvedValue({ contract: draft });
+    const workspace = createHrWorkspace('store-a', '매장', new Date().toISOString());
+    workspace.employees.push({ id: 'employee', name: '김직원', employeeNumber: '001', actorId: 'staff', departmentId: '', jobTitle: '매장 업무', employmentType: 'part_time', status: 'active', hireDate: '2026-09-16', payType: 'hourly', basePay: 11000, history: [] });
+    await act(async () => root.render(<HrEsign workspace={workspace} actorId="owner" permissions={{ manage: true, payroll: false, self: false }} mutate={vi.fn()} busy={false} accounts={[]} />));
+    await click('저장한 양식'); await click('여러 직원 초안 만들기');
+    expect(button('선택한 직원과 조건 검토')?.disabled).toBe(true);
+    await input('batchStart', '2026-10-01'); await click('검색 결과 모두 선택'); await click('선택한 직원과 조건 검토');
+    expect(api.mutate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('현재 인사정보: 시급 11,000원');
+    expect(container.textContent).toContain('새 계약 초안: 시급 12,000원');
+    expect(button('1명 초안 저장')?.disabled).toBe(true);
+    await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await click('1명 초안 저장'); expect(container.textContent).toContain('응답 연결 끊김');
+    await click('1명 초안 저장');
+    expect(api.mutate.mock.calls[0][3]).toBe(api.mutate.mock.calls[1][3]);
+    expect(api.mutate.mock.calls[1][2]).toEqual({ expectedVersion: 0, savedTemplateId: template.id, savedTemplateVersion: 1, expectedEmployerVersion: contract.employer.version,
+      expectedHrVersion: workspace.version, title: '공통 시급 근로계약서', effectiveDate: '2026-10-01', endDate: '', employeeIds: ['employee'] });
+    expect(container.textContent).toContain('생성한 계약 초안 1건');
+    await click('김직원 · 공통 시급 근로계약서');
+    expect(api.detail).toHaveBeenCalledWith('store-a', 'batch-draft');
+  });
   it('saves reviewed conditions and reuses the employer template without carrying over employee or dates', async () => {
     const { contract, overview } = fixture(); overview.permissions.manage = true;
     const { effectiveDate: _start, endDate: _end, ...conditions } = contract.terms;

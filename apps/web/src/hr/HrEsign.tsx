@@ -6,13 +6,14 @@ import { downloadOdaEsign, getOdaEsign, getOdaEsignContract, mutateOdaEsign, typ
 import { Button } from '../components/ui';
 import { ChevronRight, FileCheck2, RefreshCcw } from '../components/icons';
 import { EsignSignaturePad, type EsignStroke } from './EsignSignaturePad';
+import { EsignBatchForm } from './EsignBatchForm';
 import { HrTalent } from './HrTalent';
 import { HrEmpty, hrDate, hrError, hrToday, type HrPanelProps } from './shared';
 import { esignTiming, esignTaskLabels, matchesEsignTask, type EsignTask } from './esign-followup';
 import './HrEsign.css';
 
 type Props = HrPanelProps & { accounts: NonNullable<HrResponse['accounts']> };
-type View = 'list' | 'create' | 'edit' | 'employers' | 'detail' | 'templates';
+type View = 'list' | 'create' | 'edit' | 'employers' | 'detail' | 'templates' | 'batch' | 'batch-result';
 const statusName = { draft: '작성 중', pending: '서명 진행 중', completed: '체결 완료', declined: '서명 거절', cancelled: '요청 취소' };
 const field = (data: FormData, name: string) => String(data.get(name) ?? '').trim();
 const businessNumber = (value: string) => value.replace(/^(\d{3})(\d{2})(\d{5})$/, '$1-$2-$3');
@@ -34,6 +35,7 @@ function NativeContracts(props: Props) {
   const [task, setTask] = useState<EsignTask>('all');
   const [now, setNow] = useState(Date.now);
   const [savedTemplate, setSavedTemplate] = useState<NativeContractTemplate | null>(null);
+  const [createdIds, setCreatedIds] = useState<string[]>([]);
   const [copySource, setCopySource] = useState<NativeContract | null>(null);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -82,6 +84,7 @@ function NativeContracts(props: Props) {
       if (!alive.current) return false;
       setData(result); if (result.contract) { setCopySource(null); setSavedTemplate(null); setDetail(result.contract); setView('detail'); }
       if (result.template) { setView('templates'); setDetail(null); setCopySource(null); setSavedTemplate(null); }
+      if (result.createdContractIds) { setCreatedIds(result.createdContractIds); setView('batch-result'); setSavedTemplate(null); setDetail(null); setCopySource(null); }
       if (result.employer) { setEditingEmployer(null); setView('employers'); }
       setSuccess(message);
       if (suffix.endsWith('/apply')) await props.onReload?.();
@@ -90,6 +93,7 @@ function NativeContracts(props: Props) {
       if (alive.current) {
         setError(hrError(caught));
         if (caught instanceof ApiError && caught.status === 409) {
+          if (suffix === '/contracts/batch') await props.onReload?.();
           try { const latest = await getOdaEsign(storeId); if (alive.current) setData(latest); if (detail) { const next = await getOdaEsignContract(storeId, detail.id); if (alive.current) setDetail(next.contract); } }
           catch { if (alive.current) { setDetail(null); setError(`${hrError(caught)} 계약을 다시 열어 최신 내용을 확인해 주세요.`); } }
         }
@@ -127,8 +131,10 @@ function NativeContracts(props: Props) {
       <div className="esign-list">{(validData?.templates ?? []).map(template => { const employer = validData?.employers.find(row => row.id === template.employerId); return <section className="esign-delivery" key={template.id}><div className="esign-topline"><div><h3>{template.name}</h3><p>{employer?.legalName || '등록 고용주 확인 필요'} · {employer ? businessNumber(employer.businessNumber) : ''}</p></div><span className="esign-badge">{template.active ? '사용 중' : '보관됨'}</span></div>
         <p className="esign-muted">{template.terms.jobTitle} · {template.terms.payType === 'monthly' ? '월급' : '시급'} {template.terms.basePay.toLocaleString('ko-KR')}원 · {template.terms.workDays}</p>
         <details><summary>저장한 근로조건 확인</summary><dl className="esign-summary">{Object.entries({ '근무 장소': template.terms.workplace, '근로일별 시간': template.terms.dailyWorkHours, '기본 시업·종업': `${template.terms.workStart}~${template.terms.workEnd}`, '기본 휴게': `${template.terms.breakMinutes}분`, '지급일': template.terms.payday, '임금 구성·계산': template.terms.payCalculation, '지급 방법': template.terms.payMethod, '휴일': template.terms.holidays, '연차': template.terms.annualLeave, '추가 약정': template.terms.additionalTerms || '없음' }).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="esign-template-value">{value}</dd></div>)}</dl></details>
-        <div className="esign-actions"><Button disabled={disabled || !template.active || !employer?.active} onClick={() => { setSavedTemplate(template); setCopySource(null); setDetail(null); setView('create'); setSuccess('저장한 양식을 불러왔습니다. 직원을 선택하고 새 계약 기간과 조건을 검토해 주세요.'); }}>이 양식으로 계약 작성</Button><Button variant="secondary" disabled={disabled || (!template.active && !employer?.active)} onClick={() => void run(`/templates/${encodeURIComponent(template.id)}`, { expectedVersion: template.version, active: !template.active }, template.active ? '양식을 보관했습니다. 기존 계약은 그대로 유지됩니다.' : '양식을 다시 사용할 수 있습니다.')}>{template.active ? '양식 보관' : '양식 복원'}</Button></div>
+        <div className="esign-actions"><Button disabled={disabled || !template.active || !employer?.active} onClick={() => { setSavedTemplate(template); setCopySource(null); setDetail(null); setView('create'); setSuccess('저장한 양식을 불러왔습니다. 직원을 선택하고 새 계약 기간과 조건을 검토해 주세요.'); }}>이 양식으로 계약 작성</Button><Button variant="secondary" disabled={disabled || !template.active || !employer?.active} onClick={() => { setSavedTemplate(template); setCopySource(null); setDetail(null); setView('batch'); setError(''); setSuccess(''); }}>여러 직원 초안 만들기</Button><Button variant="secondary" disabled={disabled || (!template.active && !employer?.active)} onClick={() => void run(`/templates/${encodeURIComponent(template.id)}`, { expectedVersion: template.version, active: !template.active }, template.active ? '양식을 보관했습니다. 기존 계약은 그대로 유지됩니다.' : '양식을 다시 사용할 수 있습니다.')}>{template.active ? '양식 보관' : '양식 복원'}</Button></div>
       </section>; })}</div><p className="esign-muted">양식 조건을 바꾸려면 새 계약 초안을 수정한 뒤 다른 이름으로 저장해 주세요. 양식 보관은 이미 작성·서명한 계약에 영향을 주지 않습니다.</p></>}
+    {view === 'batch' && manage && savedTemplate && validData && <EsignBatchForm key={savedTemplate.id} template={savedTemplate} employer={validData.employers.find(row => row.id === savedTemplate.employerId)} workspace={props.workspace} accounts={validData.accounts ?? props.accounts} busy={disabled} onSubmit={input => run('/contracts/batch', input, '계약 초안을 저장했습니다. 직원별 내용을 확인하고 각각 서명을 요청해 주세요.')} />}
+    {view === 'batch-result' && manage && <section className="esign-batch-result"><h2>생성한 계약 초안 {createdIds.length}건</h2><p>직원별 초안을 열어 조건을 검토·수정하고 서명을 요청해 주세요.</p><div className="esign-list">{createdIds.map(id => { const contract = contracts.find(row => row.id === id); return contract ? <button type="button" className="esign-row" key={id} disabled={disabled} onClick={() => void open(id)}><span><strong>{contract.employeeName} · {contract.title}</strong><small>{contract.employer.legalName} · 적용 {hrDate(contract.terms.effectiveDate)}</small></span><span>{statusName[contract.status]} <ChevronRight size={16} /></span></button> : null; })}</div></section>}
     {view === 'employers'  && manage && <><div className="esign-topline"><div><h2>고용주 관리</h2><p>현재 매장에 계약을 체결하는 실제 사업자를 등록합니다. 서명 담당자는 지정한 본인 계정으로 서명합니다.</p></div></div><div className="esign-list">{validData?.employers.map(employer => <div className="esign-row" key={employer.id}><span><strong>{employer.legalName}</strong><small>{businessNumber(employer.businessNumber)} · 대표 {employer.representativeName} · 서명 {employer.signerName}</small></span><Button variant="secondary" disabled={disabled} onClick={() => setEditingEmployer(employer)}>수정</Button></div>)}</div>
       <EmployerForm key={editingEmployer?.id || 'new'} employer={editingEmployer} accounts={validData?.accounts ?? props.accounts} busy={disabled} onCancel={() => setEditingEmployer(null)} onSubmit={input => run('/employers', input, '고용주 정보를 저장했습니다.')} />
     </>}

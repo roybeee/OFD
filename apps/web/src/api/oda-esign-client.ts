@@ -11,7 +11,7 @@ export interface EsignOverview {
   currentActorId: string;
   accounts?: Array<{ id: string; name: string; role: string }>;
 }
-export type EsignMutation = EsignOverview & { contract?: EsignContract; employer?: EsignEmployer; template?: NativeContractTemplate };
+export type EsignMutation = EsignOverview & { createdContractIds?: string[]; contract?: EsignContract; employer?: EsignEmployer; template?: NativeContractTemplate };
 const path = (storeId: string) => `/oda/${encodeURIComponent(storeId)}/esign`;
 const url = (storeId: string, suffix = '') => `${import.meta.env.VITE_API_BASE ?? '/api/v2'}${path(storeId)}${suffix}`;
 async function read<T>(storeId: string, suffix: string, signal?: AbortSignal): Promise<T> {

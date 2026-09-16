@@ -58,6 +58,45 @@ async function complete(app: FastifyInstance, contract: NativeContract) {
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(apps.splice(0).map(app => app.close())); });
 
 describe('native electronic contracts', () => {
+  it('atomically creates reviewed template drafts, rejects stale/invalid batches and safely replays receipts', async () => {
+    const { app, repository, contract, employer } = await setup();
+    const hr = await repository.get<any>('oda_hr', `hr:${storeId}`);
+    const otherActor = { ...(await repository.get<Actor>('actor', DEMO_IDS.staff))!, id: 'batch-other-staff', name: '두 번째 계정' };
+    await repository.commit({ changes: [{ type: 'actor', id: otherActor.id, expectedVersion: null, value: otherActor }] });
+    const second = await app.inject({ method: 'POST', url: `/api/v2/oda/${storeId}/hr/commands`, headers: { ...headers(), 'idempotency-key': randomUUID() },
+      payload: { expectedVersion: hr.version, type: 'employee.create', input: { employeeNumber: 'ESIGN-02', name: '두 번째 직원', hireDate: '2026-01-01', basePay: 2800000, actorId: otherActor.id } } });
+    expect(second.statusCode, second.body).toBe(200);
+    const workspace = second.json().workspace;
+    const template = (await post(app, '/templates', { expectedVersion: 0, sourceContractId: contract.id, sourceContractVersion: contract.version, name: '일괄 월급' })).json().template;
+    const payload = { expectedVersion: 0, savedTemplateId: template.id, savedTemplateVersion: 1, expectedEmployerVersion: employer.version,
+      expectedHrVersion: workspace.version, title: '일괄 근로계약', effectiveDate: '2026-10-01', endDate: '', employeeIds: workspace.employees.map((row: any) => row.id) };
+    expect((await post(app, '/contracts/batch', payload, DEMO_IDS.staff)).statusCode).toBe(403);
+    expect((await post(app, '/contracts/batch', { ...payload, expectedHrVersion: hr.version })).statusCode).toBe(409);
+    expect((await post(app, '/contracts/batch', { ...payload, expectedEmployerVersion: 999 })).statusCode).toBe(409);
+    expect((await post(app, '/contracts/batch', { ...payload, savedTemplateVersion: 999 })).statusCode).toBe(409);
+    expect((await post(app, '/contracts/batch', { ...payload, employeeIds: [contract.employeeId, contract.employeeId] })).statusCode).toBe(422);
+    expect((await post(app, '/contracts/batch', { ...payload, employeeIds: [contract.employeeId, 'other-store-employee'] })).statusCode).toBe(422);
+    expect((await post(app, '/contracts/batch', { ...payload, endDate: '2026-09-01' })).statusCode).toBe(422);
+    expect((await post(app, '/contracts/batch', { ...payload, employeeIds: Array.from({ length: 51 }, (_, i) => `employee-${i}`) })).statusCode).toBe(422);
+    expect((await post(app, '/contracts/batch', { ...payload, terms: { basePay: 1 } })).statusCode).toBe(422);
+    expect(await repository.list('oda_contract', [storeId])).toHaveLength(1);
+    const key = randomUUID();
+    const result = await post(app, '/contracts/batch', payload, DEMO_IDS.owner, key);
+    expect(result.statusCode, result.body).toBe(200);
+    const ids = result.json().createdContractIds;
+    expect(ids).toHaveLength(2); expect(new Set(ids).size).toBe(2);
+    for (const id of ids) {
+      const created = await repository.get<NativeContract>('oda_contract', id);
+      expect(created).toMatchObject({ status: 'draft', version: 1, signatures: [], deliveries: [], templateKey: `saved:${template.id}:v1`, terms: { ...terms, effectiveDate: '2026-10-01' } });
+      expect((await app.inject({ method: 'GET', url: `${base}/contracts/${id}`, headers: headers(DEMO_IDS.staff) })).statusCode).toBe(404);
+    }
+    const replay = await post(app, '/contracts/batch', payload, DEMO_IDS.owner, key);
+    expect(replay.json().createdContractIds).toEqual(ids);
+    expect((await post(app, '/contracts/batch', payload)).statusCode).toBe(409);
+    expect(await repository.list('oda_contract', [storeId])).toHaveLength(3);
+    expect(await repository.get('oda_contract', contract.id)).toEqual(contract);
+    expect((await repository.get<any>('oda_hr', `hr:${storeId}`)).employees.map((row: any) => row.basePay)).toEqual([3000000, 2800000]);
+  });
   it('stores employer-specific conditions without employee dates or signatures and guards template reuse', async () => {
     const { app, repository, contract, employer } = await setup();
     const payload = { expectedVersion: 0, sourceContractId: contract.id, sourceContractVersion: contract.version, name: '평일 월급 양식' };

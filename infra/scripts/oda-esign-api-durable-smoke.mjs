@@ -139,6 +139,13 @@ try {
   const fromTemplate = (await post('/contracts', { expectedVersion: 0, employerId: employer.id, employeeId, title: '저장 양식 재사용 검증', templateKey: 'ignored', terms,
     savedTemplateId: template.id, savedTemplateVersion: template.version })).json().contract;
   assert.equal(fromTemplate.templateKey, `saved:${template.id}:v1`);
+  const batchPayload = { expectedVersion: 0, savedTemplateId: template.id, savedTemplateVersion: template.version, expectedEmployerVersion: employer.version,
+    expectedHrVersion: hrResponse.json().workspace.version, title: '일괄 영속 초안', effectiveDate: '2026-11-01', endDate: '', employeeIds: [employeeId] };
+  await post('/contracts/batch', { ...batchPayload, employeeIds: [employeeId, 'missing-employee'] }, owner, 422);
+  assert.equal((await repository.list('oda_contract', [storeId])).length, 2);
+  const batchKey = randomUUID();
+  const batchIds = (await post('/contracts/batch', batchPayload, owner, 200, batchKey)).json().createdContractIds;
+  assert.equal(batchIds.length, 1);
   await post(`/templates/${template.id}`, { expectedVersion: 1, active: false });
   const restored = (await get(`/contracts/${contract.id}`, staff)).json().contract;
   assert.deepEqual(restored, contract);
@@ -160,6 +167,12 @@ try {
   const completedSnapshot = structuredClone(contract);
   await reconnect();
   assert.equal((await get()).json().templates[0].active, false);
+  assert.equal((await get(`/contracts/${batchIds[0]}`)).json().contract.status, 'draft');
+  const batchReplay = await post('/contracts/batch', batchPayload, owner, 200, batchKey);
+  assert.deepEqual(batchReplay.json().createdContractIds, batchIds);
+  assert.equal((await repository.list('oda_contract', [storeId])).length, 3);
+  console.log('PASS: atomic batch drafts and retry receipt survive DB restart and template archival');
+
   assert.equal((await get(`/contracts/${fromTemplate.id}`)).json().contract.status, 'draft');
   assert.deepEqual((await get(`/contracts/${contract.id}`, staff)).json().contract, completedSnapshot);
   assert.deepEqual((await get(`/contracts/${contract.id}/pdf`, staff)).rawPayload, originalContract.rawPayload);
