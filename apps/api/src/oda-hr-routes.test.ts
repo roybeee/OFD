@@ -209,9 +209,19 @@ describe('ODA HR API persistence, isolation and commands', () => {
     const ids = all.workspace.employees.map(row => row.id);
     const meeting = await command(app, 'meeting.create', { title: '면담', participantEmployeeIds: ids, scheduledDate: '2026-09-16' }, 2);
     expect(meeting.statusCode, meeting.body).toBe(200); const id = meeting.json().workspace.talent.meetings[0].id;
-    const saved = await command(app, 'meeting.privateNote', { id, note: '본인만 보는 개인 메모 7823' }, 3, DEMO_IDS.staff);
-    expect(saved.statusCode, saved.body).toBe(200); expect(saved.body).toContain('7823');
-    expect((await read(app)).body).not.toContain('7823'); expect((await read(app, DEMO_IDS.master)).body).not.toContain('7823');
+    const note = '본인만 보는 개인 메모 - 노출 금지 검증';
+    const saved = await command(app, 'meeting.privateNote', { id, note }, 3, DEMO_IDS.staff);
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().workspace.talent.meetings[0].privateNotes[DEMO_IDS.staff]).toBe(note);
+    for (const actorId of [DEMO_IDS.owner, DEMO_IDS.master]) {
+      const response = await read(app, actorId);
+      expect(response.statusCode, response.body).toBe(200);
+      // Nonparticipants may not receive the meeting at all; any visible meeting
+      // must still omit this employee's private note.
+      for (const visible of response.json().workspace.talent.meetings) expect(visible.privateNotes).toEqual({});
+      // A short numeric substring can occur in a random UUID; check the actual secret.
+      expect(response.body).not.toContain(note);
+    }
   });
 
   it('re-projects retry responses after a role downgrade without replaying a prior sensitive response', async () => {
