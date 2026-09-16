@@ -11,6 +11,7 @@ import { EsignBatchForm } from './EsignBatchForm';
 import { HrTalent } from './HrTalent';
 import { HrEmpty, hrDate, hrError, hrToday, type HrPanelProps } from './shared';
 import { esignTiming, esignTaskLabels, matchesEsignTask, type EsignTask } from './esign-followup';
+import { filterEsignRegister, saveEsignRegister, esignStatusLabels, type EsignStatusFilter } from './esign-register';
 import './HrEsign.css';
 
 type Props = HrPanelProps & { accounts: NonNullable<HrResponse['accounts']> };
@@ -32,6 +33,7 @@ function NativeContracts(props: Props) {
   const [data, setData] = useState<EsignOverview | null>(null);
   const [detail, setDetail] = useState<NativeContract | null>(null);
   const [view, setView] = useState<View>('list');
+  const [statusFilter, setStatusFilter] = useState<EsignStatusFilter>('all');
   const [filter, setFilter] = useState('all');
   const [task, setTask] = useState<EsignTask>('all');
   const [now, setNow] = useState(Date.now);
@@ -110,8 +112,26 @@ function NativeContracts(props: Props) {
     finally { locked.current = false; if (alive.current) setBusy(false); }
   }
   const contracts = validData?.contracts ?? [];
-  const scoped = contracts.filter(row => (filter === 'all' || row.employer.id === filter) && `${row.title} ${row.employeeName} ${row.employer.legalName} ${row.employer.businessNumber}`.includes(search.trim()));
-  const list = scoped.filter(row => matchesEsignTask(row, task, props.actorId, now));
+  const registerFilter = { employerId: filter, search, status: statusFilter, task };
+  const scoped = filterEsignRegister(contracts, { ...registerFilter, task: 'all' }, props.actorId, now);
+  const list = filterEsignRegister(contracts, registerFilter, props.actorId, now);
+  async function exportRegister() {
+    if (locked.current || disabled || !manage) return;
+    locked.current = true; setBusy(true); setError(''); setSuccess('');
+    try {
+      const latest = await getOdaEsign(storeId);
+      if (!alive.current) return;
+      if (latest.storeId !== storeId || latest.currentActorId !== props.actorId) throw new Error('계정 정보가 변경되었습니다. 다시 로그인해 주세요.');
+      setData(latest);
+      if (!latest.permissions.manage) throw new Error('계약 관리대장을 내려받을 권한이 없습니다.');
+      const exportedAt = Date.now(); setNow(exportedAt);
+      const rows = filterEsignRegister(latest.contracts, registerFilter, props.actorId, exportedAt);
+      if (!rows.length) throw new Error('최신 조회 결과에 내려받을 계약이 없습니다.');
+      saveEsignRegister(rows, exportedAt);
+      setSuccess(`최신 조회 조건에 맞는 계약 ${rows.length}건의 CSV 다운로드를 요청했습니다. 기기의 저장 파일을 확인해 주세요.`);
+    } catch (caught) { if (alive.current) setError(hrError(caught)); }
+    finally { locked.current = false; if (alive.current) setBusy(false); }
+  }
   const tasks: EsignTask[] = manage ? ['all', 'mine', 'expired', 'ending', 'ended', 'delivery', 'apply'] : ['all', 'mine', 'expired', 'ending', 'ended'];
   return <>
     {view !== 'list' && <Button className="esign-back" variant="ghost" disabled={busy} onClick={() => navigate('list')}>← 계약 목록</Button>}
@@ -122,10 +142,11 @@ function NativeContracts(props: Props) {
       <div className="esign-topline"><div><h2>{manage ? '전자 근로계약' : '내 전자계약'}</h2><p>{manage ? '사업자별 계약 작성부터 양측 서명, 사본 교부와 인사 반영까지 관리합니다.' : '계약 내용을 확인하고 서명하세요. 완료된 계약서는 언제든 내려받을 수 있습니다.'}</p></div><div className="esign-actions"><Button variant="secondary" disabled={disabled} onClick={() => setRetry(value => value + 1)} aria-label="전자계약 새로고침"><RefreshCcw size={16} /></Button>{manage && <><Button variant="secondary" disabled={disabled} onClick={() => navigate('employers')}>고용주 관리</Button><Button variant="secondary" disabled={disabled} onClick={() => navigate('templates')}>저장한 양식</Button><Button disabled={disabled || !validData?.employers.some(row => row.active)} onClick={() => navigate('create')}>계약 만들기</Button></>}</div></div>
       {validData && <><div className="esign-stats"><div className="esign-stat"><span>서명 진행</span><strong>{contracts.filter(row => row.status === 'pending' && !esignTiming(row, now).expired).length}</strong></div><div className="esign-stat"><span>체결 완료</span><strong>{contracts.filter(row => row.status === 'completed').length}</strong></div><div className="esign-stat"><span>교부 확인 대기</span><strong>{contracts.filter(row => row.status === 'completed' && !row.deliveries?.some(item => item.method === 'manual_handover')).length}</strong></div><div className="esign-stat"><span>인사 반영 대기</span><strong>{contracts.filter(row => row.status === 'completed' && !row.appliedAt).length}</strong></div></div>
       {manage && !validData.employers.some(row => row.active) && <HrEmpty title="먼저 계약당사자인 고용주를 등록해 주세요.">사업자등록번호와 실제 회사 서명 담당자를 지정하면 계약을 작성할 수 있습니다.</HrEmpty>}
-      <div className="esign-toolbar"><label><select aria-label="고용주별 계약" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">전체 고용주</option>{validData.employers.map(row => <option key={row.id} value={row.id}>{row.legalName} · {businessNumber(row.businessNumber)}</option>)}</select></label><label><input type="search" aria-label="계약 검색" placeholder="직원·계약명·사업자번호 검색" value={search} onChange={event => setSearch(event.target.value)} /></label></div>
-      <nav className="esign-task-filters" aria-label="계약 처리 항목">{tasks.map(key => <button type="button" key={key} aria-pressed={task === key} onClick={() => setTask(key)}>{esignTaskLabels[key]} <strong>{scoped.filter(row => matchesEsignTask(row, key, props.actorId, now)).length}</strong></button>)}</nav>
+      <div className="esign-toolbar"><label><select disabled={disabled} aria-label="고용주별 계약" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">전체 고용주</option>{validData.employers.map(row => <option key={row.id} value={row.id}>{row.legalName} · {businessNumber(row.businessNumber)}</option>)}</select></label><label><select aria-label="계약 진행 상태" disabled={disabled} value={statusFilter} onChange={event => setStatusFilter(event.target.value as EsignStatusFilter)}><option value="all">모든 진행 상태</option>{Object.entries(esignStatusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label><input disabled={disabled} type="search" aria-label="계약 검색" placeholder="직원·계약명·사업자번호 검색" value={search} onChange={event => setSearch(event.target.value)} /></label></div>
+      <div className="esign-actions"><span>조회 결과 {list.length}건</span>{manage && <Button variant="secondary" disabled={disabled || !list.length} onClick={() => void exportRegister()}>계약 관리대장 CSV</Button>}</div>
+      <nav className="esign-task-filters" aria-label="계약 처리 항목">{tasks.map(key => <button type="button" key={key} disabled={disabled} aria-pressed={task === key} onClick={() => setTask(key)}>{esignTaskLabels[key]} <strong>{scoped.filter(row => matchesEsignTask(row, key, props.actorId, now)).length}</strong></button>)}</nav>
       {['ending', 'ended'].includes(task) && <p className="esign-muted">계약서에 기록된 종료일 기준입니다. 새 계약은 별도로 검토하고 서명해야 하며, 기존 계약이 자동 종료·연장되지는 않습니다.</p>}
-      {!list.length ? <HrEmpty title={task !== 'all' || search || filter !== 'all' ? '조건에 맞는 계약이 없습니다.' : '등록된 전자계약이 없습니다.'}>{manage ? '고용주와 직원을 선택해 첫 계약을 준비하세요.' : '담당자가 서명을 요청하면 이곳에서 확인할 수 있습니다.'}</HrEmpty> : <div className="esign-list">{list.map(contract => <button className="esign-row" type="button" key={contract.id} disabled={disabled} onClick={() => void open(contract.id)}><span><strong>{contract.title}</strong><small>{contract.employeeName} · {contract.employer.legalName}<br />사업자 {businessNumber(contract.employer.businessNumber)} · 적용 {hrDate(contract.terms.effectiveDate)}</small></span><span className="esign-row-side"><span className={`esign-badge ${contract.status}`}>{esignTiming(contract, now).expired ? '서명 기한 경과' : statusName[contract.status]}</span>{contract.status === 'completed' && contract.terms.endDate && <small>기록된 종료일 {hrDate(contract.terms.endDate)}</small>}{contract.status === 'pending' && <small>서명 {contract.signatures?.length ?? 0}/2 · {hrDate(contract.expiresAt)}</small>}<ChevronRight size={16} /></span></button>)}</div>}</>}
+      {!list.length ? <HrEmpty title={task !== 'all' || search || filter !== 'all' || statusFilter !== 'all' ? '조건에 맞는 계약이 없습니다.' : '등록된 전자계약이 없습니다.'}>{manage ? '고용주와 직원을 선택해 첫 계약을 준비하세요.' : '담당자가 서명을 요청하면 이곳에서 확인할 수 있습니다.'}</HrEmpty> : <div className="esign-list">{list.map(contract => <button className="esign-row" type="button" key={contract.id} disabled={disabled} onClick={() => void open(contract.id)}><span><strong>{contract.title}</strong><small>{contract.employeeName} · {contract.employer.legalName}<br />사업자 {businessNumber(contract.employer.businessNumber)} · 적용 {hrDate(contract.terms.effectiveDate)}</small></span><span className="esign-row-side"><span className={`esign-badge ${contract.status}`}>{esignTiming(contract, now).expired ? '서명 기한 경과' : statusName[contract.status]}</span>{contract.status === 'completed' && contract.terms.endDate && <small>기록된 종료일 {hrDate(contract.terms.endDate)}</small>}{contract.status === 'pending' && <small>서명 {contract.signatures?.length ?? 0}/2 · {hrDate(contract.expiresAt)}</small>}<ChevronRight size={16} /></span></button>)}</div>}</>}
     </>}
     {view === 'templates' && manage && <><div className="esign-topline"><div><h2>사업자별 저장 양식</h2><p>계약 상세에서 검토한 근로조건을 양식으로 저장할 수 있습니다. 양식마다 고용주가 지정되며 근로자·기간·서명은 새 계약에서 정합니다.</p></div></div>
       {!(validData?.templates ?? []).length && <HrEmpty title="저장한 양식이 없습니다.">작성한 계약을 열어 ‘근로조건을 양식으로 저장’을 선택해 주세요.</HrEmpty>}

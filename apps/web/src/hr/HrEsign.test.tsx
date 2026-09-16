@@ -7,6 +7,7 @@ import { HrEsign, EsignPendingCard } from './HrEsign';
 import type { EsignOverview } from '../api/oda-esign-client';
 import { esignTiming, matchesEsignTask } from './esign-followup';
 import { EsignComparison, comparisonCandidates } from './EsignComparison';
+import { esignRegisterCsv, filterEsignRegister } from './esign-register';
 
 const api = vi.hoisted(() => ({ get: vi.fn(), detail: vi.fn(), mutate: vi.fn(), download: vi.fn() }));
 vi.mock('../api/oda-esign-client', () => ({ getOdaEsign: api.get, getOdaEsignContract: api.detail, mutateOdaEsign: api.mutate, downloadOdaEsign: api.download }));
@@ -27,6 +28,51 @@ async function input(name: string, value: string) { const element = container.qu
 async function render(storeId = 'store-a') { await act(async () => root.render(<HrEsign workspace={createHrWorkspace(storeId, '매장', new Date().toISOString())} actorId="staff" employeeId="employee" permissions={{ manage: false, payroll: false, self: true }} mutate={vi.fn()} busy={false} accounts={[]} />)); }
 
 describe('native employee electronic contract safety', () => {
+  it('exports only filtered rows with safe spreadsheet text and Korean timestamps', () => {
+    const { contract } = fixture();
+    contract.title = '=HYPERLINK("untrusted")\n쉼표,문구';
+    contract.employeeName = '  +SUM(1,1)';
+    contract.expiresAt = '2026-09-16T14:59:59Z';
+    const now = Date.parse('2026-09-16T15:00:00Z');
+    const filter = { employerId: contract.employer.id, search: '쉼표', status: 'pending' as const, task: 'expired' as const };
+    const rows = filterEsignRegister([contract, { ...contract, id: 'other', employer: { ...contract.employer, id: 'other-company' } }], filter, 'owner', now);
+    expect(rows).toEqual([contract]);
+    expect(filterEsignRegister(rows, { ...filter, status: 'draft' }, 'owner', now)).toEqual([]);
+    const csv = esignRegisterCsv(rows, now);
+    expect(csv.startsWith('\uFEFF')).toBe(true);
+    expect(csv).toContain('"\'=HYPERLINK(""untrusted"")\n쉼표,문구"');
+    expect(csv).toContain('"\'  +SUM(1,1)"');
+    expect(csv).toContain('2026-09-17 00:00:00');
+    expect(csv).toContain('2026-09-16 23:59:59');
+    expect(csv).toContain('서명 기한 경과');
+    expect(csv).not.toContain(contract.documentText);
+    expect(csv).not.toContain('password');
+  });
+  it('refreshes authorization and data for filtered CSV downloads and blocks revoked manager access', async () => {
+    const { contract, overview } = fixture(); overview.permissions.manage = true; overview.currentActorId = 'staff';
+    const draft = { ...contract, id: 'draft', title: '검토 초안', status: 'draft' as const };
+    api.get.mockResolvedValueOnce({ ...overview, contracts: [contract, draft] })
+      .mockResolvedValueOnce({ ...overview, contracts: [contract, { ...draft, title: '최신 초안' }] })
+      .mockResolvedValueOnce({ ...overview, permissions: { manage: false, sign: true }, contracts: [] });
+    const createUrl = vi.fn().mockReturnValue('blob:csv-test');
+    vi.stubGlobal('URL', class extends URL { static createObjectURL = createUrl; static revokeObjectURL = vi.fn(); });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    try {
+      await render();
+      const select = container.querySelector<HTMLSelectElement>('[aria-label="계약 진행 상태"]')!;
+      await act(async () => { select.value = 'draft'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(button('김직원 근로계약서')).toBeUndefined();
+      await click('계약 관리대장 CSV');
+      expect(api.get).toHaveBeenCalledTimes(2); expect(anchorClick).toHaveBeenCalledOnce();
+      expect(container.textContent).toContain('계약 1건의 CSV');
+      expect(container.textContent).toContain('최신 초안');
+      await click('계약 관리대장 CSV');
+      expect(anchorClick).toHaveBeenCalledOnce();
+      expect(container.textContent).toContain('내려받을 권한이 없습니다');
+      expect(button('계약 관리대장 CSV')).toBeUndefined();
+      expect(api.mutate).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('compares only the same employee and legal employer, highlights all term changes and switches baselines without writes', async () => {
     const { contract, overview } = fixture(); overview.permissions.manage = true;
     const old = { ...contract, id: 'old-contract', title: '이전 계약', status: 'completed' as const, completedAt: '2026-08-01T15:30:00Z', terms: { ...contract.terms, basePay: 11000, additionalTerms: '주말 근무 협의', effectiveDate: '2026-08-01' } };
