@@ -14,7 +14,7 @@ import { z } from 'zod';
 import type { AuthService } from './auth-service.ts';
 import { audit } from './events.ts';
 import { idempotentMutation } from './idempotency.ts';
-import { createNativeContractPdf } from './oda-esign-pdf.ts';
+import { assertNativeContractPdfText, createNativeContractPdf } from './oda-esign-pdf.ts';
 import { ACCESS_POLICY_ID, resolveVisiblePages, type AccessPolicyDocument } from './service.ts';
 
 const paramsSchema = z.object({ storeId: z.string().min(1).max(120), id: z.string().min(1).max(120).optional() });
@@ -115,8 +115,14 @@ function detail(contract: StoredContract): NativeContract {
 }
 async function overview(repository: StateRepository, actor: Actor, storeId: string) {
   const contracts = await repository.list<StoredContract>('oda_contract', [storeId]);
+  const accessible = contracts.filter(row => row.storeId === storeId && visible(row, actor));
+  // List comparisons and CSV exports use these terms too. Never present an
+  // unchecked summary that the authorized detail endpoint would reject.
+  if (accessible.some(contract => !verifyNativeContractIntegrity(contract, sha256))) {
+    throw new DomainError('ESIGN_INTEGRITY', '계약 원문 또는 증빙의 무결성을 확인할 수 없습니다.', 503);
+  }
   const employers = manager(actor) ? await repository.list<NativeEmployer>('oda_employer', [storeId]) : [];
-  const result = { storeId, employers, contracts: contracts.filter(row => row.storeId === storeId && visible(row, actor)).map(summary),
+  const result = { storeId, employers, contracts: accessible.map(summary),
     permissions: { manage: manager(actor), sign: ['store_owner', 'store_staff', 'hq_master'].includes(actor.role) }, currentActorId: actor.id };
   if (!manager(actor)) return result;
   const policy = await repository.get<AccessPolicyDocument>('access_policy', ACCESS_POLICY_ID);
@@ -317,13 +323,16 @@ export function registerOdaEsignRoutes(app: FastifyInstance, repository: StateRe
             const employer = await employerFor(scoped, storeId, existing.employer.id);
             if (!employer.active || employer.version !== existing.employer.version) throw new DomainError('ESIGN_EMPLOYER_CHANGED', '사업자 정보가 변경되었습니다. 초안을 다시 저장해 주세요.', 409);
             await signerAccount(scoped, storeId, existing.employer.signerActorId);
-            contract = { ...requestNativeContract(existing, input, ctx), personnelBaseline: baseline(employee), personnelHistoryLength: employee.history.length };
+            const requested = requestNativeContract(existing, input, ctx);
+            assertNativeContractPdfText(requested);
+            contract = { ...requested, personnelBaseline: baseline(employee), personnelHistoryLength: employee.history.length };
           } else if (action === 'sign') {
             await signerAccount(scoped, storeId, current.id);
             if (input.role === 'employee') {
               const employee = await employeeFor(scoped, storeId, existing.employeeId);
               if (employee.actorId !== current.id || existing.employeeActorId !== current.id) throw new DomainError('ESIGN_SIGNER_FORBIDDEN', '계약과 구성원에 연결된 본인 계정으로 서명해 주세요.', 403);
             }
+            assertNativeContractPdfText(existing);
             contract = signNativeContract(existing, input, ctx);
             if (contract.status === 'completed' && existing.status !== 'completed') {
               for (const kind of ['contract', 'evidence'] as const) {

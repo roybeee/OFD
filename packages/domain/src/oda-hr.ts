@@ -85,7 +85,10 @@ const employeeKeys = ['employeeNumber', 'name', 'actorId', 'departmentId', 'jobT
 function employeeChanges(employee: HrEmployee, input: Record<string, unknown>): void {
   keys(input, employeeKeys);
   for (const key of ['employeeNumber', 'name'] as const) if (key in input) employee[key] = hrText(input, key, 100);
-  for (const key of ['departmentId', 'jobTitle'] as const) if (key in input) employee[key] = hrText(input, key, 120, true);
+  if ('departmentId' in input) employee.departmentId = hrText(input, 'departmentId', 120, true);
+  // Native contract duties allow 300 characters; preserve completed terms when
+  // applying them to personnel instead of rejecting or truncating signed text.
+  if ('jobTitle' in input) employee.jobTitle = hrText(input, 'jobTitle', 300, true);
   for (const key of ['actorId', 'email', 'phone'] as const) if (key in input) {
     const value = hrText(input, key, key === 'email' ? 254 : 120, true);
     if (value) employee[key] = value; else delete employee[key];

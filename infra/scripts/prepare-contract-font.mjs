@@ -1,12 +1,12 @@
-// Build-time dependency only. No contract data or runtime request reaches Google.
+// Build-time dependency only. No contract data or runtime request reaches the font host.
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
-const target = fileURLToPath(new URL('../../apps/api/assets/fonts/NanumGothic-Regular.ttf', import.meta.url));
-const expected = '76f45ef4a6bcff344c837c95a7dcc26e017e38b5846d5ae0cdcb5b86be2e2d31';
-const source = 'https://raw.githubusercontent.com/google/fonts/16680f8688ffcd467d2eb2146a9ce0343404581d/ofl/nanumgothic/NanumGothic-Regular.ttf';
+const target = fileURLToPath(new URL('../../apps/api/assets/fonts/NotoSansCJKkr-Regular.otf', import.meta.url));
+const expected = '6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a';
+const source = 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf';
 const matches = bytes => createHash('sha256').update(bytes).digest('hex') === expected;
 let cached;
 try { cached = await readFile(target); } catch (error) { if (error.code !== 'ENOENT') throw error; }

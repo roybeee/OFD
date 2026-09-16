@@ -171,6 +171,53 @@ describe('native electronic contracts', () => {
     expect((await repository.get<NativeContract>('oda_contract', contract.id))!.signatures).toEqual([]);
   });
 
+  it('checks integrity for visible summaries without exposing or blocking hidden contracts', async () => {
+    const { app, repository, contract } = await setup();
+    const pending = await requestContract(app, contract);
+    await repository.commit({ changes: [{ type: 'oda_contract', id: pending.id, storeId,
+      expectedVersion: pending.version, value: { ...pending, version: pending.version + 1,
+        terms: { ...pending.terms, basePay: 1 } } }] });
+    for (const actorId of [DEMO_IDS.owner, DEMO_IDS.staff]) {
+      const listed = await app.inject({ method: 'GET', url: base, headers: headers(actorId) });
+      expect(listed.statusCode, listed.body).toBe(503);
+      expect(listed.json().error.code).toBe('ESIGN_INTEGRITY');
+      expect(listed.json()).not.toHaveProperty('contracts');
+    }
+    const colleague = { ...(await repository.get<Actor>('actor', DEMO_IDS.staff))!, id: 'unrelated-review-staff' };
+    await repository.commit({ changes: [{ type: 'actor', id: colleague.id, expectedVersion: null, value: colleague }] });
+    const unrelated = await app.inject({ method: 'GET', url: base, headers: headers(colleague.id) });
+    expect(unrelated.statusCode, unrelated.body).toBe(200);
+    expect(unrelated.json().contracts).toEqual([]);
+  });
+
+  it('blocks unsupported PDF text before requesting or adding any legacy pending signature', async () => {
+    const { app, repository, contract, employer } = await setup();
+    const edited = await post(app, '/contracts', { id: contract.id, expectedVersion: contract.version,
+      employerId: employer.id, employeeId: contract.employeeId, title: contract.title,
+      templateKey: contract.templateKey, terms: { ...contract.terms, additionalTerms: '담당 업무 🧑' } });
+    expect(edited.statusCode, edited.body).toBe(200);
+    const draft = edited.json().contract as NativeContract, requestKey = randomUUID();
+    const denied = await post(app, `/contracts/${draft.id}/request`, { expectedVersion: draft.version,
+      expiresAt: new Date(Date.now() + 86400000).toISOString() }, DEMO_IDS.owner, requestKey);
+    expect(denied.statusCode, denied.body).toBe(422);
+    expect(denied.json().error.code).toBe('ESIGN_UNSUPPORTED_TEXT');
+    expect(await repository.get('oda_contract', draft.id)).toEqual(draft);
+    expect(await repository.getIdempotency(DEMO_IDS.owner, requestKey)).toBeUndefined();
+
+    // Model a pending document stored before font coverage checks existed.
+    const preflight = vi.spyOn(nativePdf, 'assertNativeContractPdfText').mockImplementationOnce(() => {});
+    const pending = await requestContract(app, draft);
+    preflight.mockRestore();
+    const storedPending = await repository.get('oda_contract', pending.id);
+    const signKey = randomUUID();
+    const rejected = await post(app, `/contracts/${pending.id}/sign`, signature(pending, 'employee'), DEMO_IDS.staff, signKey);
+    expect(rejected.statusCode, rejected.body).toBe(422);
+    expect(rejected.json().error.code).toBe('ESIGN_UNSUPPORTED_TEXT');
+    expect(await repository.get('oda_contract', pending.id)).toEqual(storedPending);
+    expect(await repository.getIdempotency(DEMO_IDS.staff, signKey)).toBeUndefined();
+    expect(await repository.list('oda_contract_artifact', [storeId])).toEqual([]);
+  });
+
   it('stores the exact completed PDFs once and keeps delivery separate from downloads', async () => {
     const { app, repository, contract } = await setup(); const completed = await complete(app, contract);
     expect(completed.status).toBe('completed'); expect(completed.signatures).toHaveLength(2); expect(completed.deliveries).toEqual([]);
@@ -215,6 +262,32 @@ describe('native electronic contracts', () => {
     const denied = await post(app, `/contracts/${contract.id}/apply`, { expectedVersion: completed.version });
     expect(denied.statusCode, denied.body).toBe(409); expect(denied.json().error.code).toBe('ESIGN_PERSONNEL_CHANGED');
     expect((await repository.get<NativeContract>('oda_contract', contract.id))!.appliedAt).toBeUndefined();
+  });
+
+  it('preserves all 300 characters of signed duties when applying personnel and rejects overflow', async () => {
+    const { app, repository, contract, employer } = await setup();
+    const jobTitle = '매장 운영과 고객 응대 '.repeat(30).slice(0, 300);
+    expect(jobTitle).toHaveLength(300);
+    const input = { id: contract.id, expectedVersion: contract.version, employerId: employer.id,
+      employeeId: contract.employeeId, title: contract.title, templateKey: contract.templateKey,
+      terms: { ...contract.terms, jobTitle } };
+    const overflow = await post(app, '/contracts', { ...input, terms: { ...input.terms, jobTitle: `${jobTitle}가` } });
+    expect(overflow.statusCode, overflow.body).toBe(422);
+    const edited = await post(app, '/contracts', input);
+    expect(edited.statusCode, edited.body).toBe(200);
+    const completed = await complete(app, edited.json().contract);
+    expect(completed.documentText).toContain(`담당 업무: ${jobTitle}`);
+    const applied = await post(app, `/contracts/${contract.id}/apply`, { expectedVersion: completed.version });
+    expect(applied.statusCode, applied.body).toBe(200);
+    const hr = (await repository.get<any>('oda_hr', `hr:${storeId}`))!;
+    expect(hr.employees[0].jobTitle).toBe(jobTitle);
+    expect(applied.json().contract.terms.jobTitle).toBe(jobTitle);
+    const invalidPersonnel = await app.inject({ method: 'POST', url: `/api/v2/oda/${storeId}/hr/commands`,
+      headers: { ...headers(), 'idempotency-key': randomUUID() },
+      payload: { expectedVersion: hr.version, type: 'employee.update', input: { id: contract.employeeId,
+        effectiveDate: '2026-01-01', reason: '담당 업무 길이 검증', changes: { jobTitle: `${jobTitle}가` } } } });
+    expect(invalidPersonnel.statusCode, invalidPersonnel.body).toBe(422);
+    expect((await repository.get<any>('oda_hr', `hr:${storeId}`)).employees[0].jobTitle).toBe(jobTitle);
   });
 
   it('rolls back the second signature if completed document generation fails, then safely retries', async () => {

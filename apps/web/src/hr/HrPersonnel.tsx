@@ -153,7 +153,7 @@ function EmployeeEditor({ employee, onClose, ...props }: Props & { employee?: Hr
   }}><div className="hr-form-grid">
     <Field label="이름"><input name="name" required maxLength={100} defaultValue={employee?.name} data-dialog-initial /></Field><Field label="사번"><input name="employeeNumber" required maxLength={100} defaultValue={employee?.employeeNumber} /></Field>
     <Field label="소속 조직"><select name="departmentId" defaultValue={employee?.departmentId || ''}><option value="">미배정</option>{w.departments.filter(row => !row.archived || row.id === employee?.departmentId).map(row => <option key={row.id} value={row.id}>{row.name}{row.archived ? ' (보관됨)' : ''}</option>)}</select></Field>
-    <Field label="직책"><input name="jobTitle" maxLength={120} defaultValue={employee?.jobTitle} /></Field>
+    <Field label="직책"><input name="jobTitle" maxLength={300} defaultValue={employee?.jobTitle} /></Field>
     <Field label="고용형태"><select name="employmentType" defaultValue={employee?.employmentType || 'regular'}>{Object.entries(employmentNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field>
     <Field label="입사일"><input name="hireDate" type="date" required defaultValue={employee?.hireDate} /></Field>
     <Field label="이메일"><input name="email" type="email" maxLength={254} defaultValue={employee?.email} /></Field><Field label="연락처"><input name="phone" type="tel" maxLength={120} defaultValue={employee?.phone} /></Field>

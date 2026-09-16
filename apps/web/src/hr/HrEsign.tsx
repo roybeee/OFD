@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { type NativeContract, type NativeContractTerms, type NativeEmployer, type NativeContractTemplate } from '../../../../packages/domain/src/oda-esign';
+import { validateNativeSignatureStrokes, type NativeContract, type NativeContractTerms, type NativeEmployer, type NativeContractTemplate } from '../../../../packages/domain/src/oda-esign';
 import type { HrResponse } from '../api/oda-hr-client';
 import { ApiError, newIdempotencyKey } from '../api/client';
 import { downloadOdaEsign, getOdaEsign, getOdaEsignContract, mutateOdaEsign, type EsignOverview } from '../api/oda-esign-client';
@@ -96,9 +96,43 @@ function NativeContracts(props: Props) {
       if (alive.current) {
         setError(hrError(caught));
         if (caught instanceof ApiError && caught.status === 409) {
-          if (suffix === '/contracts/batch') await props.onReload?.();
-          try { const latest = await getOdaEsign(storeId); if (alive.current) setData(latest); if (detail) { const next = await getOdaEsignContract(storeId, detail.id); if (alive.current) setDetail(next.contract); } }
-          catch { if (alive.current) { setDetail(null); setError(`${hrError(caught)} 계약을 다시 열어 최신 내용을 확인해 주세요.`); } }
+          try {
+            if (suffix === '/contracts/batch') await props.onReload?.();
+            const latest = await getOdaEsign(storeId);
+            if (!alive.current) return false;
+            setData(latest);
+            if (savedTemplate) {
+              const nextTemplate = latest.templates?.find(row => row.id === savedTemplate.id);
+              const nextEmployer = latest.employers.find(row => row.id === nextTemplate?.employerId);
+              // A form must never silently submit changed template conditions with old consent.
+              if (view === 'batch' && nextTemplate?.active && nextEmployer?.active) setSavedTemplate(nextTemplate);
+              else { setSavedTemplate(null); setView('templates'); setError(`${hrError(caught)} 최신 양식을 확인하고 계약 작성을 다시 시작해 주세요.`); }
+            }
+            if (editingEmployer && suffix === '/employers') {
+              setEditingEmployer(latest.employers.find(row => row.id === editingEmployer.id) ?? null);
+              setError(`${hrError(caught)} 최신 고용주 정보를 불러왔습니다. 내용을 확인하고 다시 수정해 주세요.`);
+            }
+            if (detail) {
+              const next = await getOdaEsignContract(storeId, detail.id);
+              if (alive.current) {
+                setDetail(next.contract);
+                // Uncontrolled edit fields still contain the previous snapshot. Unmount them
+                // before adopting a newer version so retry cannot overwrite a concurrent edit.
+                if (view === 'edit') {
+                  setView('detail');
+                  setError(`${hrError(caught)} 수정 내용은 저장되지 않았습니다. 최신 계약을 확인한 뒤 ‘초안 수정’에서 다시 입력해 주세요.`);
+                }
+              }
+            }
+          }
+          catch {
+            if (alive.current) {
+              setDetail(null);
+              if (view === 'edit') setView('detail');
+              if (savedTemplate) { setSavedTemplate(null); setView('templates'); }
+              setError(`${hrError(caught)} 계약을 다시 열어 최신 내용을 확인해 주세요.`);
+            }
+          }
         }
       }
       return false;
@@ -158,7 +192,7 @@ function NativeContracts(props: Props) {
     {view === 'batch' && manage && savedTemplate && validData && <EsignBatchForm key={savedTemplate.id} template={savedTemplate} employer={validData.employers.find(row => row.id === savedTemplate.employerId)} workspace={props.workspace} accounts={validData.accounts ?? props.accounts} busy={disabled} onSubmit={input => run('/contracts/batch', input, '계약 초안을 저장했습니다. 직원별 내용을 확인하고 각각 서명을 요청해 주세요.')} />}
     {view === 'batch-result' && manage && <section className="esign-batch-result"><h2>생성한 계약 초안 {createdIds.length}건</h2><p>직원별 초안을 열어 조건을 검토·수정하고 서명을 요청해 주세요.</p><div className="esign-list">{createdIds.map(id => { const contract = contracts.find(row => row.id === id); return contract ? <button type="button" className="esign-row" key={id} disabled={disabled} onClick={() => void open(id)}><span><strong>{contract.employeeName} · {contract.title}</strong><small>{contract.employer.legalName} · 적용 {hrDate(contract.terms.effectiveDate)}</small></span><span>{statusName[contract.status]} <ChevronRight size={16} /></span></button> : null; })}</div></section>}
     {view === 'employers'  && manage && <><div className="esign-topline"><div><h2>고용주 관리</h2><p>현재 매장에 계약을 체결하는 실제 사업자를 등록합니다. 서명 담당자는 지정한 본인 계정으로 서명합니다.</p></div></div><div className="esign-list">{validData?.employers.map(employer => <div className="esign-row" key={employer.id}><span><strong>{employer.legalName}</strong><small>{businessNumber(employer.businessNumber)} · 대표 {employer.representativeName} · 서명 {employer.signerName}</small></span><Button variant="secondary" disabled={disabled} onClick={() => setEditingEmployer(employer)}>수정</Button></div>)}</div>
-      <EmployerForm key={editingEmployer?.id || 'new'} employer={editingEmployer} accounts={validData?.accounts ?? props.accounts} busy={disabled} onCancel={() => setEditingEmployer(null)} onSubmit={input => run('/employers', input, '고용주 정보를 저장했습니다.')} />
+      <EmployerForm key={editingEmployer ? `${editingEmployer.id}:${editingEmployer.version}` : 'new'} employer={editingEmployer} accounts={validData?.accounts ?? props.accounts} busy={disabled} onCancel={() => setEditingEmployer(null)} onSubmit={input => run('/employers', input, '고용주 정보를 저장했습니다.')} />
     </>}
     {(view === 'create' || view === 'edit') && manage && validData && <ContractForm savedTemplate={savedTemplate} sourceContract={copySource} contract={view === 'edit' ? detail : null} employers={validData.employers.filter(row => row.active)} employees={props.workspace.employees.filter(row => row.status !== 'retired')} busy={disabled} onSubmit={input => run('/contracts', input, '계약 초안을 저장했습니다. 전체 내용을 확인한 뒤 서명을 요청해 주세요.')} />}
     {view === 'detail' && detail && <ContractDetail key={`${detail.id}:${detail.version}`} contract={detail} contracts={contracts} actorId={props.actorId} manage={manage} busy={disabled} onSaveTemplate={name => run('/templates', { expectedVersion: 0, sourceContractId: detail.id, sourceContractVersion: detail.version, name }, '근로조건을 사업자별 양식으로 저장했습니다.')} onEdit={() => setView('edit')} onCopy={() => { setCopySource(detail); setView('create'); setDetail(null); setSuccess('기존 조건을 불러왔습니다. 새 계약 기간과 조건을 검토한 뒤 초안을 저장해 주세요.'); }} onAction={(action, input, message) => run(`/contracts/${encodeURIComponent(detail.id)}/${action}`, { expectedVersion: detail.version, ...input }, message)} onDownload={download} />}
@@ -204,7 +238,8 @@ function SignatureForm({ contract, role, busy, onAction }: { contract: NativeCon
   const [password, setPassword] = useState('');
   const [typedName, setTypedName] = useState('');
   const expectedName = role === 'employee' ? contract.employeeName : contract.employer.signerName;
-  const validStroke = strokes.reduce((total, stroke) => total + stroke.length, 0) >= 3;
+  let validStroke = false;
+  try { validateNativeSignatureStrokes(strokes); validStroke = true; } catch { /* Incomplete drawings remain editable. */ }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!consent || !validStroke || !password || typedName.trim() !== expectedName) return;
     const secret = password; setPassword('');

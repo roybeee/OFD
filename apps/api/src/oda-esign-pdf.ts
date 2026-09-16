@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, URL as NodeURL } from "node:url";
-import { nativeEsignCanonicalJson, verifyNativeContractIntegrity, type NativeContract, type NativeContractSignature } from "@ofd/domain";
+import { openSync as openFont } from "fontkit";
+import { DomainError, nativeEsignCanonicalJson, verifyNativeContractIntegrity, type NativeContract, type NativeContractSignature } from "@ofd/domain";
 
 /** Resolve only when generating a PDF. Server imports in a Vite/JSDOM test may
  * have an HTTP module URL and a browser URL constructor, whereas deployed src/
@@ -11,12 +12,12 @@ import { nativeEsignCanonicalJson, verifyNativeContractIntegrity, type NativeCon
 function koreanFontPath(): string {
   const moduleUrl = new NodeURL(import.meta.url);
   if (moduleUrl.protocol === "file:") {
-    const besideModule = fileURLToPath(new NodeURL("../assets/fonts/NanumGothic-Regular.ttf", moduleUrl));
+    const besideModule = fileURLToPath(new NodeURL("../assets/fonts/NotoSansCJKkr-Regular.otf", moduleUrl));
     if (existsSync(besideModule)) return besideModule;
   }
   let directory = process.cwd();
   for (;;) {
-    for (const relative of ["apps/api/assets/fonts/NanumGothic-Regular.ttf", "assets/fonts/NanumGothic-Regular.ttf"]) {
+    for (const relative of ["apps/api/assets/fonts/NotoSansCJKkr-Regular.otf", "assets/fonts/NotoSansCJKkr-Regular.otf"]) {
       const candidate = resolve(directory, relative);
       if (existsSync(candidate)) return candidate;
     }
@@ -25,6 +26,33 @@ function koreanFontPath(): string {
     directory = parent;
   }
   throw new Error("전자계약 PDF용 한국어 글꼴을 찾을 수 없습니다. API assets/fonts 배포를 확인해 주세요.");
+}
+let coverageFont: ReturnType<typeof openFont> | undefined;
+function supported(character: string): boolean {
+  if (character === "\n" || character === "\r" || character === "\t") return true;
+  coverageFont ??= openFont(koreanFontPath());
+  return coverageFont.hasGlyphForCodePoint(character.codePointAt(0)!);
+}
+
+/** Prevent an on-screen agreement from losing characters in its permanent copy.
+ * Run before freezing a draft, and for legacy pending contracts before signing.
+ * Completed artifacts retain their originally stored bytes. */
+export function assertNativeContractPdfText(contract: NativeContract): void {
+  const values = [contract.documentText, contract.title, contract.id, contract.templateKey,
+    contract.employeeName, contract.employer.legalName, contract.employer.signerName,
+    ...contract.signatures.map(signature => signature.name)];
+  const missing = [...new Set(Array.from(values.join("\n")))].filter(character => !supported(character));
+  if (missing.length) {
+    const codes = missing.slice(0, 8).map(character => `U+${character.codePointAt(0)!.toString(16).toUpperCase()}`).join(", ");
+    throw new DomainError("ESIGN_UNSUPPORTED_TEXT", `계약서에 PDF로 표시할 수 없는 문자가 있습니다 (${codes}). 이모지·특수문자를 일반 문자로 수정해 주세요. 이미 요청한 계약은 취소 후 새 초안에서 수정해 주세요.`, 422);
+  }
+}
+
+/** Untrusted technical metadata (for example User-Agent) must not prevent the
+ * final signature. Preserve unsupported code points as explicit Unicode escapes;
+ * the signature hash still covers the original unmodified metadata. */
+function metadataText(value: string): string {
+  return Array.from(value).map(character => supported(character) ? character : `\\u{${character.codePointAt(0)!.toString(16).toUpperCase()}}`).join("");
 }
 const LEFT = 48;
 const RIGHT = 48;
@@ -114,7 +142,7 @@ class ContractLayout {
   }
 
   field(label: string, value: string | undefined | null) {
-    this.text(`${label}  ${value || "-"}`, { size: 9.4, lineHeight: 15.2 });
+    this.text(`${label}  ${metadataText(value || "-")}`, { size: 9.4, lineHeight: 15.2 });
     this.gap(3);
   }
 
@@ -204,6 +232,7 @@ const EVENT_LABELS: Record<string, string> = {
 export async function createNativeContractPdf(contract: NativeContract, kind: "contract" | "evidence"): Promise<Buffer> {
   const hash = (value: string) => createHash("sha256").update(value).digest("hex");
   if (!verifyNativeContractIntegrity(contract, hash)) throw new Error("전자계약 원문 또는 진행기록 무결성을 확인하지 못했습니다.");
+  assertNativeContractPdfText(contract);
   const evidence = kind === "evidence";
   const title = evidence ? "ODA 계약 진행기록" : "ODA 전자근로계약";
   // A contract copy remains stable when later download/delivery records change.
@@ -250,6 +279,7 @@ export async function createNativeContractPdf(contract: NativeContract, kind: "c
     } else {
       layout.section("진행기록의 범위");
       layout.text("이 문서는 ODA 내부 시스템이 저장한 계약 진행기록입니다. 제3자 인증서나 공인 시점확인 증명서가 아닙니다. 각 사건의 해시는 기록 간 연결을 확인하는 값이며, 별도의 외부 시각 인증을 의미하지 않습니다.", { size: 9, color: MUTED });
+      layout.text("접속 환경 등 부가 기록의 지원되지 않는 문자는 Unicode 이스케이프로 표시합니다. 서명기록 해시는 표시 변환 전 원본 데이터를 기준으로 합니다.", { size: 9, color: MUTED });
       if (contract.status === "completed") layout.text("완료본과 함께 보관된 이 파일은 체결 시점의 기록입니다. 이후 사본 제공 및 인사정보 반영 기록은 ODA 계약 상세 화면에서 확인합니다.", { size: 9, color: MUTED });
       layout.field("기록 기준 시각", instant(at));
       layout.field("기록 버전", String(contract.version));

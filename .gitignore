@@ -7,6 +7,7 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 apps/api/assets/fonts/NanumGothic-Regular.ttf
+apps/api/assets/fonts/NotoSansCJKkr-Regular.otf
 
 # Secrets and local environment
 .env

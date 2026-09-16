@@ -5,6 +5,7 @@ import { createHrWorkspace } from '../../../../packages/domain/src/oda-hr';
 import { createNativeContract, createNativeEmployer, requestNativeContract, type NativeEsignContext } from '../../../../packages/domain/src/oda-esign';
 import { HrEsign, EsignPendingCard } from './HrEsign';
 import type { EsignOverview } from '../api/oda-esign-client';
+import { ApiError } from '../api/client';
 import { esignTiming, matchesEsignTask } from './esign-followup';
 import { EsignComparison, comparisonCandidates } from './EsignComparison';
 import { esignRegisterCsv, filterEsignRegister } from './esign-register';
@@ -28,6 +29,83 @@ async function input(name: string, value: string) { const element = container.qu
 async function render(storeId = 'store-a') { await act(async () => root.render(<HrEsign workspace={createHrWorkspace(storeId, '매장', new Date().toISOString())} actorId="staff" employeeId="employee" permissions={{ manage: false, payroll: false, self: true }} mutate={vi.fn()} busy={false} accounts={[]} />)); }
 
 describe('native employee electronic contract safety', () => {
+  it.each([false, true])('prevents stale draft retry after conflict even when refresh fails: %s', async refreshFails => {
+    const { contract, overview } = fixture(); contract.status = 'draft'; overview.permissions.manage = true;
+    const latest = { ...contract, version: contract.version + 1, terms: { ...contract.terms, basePay: 16000 }, documentText: '동료가 수정한 최신 계약 원문' };
+    api.get.mockResolvedValueOnce(overview).mockResolvedValue({ ...overview, contracts: [latest] });
+    api.detail.mockResolvedValueOnce({ contract });
+    if (refreshFails) api.detail.mockRejectedValueOnce(new Error('새 계약 조회 실패'));
+    else api.detail.mockResolvedValue({ contract: latest });
+    api.mutate.mockRejectedValueOnce(new ApiError(409, 'ESIGN_VERSION_CONFLICT', '계약이 변경되었습니다.'))
+      .mockResolvedValue({ ...overview, contracts: [latest], contract: { ...latest, version: latest.version + 1 } });
+    const workspace = createHrWorkspace('store-a', '매장', new Date().toISOString());
+    workspace.employees.push({ id: 'employee', name: '김직원', employeeNumber: '001', actorId: 'staff', departmentId: '', jobTitle: '매장 업무', employmentType: 'part_time', status: 'active', hireDate: '2026-09-16', payType: 'hourly', basePay: 11000, history: [] });
+    await act(async () => root.render(<HrEsign workspace={workspace} actorId="owner" permissions={{ manage: true, payroll: false, self: false }} mutate={vi.fn()} busy={false} accounts={[]} />));
+    await click('김직원 근로계약서'); await click('초안 수정'); await input('basePay', '12500');
+    await click('초안 저장 후 미리보기');
+    expect(api.mutate.mock.calls[0][2]).toMatchObject({ expectedVersion: contract.version, terms: { basePay: 12500 } });
+    expect(button('초안 저장 후 미리보기')).toBeUndefined();
+    if (refreshFails) {
+      expect(container.querySelector('form')).toBeNull();
+      expect(container.textContent).toContain('계약을 다시 열어 최신 내용을 확인해 주세요.');
+      expect(api.mutate).toHaveBeenCalledOnce();
+      return;
+    }
+    expect(container.textContent).toContain('수정 내용은 저장되지 않았습니다. 최신 계약을 확인한 뒤');
+    expect(container.textContent).toContain(latest.documentText);
+    await click('초안 수정');
+    expect(container.querySelector<HTMLInputElement>('[name="basePay"]')!.value).toBe('16000');
+    await click('초안 저장 후 미리보기');
+    expect(api.mutate.mock.calls[1][2]).toMatchObject({ expectedVersion: latest.version, terms: { basePay: 16000 } });
+  });
+  it('requires reviewing changed employer and template versions again after a batch conflict', async () => {
+    const { contract, employer, overview } = fixture(); overview.permissions.manage = true;
+    const { effectiveDate: _start, endDate: _end, ...terms } = contract.terms;
+    const template = { id: 'batch-template', storeId: 'store-a', employerId: employer.id, version: 1, name: '공통 시급', active: true, terms, createdAt: contract.createdAt, createdBy: 'owner', updatedAt: contract.createdAt, updatedBy: 'owner' };
+    overview.templates = [template]; overview.accounts = [{ id: 'staff', name: '김직원', role: 'store_staff' }];
+    const updatedEmployer = { ...employer, version: employer.version + 1, legalName: '변경된 고용주' };
+    const updatedTemplate = { ...template, version: template.version + 1, terms: { ...terms, basePay: 15000 } };
+    const latest = { ...overview, employers: [updatedEmployer], templates: [updatedTemplate] };
+    api.get.mockResolvedValueOnce(overview).mockResolvedValue(latest);
+    api.mutate.mockRejectedValueOnce(new ApiError(409, 'ESIGN_VERSION_CONFLICT', '고용주 정보가 변경되었습니다.'))
+      .mockResolvedValue({ ...latest, createdContractIds: [] });
+    const workspace = createHrWorkspace('store-a', '매장', new Date().toISOString());
+    workspace.employees.push({ id: 'employee', name: '김직원', employeeNumber: '001', actorId: 'staff', departmentId: '', jobTitle: '매장 업무', employmentType: 'part_time', status: 'active', hireDate: '2026-09-16', payType: 'hourly', basePay: 11000, history: [] });
+    await act(async () => root.render(<HrEsign workspace={workspace} actorId="owner" permissions={{ manage: true, payroll: false, self: false }} mutate={vi.fn()} busy={false} accounts={[]} onReload={vi.fn()} />));
+    await click('저장한 양식'); await click('여러 직원 초안 만들기'); await input('batchStart', '2026-10-01');
+    await click('검색 결과 모두 선택'); await click('선택한 직원과 조건 검토');
+    await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await click('1명 초안 저장');
+    expect(container.textContent).toContain('직원·고용주 또는 양식 정보가 갱신되었습니다.');
+    expect(container.textContent).toContain('변경된 고용주');
+    expect(container.textContent).toContain('새 계약 초안: 시급 15,000원');
+    expect(button('1명 초안 저장')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(false);
+    await click('대상자 선택으로'); await click('선택한 직원과 조건 검토');
+    expect(button('1명 초안 저장')?.disabled).toBe(true);
+    await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await click('1명 초안 저장');
+    expect(api.mutate.mock.calls[1][2]).toMatchObject({ expectedEmployerVersion: updatedEmployer.version, savedTemplateVersion: updatedTemplate.version, expectedHrVersion: workspace.version });
+  });
+  it('returns to current templates when a selected batch template was archived', async () => {
+    const { contract, employer, overview } = fixture(); overview.permissions.manage = true;
+    const { effectiveDate: _start, endDate: _end, ...terms } = contract.terms;
+    const template = { id: 'batch-template', storeId: 'store-a', employerId: employer.id, version: 1, name: '공통 시급', active: true, terms, createdAt: contract.createdAt, createdBy: 'owner', updatedAt: contract.createdAt, updatedBy: 'owner' };
+    overview.templates = [template]; overview.accounts = [{ id: 'staff', name: '김직원', role: 'store_staff' }];
+    api.get.mockResolvedValueOnce(overview).mockResolvedValue({ ...overview, templates: [{ ...template, active: false, version: 2 }] });
+    api.mutate.mockRejectedValueOnce(new ApiError(409, 'ESIGN_VERSION_CONFLICT', '양식이 변경되었습니다.'));
+    const workspace = createHrWorkspace('store-a', '매장', new Date().toISOString());
+    workspace.employees.push({ id: 'employee', name: '김직원', employeeNumber: '001', actorId: 'staff', departmentId: '', jobTitle: '매장 업무', employmentType: 'part_time', status: 'active', hireDate: '2026-09-16', payType: 'hourly', basePay: 11000, history: [] });
+    await act(async () => root.render(<HrEsign workspace={workspace} actorId="owner" permissions={{ manage: true, payroll: false, self: false }} mutate={vi.fn()} busy={false} accounts={[]} />));
+    await click('저장한 양식'); await click('여러 직원 초안 만들기'); await input('batchStart', '2026-10-01');
+    await click('검색 결과 모두 선택'); await click('선택한 직원과 조건 검토');
+    await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await click('1명 초안 저장');
+    expect(container.textContent).toContain('최신 양식을 확인하고 계약 작성을 다시 시작해 주세요.');
+    expect(container.textContent).toContain('보관됨');
+    expect(button('1명 초안 저장')).toBeUndefined();
+    expect(button('여러 직원 초안 만들기')?.disabled).toBe(true);
+  });
   it('exports only filtered rows with safe spreadsheet text and Korean timestamps', () => {
     const { contract } = fixture();
     contract.title = '=HYPERLINK("untrusted")\n쉼표,문구';
@@ -241,6 +319,13 @@ describe('native employee electronic contract safety', () => {
     expect(button('본인 확인 후 서명')?.disabled).toBe(true);
     const canvas = container.querySelector('canvas')!;
     vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 300, height: 100 } as DOMRect);
+    // Three disconnected taps satisfy the old point-count check but are not a signature.
+    for (const x of [10, 70, 170]) for (const type of ['pointerdown', 'pointerup']) {
+      await act(async () => { const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 10 }); Object.defineProperty(event, 'pointerId', { value: 1 }); canvas.dispatchEvent(event); });
+    }
+    expect(button('본인 확인 후 서명')?.disabled).toBe(true);
+    expect(api.mutate).not.toHaveBeenCalled();
+    await click('서명 지우기');
     for (const [type, x, y] of [['pointerdown', 10, 10], ['pointermove', 70, 55], ['pointermove', 170, 15], ['pointerup', 170, 15]] as const) {
       await act(async () => { const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y }); Object.defineProperty(event, 'pointerId', { value: 1 }); canvas.dispatchEvent(event); });
     }
