@@ -6,6 +6,7 @@ import { createNativeContract, createNativeEmployer, requestNativeContract, type
 import { HrEsign, EsignPendingCard } from './HrEsign';
 import type { EsignOverview } from '../api/oda-esign-client';
 import { esignTiming, matchesEsignTask } from './esign-followup';
+import { EsignComparison, comparisonCandidates } from './EsignComparison';
 
 const api = vi.hoisted(() => ({ get: vi.fn(), detail: vi.fn(), mutate: vi.fn(), download: vi.fn() }));
 vi.mock('../api/oda-esign-client', () => ({ getOdaEsign: api.get, getOdaEsignContract: api.detail, mutateOdaEsign: api.mutate, downloadOdaEsign: api.download }));
@@ -26,6 +27,45 @@ async function input(name: string, value: string) { const element = container.qu
 async function render(storeId = 'store-a') { await act(async () => root.render(<HrEsign workspace={createHrWorkspace(storeId, '매장', new Date().toISOString())} actorId="staff" employeeId="employee" permissions={{ manage: false, payroll: false, self: true }} mutate={vi.fn()} busy={false} accounts={[]} />)); }
 
 describe('native employee electronic contract safety', () => {
+  it('compares only the same employee and legal employer, highlights all term changes and switches baselines without writes', async () => {
+    const { contract, overview } = fixture(); overview.permissions.manage = true;
+    const old = { ...contract, id: 'old-contract', title: '이전 계약', status: 'completed' as const, completedAt: '2026-08-01T15:30:00Z', terms: { ...contract.terms, basePay: 11000, additionalTerms: '주말 근무 협의', effectiveDate: '2026-08-01' } };
+    const latest = { ...old, id: 'latest-contract', title: '최근 계약', completedAt: '2026-09-01T12:00:00Z', terms: { ...contract.terms, payType: 'monthly' as const, effectiveDate: '2026-10-01' } };
+    const unrelated = [ { ...latest, id: 'another-person', employeeId: 'another' }, { ...latest, id: 'another-account', employeeActorId: 'different-account' },
+      { ...latest, id: 'another-employer', employer: { ...latest.employer, id: 'another-company' } }, { ...latest, id: 'another-business', employer: { ...latest.employer, businessNumber: '1234567890' } },
+      { ...latest, id: 'another-store', storeId: 'another' }, { ...latest, id: 'uncompleted', status: 'pending' as const } ];
+    overview.contracts = [contract, old, ...unrelated, latest];
+    expect(comparisonCandidates(contract, overview.contracts).map(row => row.id)).toEqual(['latest-contract', 'old-contract']);
+    api.get.mockResolvedValue(overview); api.detail.mockResolvedValue({ contract });
+    await render(); await click('김직원 근로계약서');
+    const panel = container.querySelector('[aria-label="체결 계약과 근로조건 비교"]')!;
+    expect(panel.textContent).toContain('월급·시급 기준이 달라');
+    expect(panel.textContent).toContain('비교 계약의 시작일이 현재 계약보다 나중');
+    expect(panel.querySelectorAll('tbody tr')).toHaveLength(3);
+    const select = panel.querySelector<HTMLSelectElement>('select')!;
+    expect([...select.options].map(option => option.value)).toEqual(['latest-contract', 'old-contract']);
+    await act(async () => { select.value = old.id; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(panel.textContent).toContain('시급 11,000원');
+    expect(panel.textContent).toContain('시급 12,000원');
+    expect(panel.textContent).toContain('주말 근무 협의');
+    expect(panel.textContent).not.toContain('월급·시급 기준이 달라');
+    await click('전체 항목 보기');
+    expect(panel.querySelectorAll('tbody tr')).toHaveLength(Object.keys(contract.terms).length);
+    expect(api.mutate).not.toHaveBeenCalled();
+    overview.permissions.manage = false; api.get.mockResolvedValue({ ...overview, storeId: 'store-b', contracts: [{ ...contract, storeId: 'store-b' }] });
+    api.detail.mockResolvedValue({ contract: { ...contract, storeId: 'store-b' } });
+    await render('store-b'); await click('김직원 근로계약서');
+    expect(container.querySelector('[aria-label="체결 계약과 근로조건 비교"]')).toBeNull();
+  });
+  it('distinguishes no comparison contract from identical terms', async () => {
+    const { contract } = fixture();
+    await act(async () => root.render(<EsignComparison current={contract} contracts={[]} busy={false} />));
+    expect(container.textContent).toContain('비교 가능한 체결 계약이 없습니다');
+    const identical = { ...contract, id: 'identical', status: 'completed' as const };
+    await act(async () => root.render(<EsignComparison current={contract} contracts={[identical]} busy={false} />));
+    expect(container.textContent).toContain('변경 항목 0개');
+    expect(container.textContent).toContain('근로조건이 동일합니다');
+  });
   it('reviews a batch before saving, preserves retry identity and opens only newly created drafts', async () => {
     const { contract, overview } = fixture(); overview.permissions.manage = true;
     const { effectiveDate: _start, endDate: _end, ...terms } = contract.terms;
