@@ -58,6 +58,43 @@ async function complete(app: FastifyInstance, contract: NativeContract) {
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(apps.splice(0).map(app => app.close())); });
 
 describe('native electronic contracts', () => {
+  it('stores employer-specific conditions without employee dates or signatures and guards template reuse', async () => {
+    const { app, repository, contract, employer } = await setup();
+    const payload = { expectedVersion: 0, sourceContractId: contract.id, sourceContractVersion: contract.version, name: '평일 월급 양식' };
+    expect((await post(app, '/templates', payload, DEMO_IDS.staff)).statusCode).toBe(403);
+    const key = randomUUID();
+    const saved = await post(app, '/templates', payload, DEMO_IDS.owner, key);
+    expect(saved.statusCode, saved.body).toBe(200);
+    const template = saved.json().template;
+    expect(template.employerId).toBe(employer.id); expect(template.terms.basePay).toBe(terms.basePay);
+    for (const field of ['employeeId', 'employeeActorId', 'employeeName', 'signatures', 'documentText', 'documentHash', 'artifacts']) expect(template).not.toHaveProperty(field);
+    expect(template.terms).not.toHaveProperty('effectiveDate'); expect(template.terms).not.toHaveProperty('endDate');
+    const replay = await post(app, '/templates', payload, DEMO_IDS.owner, key);
+    expect(replay.json().template.id).toBe(template.id);
+    expect(await repository.list('oda_contract_template', [storeId])).toHaveLength(1);
+    expect((await post(app, '/templates', payload)).statusCode).toBe(409);
+    expect((await post(app, '/templates', { ...payload, name: '다른 이름', sourceContractVersion: 999 })).statusCode).toBe(409);
+    const staffList = await app.inject({ method: 'GET', url: base, headers: headers(DEMO_IDS.staff) });
+    expect(staffList.json().templates).toBeUndefined();
+    const create = { expectedVersion: 0, employerId: employer.id, employeeId: contract.employeeId, title: '양식으로 작성', templateKey: 'spoofed', terms, savedTemplateId: template.id, savedTemplateVersion: template.version };
+    const created = await post(app, '/contracts', create);
+    expect(created.statusCode, created.body).toBe(200);
+    expect(created.json().contract.templateKey).toBe(`saved:${template.id}:v1`);
+    expect(created.json().contract.signatures).toEqual([]);
+    const other = await post(app, '/employers', { ...employer, id: undefined, expectedVersion: 0, businessNumber: businessNumber('987654321'), legalName: '다른 법인' });
+    expect((await post(app, '/contracts', { ...create, employerId: other.json().employer.id })).statusCode).toBe(422);
+    const cross = await app.inject({ method: 'POST', url: `/api/v2/oda/${DEMO_IDS.storeHapjeong}/esign/templates/${template.id}`, headers: { ...headers(DEMO_IDS.master), 'idempotency-key': randomUUID() }, payload: { expectedVersion: 1, active: false } });
+    expect(cross.statusCode, cross.body).toBe(404);
+    const archived = await post(app, `/templates/${template.id}`, { expectedVersion: 1, active: false, terms: { basePay: 1 } });
+    expect(archived.statusCode, archived.body).toBe(200);
+    expect(archived.json().template.terms).toEqual(template.terms);
+    expect((await post(app, '/contracts', create)).statusCode).toBe(409);
+    expect((await post(app, `/templates/${template.id}`, { expectedVersion: 1, active: true })).statusCode).toBe(409);
+    const restored = await post(app, `/templates/${template.id}`, { expectedVersion: 2, active: true });
+    expect(restored.statusCode, restored.body).toBe(200);
+    expect((await post(app, '/contracts', { ...create, savedTemplateVersion: 3 })).statusCode).toBe(200);
+    expect(await repository.get('oda_contract', contract.id)).toEqual(contract);
+  });
   it('scopes multiple legal employers and binds employee identity to server HR data', async () => {
     const { app, contract, employer } = await setup();
     expect(contract.employeeActorId).toBe(DEMO_IDS.staff); expect(contract.employeeName).toBe('계약 직원');

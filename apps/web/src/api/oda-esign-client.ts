@@ -1,16 +1,17 @@
-import type { NativeContract as EsignContract, NativeEmployer as EsignEmployer } from '../../../../packages/domain/src/oda-esign';
+import type { NativeContract as EsignContract, NativeEmployer as EsignEmployer, NativeContractTemplate } from '../../../../packages/domain/src/oda-esign';
 import { ApiError, mutateV2, newIdempotencyKey } from './client';
 
 export type EsignContractSummary = Omit<EsignContract, 'documentText' | 'signatures' | 'audit'> & { signatures: Array<Pick<EsignContract['signatures'][number], 'role' | 'actorId' | 'name' | 'at'>> };
 export interface EsignOverview {
   storeId: string;
   employers: EsignEmployer[];
+  templates?: NativeContractTemplate[];
   contracts: EsignContractSummary[];
   permissions: { manage: boolean; sign: boolean };
   currentActorId: string;
   accounts?: Array<{ id: string; name: string; role: string }>;
 }
-export type EsignMutation = EsignOverview & { contract?: EsignContract; employer?: EsignEmployer };
+export type EsignMutation = EsignOverview & { contract?: EsignContract; employer?: EsignEmployer; template?: NativeContractTemplate };
 const path = (storeId: string) => `/oda/${encodeURIComponent(storeId)}/esign`;
 const url = (storeId: string, suffix = '') => `${import.meta.env.VITE_API_BASE ?? '/api/v2'}${path(storeId)}${suffix}`;
 async function read<T>(storeId: string, suffix: string, signal?: AbortSignal): Promise<T> {

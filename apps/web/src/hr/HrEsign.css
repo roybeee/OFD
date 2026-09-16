@@ -90,3 +90,5 @@
 .esign-task-filters button[aria-pressed="true"] { background:#f0ecff; color:#4932a0; border-color:#9d8ddb; }
 .esign-task-filters button:focus-visible { outline:3px solid #7c6ac9; outline-offset:2px; }
 .esign-task-filters strong { margin-left:5px; }
+.esign-template-save { margin:18px 0; }
+.esign-template-value { white-space:pre-wrap; overflow-wrap:anywhere; }

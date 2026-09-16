@@ -26,6 +26,30 @@ async function input(name: string, value: string) { const element = container.qu
 async function render(storeId = 'store-a') { await act(async () => root.render(<HrEsign workspace={createHrWorkspace(storeId, '매장', new Date().toISOString())} actorId="staff" employeeId="employee" permissions={{ manage: false, payroll: false, self: true }} mutate={vi.fn()} busy={false} accounts={[]} />)); }
 
 describe('native employee electronic contract safety', () => {
+  it('saves reviewed conditions and reuses the employer template without carrying over employee or dates', async () => {
+    const { contract, overview } = fixture(); overview.permissions.manage = true;
+    const { effectiveDate: _start, endDate: _end, ...conditions } = contract.terms;
+    const template = { id: 'saved-template', storeId: 'store-a', employerId: contract.employer.id, version: 1, name: '평일 시급', active: true, terms: conditions, createdAt: contract.createdAt, createdBy: 'owner', updatedAt: contract.createdAt, updatedBy: 'owner' };
+    api.get.mockResolvedValue(overview); api.detail.mockResolvedValue({ contract });
+    api.mutate.mockResolvedValueOnce({ ...overview, templates: [template], template }).mockResolvedValueOnce({ ...overview, templates: [template], contract: { ...contract, id: 'new-template-draft', version: 1, status: 'draft', signatures: [] } });
+    const workspace = createHrWorkspace('store-a', '매장', new Date().toISOString());
+    workspace.employees.push({ id: 'different-employee', name: '다른 직원', employeeNumber: '002', actorId: 'other-staff', departmentId: '', jobTitle: '기존 업무', employmentType: 'regular', status: 'active', hireDate: '2026-09-16', payType: 'monthly', basePay: 3500000, history: [] });
+    await act(async () => root.render(<HrEsign workspace={workspace} actorId="owner" permissions={{ manage: true, payroll: false, self: false }} mutate={vi.fn()} busy={false} accounts={[]} />));
+    await click('김직원 근로계약서'); await click('근로조건을 양식으로 저장');
+    await input('templateName', '평일 시급'); await click('검토한 조건으로 양식 저장');
+    expect(api.mutate.mock.calls[0][1]).toBe('/templates');
+    expect(api.mutate.mock.calls[0][2]).toEqual({ expectedVersion: 0, sourceContractId: contract.id, sourceContractVersion: contract.version, name: '평일 시급' });
+    await click('이 양식으로 계약 작성');
+    const employee = container.querySelector<HTMLSelectElement>('[name="employeeId"]')!;
+    expect(employee.value).toBe('');
+    expect(container.querySelector<HTMLInputElement>('[name="effectiveDate"]')!.value).toBe('');
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(employee, 'different-employee'); employee.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(container.querySelector<HTMLInputElement>('[name="basePay"]')!.value).toBe('12000');
+    expect(container.querySelector<HTMLInputElement>('[name="jobTitle"]')!.value).toBe(contract.terms.jobTitle);
+    await input('effectiveDate', '2026-10-01'); await click('초안 저장 후 미리보기');
+    expect(api.mutate.mock.calls[1][2]).toMatchObject({ expectedVersion: 0, savedTemplateId: template.id, savedTemplateVersion: 1, employerId: template.employerId, employeeId: 'different-employee', terms: { effectiveDate: '2026-10-01', basePay: 12000 } });
+    expect(api.mutate.mock.calls[1][2]).not.toHaveProperty('id');
+  });
   it('refreshes the employee reminder after returning to the app', async () => {
     const { overview } = fixture();
     api.get.mockResolvedValueOnce({ ...overview, contracts: [] }).mockResolvedValueOnce(overview);

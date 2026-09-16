@@ -33,6 +33,12 @@ export interface NativeContractTerms {
   additionalTerms: string;
 }
 export type NativeSignatureRole = 'employer' | 'employee';
+/** Reusable employer-scoped conditions; no employee, dates, signatures or evidence. */
+export interface NativeContractTemplate {
+  id: string; storeId: string; employerId: string; version: number; name: string; active: boolean;
+  terms: Omit<NativeContractTerms, 'effectiveDate' | 'endDate'>;
+  createdAt: string; createdBy: string; updatedAt: string; updatedBy: string;
+}
 export interface NativeSignaturePoint { x: number; y: number; }
 export type NativeSignatureStroke = NativeSignaturePoint[];
 export interface NativeContractSignature {

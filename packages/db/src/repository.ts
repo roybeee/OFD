@@ -23,6 +23,7 @@ export type AggregateType =
   | "oda_employer"
   | "oda_contract"
   | "oda_contract_artifact"
+  | "oda_contract_template"
   | "oda_import_profile"
   | "oda_expense_rules";
 

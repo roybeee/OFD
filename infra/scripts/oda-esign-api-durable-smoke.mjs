@@ -126,6 +126,8 @@ try {
     jobTitle: '매장 운영', workplace: '서울 합성 매장', workDays: '월~금', dailyWorkHours: '월~금 각 8시간', workStart: '09:00', workEnd: '18:00', breakMinutes: 60,
     payday: '매월 25일', payCalculation: '기본급 320만원, 연장근로 별도', payMethod: '본인 계좌 이체', holidays: '일요일 유급 주휴일', annualLeave: '법정 기준', additionalTerms: '영속 검증용 문구 582374' };
   let contract = (await post('/contracts', { expectedVersion: 0, employerId: employer.id, employeeId, title: '근로계약서 영속검증', templateKey: 'monthly-v1', terms })).json().contract;
+  const template = (await post('/templates', { expectedVersion: 0, sourceContractId: contract.id, sourceContractVersion: contract.version, name: '월급 영속검증 양식' })).json().template;
+  assert.equal(template.terms.effectiveDate, undefined); assert.equal(template.employeeId, undefined);
   await get(`/contracts/${contract.id}`, staff, 404);
   contract = (await post(`/contracts/${contract.id}/request`, { expectedVersion: contract.version, expiresAt: new Date(Date.now() + 86400000).toISOString() })).json().contract;
   assert.equal(contract.status, 'pending');
@@ -133,6 +135,11 @@ try {
   contract = (await post(`/contracts/${contract.id}/sign`, signature(contract, 'employer'))).json().contract;
   assert.equal(contract.status, 'pending'); assert.equal(contract.signatures.length, 1);
   await reconnect();
+  assert.deepEqual((await get()).json().templates, [template]);
+  const fromTemplate = (await post('/contracts', { expectedVersion: 0, employerId: employer.id, employeeId, title: '저장 양식 재사용 검증', templateKey: 'ignored', terms,
+    savedTemplateId: template.id, savedTemplateVersion: template.version })).json().contract;
+  assert.equal(fromTemplate.templateKey, `saved:${template.id}:v1`);
+  await post(`/templates/${template.id}`, { expectedVersion: 1, active: false });
   const restored = (await get(`/contracts/${contract.id}`, staff)).json().contract;
   assert.deepEqual(restored, contract);
   assert.equal((await repository.list('oda_contract_artifact', [storeId])).length, 0);
@@ -152,6 +159,8 @@ try {
   assert.equal(contract.deliveries.length, 0);
   const completedSnapshot = structuredClone(contract);
   await reconnect();
+  assert.equal((await get()).json().templates[0].active, false);
+  assert.equal((await get(`/contracts/${fromTemplate.id}`)).json().contract.status, 'draft');
   assert.deepEqual((await get(`/contracts/${contract.id}`, staff)).json().contract, completedSnapshot);
   assert.deepEqual((await get(`/contracts/${contract.id}/pdf`, staff)).rawPayload, originalContract.rawPayload);
   assert.deepEqual((await get(`/contracts/${contract.id}/evidence`, staff)).rawPayload, originalEvidence.rawPayload);

@@ -7,7 +7,7 @@ import {
   recordNativeContractDelivery, applyNativeContract,
   verifyNativeContractIntegrity, nativeEsignCanonicalJson,
   type Actor, type Store, type HrWorkspace, type HrEmployee, type HrContext,
-  type NativeEmployer, type NativeContract, type NativeEsignContext,
+  type NativeEmployer, type NativeContract, type NativeContractTemplate, type NativeEsignContext,
 } from '@ofd/domain';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -99,6 +99,11 @@ async function employerFor(repository: StateRepository, storeId: string, id: unk
   if (!employer || employer.storeId !== storeId) throw new DomainError('ESIGN_EMPLOYER_NOT_FOUND', '이 매장에 등록된 계약 사업자를 선택해 주세요.', 404);
   return employer;
 }
+async function templateFor(repository: StateRepository, storeId: string, id: unknown): Promise<NativeContractTemplate> {
+  const value = typeof id === 'string' ? await repository.get<NativeContractTemplate>('oda_contract_template', id) : undefined;
+  if (!value || value.storeId !== storeId) throw new DomainError('ESIGN_TEMPLATE_NOT_FOUND', '이 매장의 저장한 양식을 찾을 수 없습니다.', 404);
+  return value;
+}
 function summary(contract: StoredContract) {
   const { documentText: _text, personnelBaseline: _baseline, personnelHistoryLength: _history, ...rest } = contract;
   // Stroke vectors and request metadata belong in the authorized detail view only.
@@ -117,7 +122,7 @@ async function overview(repository: StateRepository, actor: Actor, storeId: stri
   const policy = await repository.get<AccessPolicyDocument>('access_policy', ACCESS_POLICY_ID);
   const accounts = (await repository.list<Actor>('actor')).filter(row => row.active && ['store_owner', 'hq_master', 'store_staff'].includes(row.role)
     && hasStore(row, storeId) && hasHrPage(row, policy)).map(({ id, name, role }) => ({ id, name, role }));
-  return { ...result, accounts };
+  return { ...result, accounts, templates: await repository.list<NativeContractTemplate>('oda_contract_template', [storeId]) };
 }
 async function persistContract(repository: StateRepository, actor: Actor, contract: StoredContract, previousVersion: number,
   action: string, changes: AggregateChange[] = []): Promise<void> {
@@ -179,6 +184,12 @@ export function registerOdaEsignRoutes(app: FastifyInstance, repository: StateRe
         const employer = await employerFor(scoped, storeId, body.employerId);
         const employee = await employeeFor(scoped, storeId, body.employeeId);
         const input = { ...body, storeId, employeeName: employee.name, employeeActorId: employee.actorId };
+        if (body.savedTemplateId !== undefined) {
+          const template = await templateFor(scoped, storeId, body.savedTemplateId);
+          if (!template.active || template.version !== body.savedTemplateVersion) throw new DomainError('ESIGN_TEMPLATE_CHANGED', '양식이 변경되었거나 보관 처리되었습니다. 저장한 양식 목록에서 다시 선택해 주세요.', 409);
+          if (template.employerId !== employer.id) throw new DomainError('ESIGN_TEMPLATE_EMPLOYER', '이 양식에 지정된 고용주로 계약을 작성해 주세요.', 422);
+          Object.assign(input, { templateKey: `saved:${template.id}:v${template.version}` });
+        }
         const existing = typeof body.id === 'string' ? await contractFor(scoped, storeId, body.id, current) : undefined;
         if (!existing && body.expectedVersion !== 0) throw new DomainError('ESIGN_VERSION_CONFLICT', '새 계약은 버전 0으로 등록해 주세요.', 409);
         if (!existing && (await scoped.list('oda_contract', [storeId])).length >= 5000) throw new DomainError('ESIGN_CONTRACT_LIMIT', '매장별 계약 보관 한도에 도달했습니다.', 422);
@@ -189,6 +200,43 @@ export function registerOdaEsignRoutes(app: FastifyInstance, repository: StateRe
     const { actor: current } = await scope(repository, actor, storeId);
     return { ...await overview(repository, current, storeId), contract: detail(await contractFor(repository, storeId, receipt!.id, current)) };
   });
+  for (const editing of [false, true]) {
+    app.post(editing ? `${base}/templates/:id` : `${base}/templates`, async (request, reply) => {
+      privateResponse(reply);
+      const { storeId, id } = paramsSchema.parse(request.params);
+      const { actor } = await scope(repository, request.actor, storeId); requireManager(actor);
+      const body = bodySchema.parse(request.body);
+      const receipt = await idempotentMutation(request, reply, repository, actor, 200,
+        tx => tx.exclusiveTransaction(`oda:hr:${storeId}`, async scoped => {
+          const { actor: current } = await scope(scoped, actor, storeId); requireManager(current);
+          const now = new Date().toISOString();
+          const existing = editing ? await templateFor(scoped, storeId, id) : undefined;
+          if (body.expectedVersion !== (existing?.version ?? 0)) throw new DomainError('ESIGN_VERSION_CONFLICT', '양식이 변경되었습니다. 다시 불러와 주세요.', 409);
+          let template: NativeContractTemplate;
+          if (existing) {
+            template = { ...existing, active: z.boolean().parse(body.active), version: existing.version + 1, updatedAt: now, updatedBy: current.id };
+          } else {
+            const source = await contractFor(scoped, storeId, z.string().min(1).max(120).parse(body.sourceContractId), current);
+            if (source.version !== body.sourceContractVersion) throw new DomainError('ESIGN_VERSION_CONFLICT', '참고 계약이 변경되었습니다. 내용을 다시 확인해 주세요.', 409);
+            const name = z.string().trim().min(1).max(100).regex(/^[^\u0000-\u001f]+$/).parse(body.name).normalize('NFC');
+            const { effectiveDate: _start, endDate: _end, ...terms } = source.terms;
+            template = { id: randomUUID(), storeId, employerId: source.employer.id, version: 1, name, active: true, terms,
+              createdAt: now, createdBy: current.id, updatedAt: now, updatedBy: current.id };
+          }
+          const employer = await employerFor(scoped, storeId, template.employerId);
+          if (template.active && !employer.active) throw new DomainError('ESIGN_EMPLOYER_INACTIVE', '사용 중인 고용주의 양식만 저장하거나 복원할 수 있습니다.', 422);
+          const templates = await scoped.list<NativeContractTemplate>('oda_contract_template', [storeId]);
+          if (!existing && templates.length >= 200) throw new DomainError('ESIGN_TEMPLATE_LIMIT', '매장별 저장 양식 한도에 도달했습니다.', 422);
+          if (template.active && templates.some(row => row.id !== template.id && row.active && row.employerId === template.employerId && row.name === template.name)) throw new DomainError('ESIGN_TEMPLATE_DUPLICATE', '이 고용주에게 같은 이름의 양식이 있습니다. 다른 이름을 사용해 주세요.', 409);
+          await scoped.commit({ changes: [{ type: 'oda_contract_template', id: template.id, storeId, expectedVersion: existing?.version ?? null, value: template }],
+            audits: [audit(current, 'oda_contract_template', template.id, existing ? 'esign.template.state' : 'esign.template.create', storeId,
+              { version: existing?.version ?? 0 }, { version: template.version, active: template.active })] });
+          return { id: template.id };
+        }));
+      const { actor: current } = await scope(repository, actor, storeId); requireManager(current);
+      return { ...await overview(repository, current, storeId), template: await templateFor(repository, storeId, receipt!.id) };
+    });
+  }
   for (const action of ['request', 'sign', 'decline', 'cancel', 'delivery', 'apply'] as const) {
     app.post(`${base}/contracts/:id/${action}`, async (request, reply) => {
       privateResponse(reply);
