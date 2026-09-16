@@ -5,6 +5,7 @@ import { createHrWorkspace } from '../../../../packages/domain/src/oda-hr';
 import { createNativeContract, createNativeEmployer, requestNativeContract, type NativeEsignContext } from '../../../../packages/domain/src/oda-esign';
 import { HrEsign, EsignPendingCard } from './HrEsign';
 import type { EsignOverview } from '../api/oda-esign-client';
+import { esignTiming, matchesEsignTask } from './esign-followup';
 
 const api = vi.hoisted(() => ({ get: vi.fn(), detail: vi.fn(), mutate: vi.fn(), download: vi.fn() }));
 vi.mock('../api/oda-esign-client', () => ({ getOdaEsign: api.get, getOdaEsignContract: api.detail, mutateOdaEsign: api.mutate, downloadOdaEsign: api.download }));
@@ -25,6 +26,68 @@ async function input(name: string, value: string) { const element = container.qu
 async function render(storeId = 'store-a') { await act(async () => root.render(<HrEsign workspace={createHrWorkspace(storeId, '매장', new Date().toISOString())} actorId="staff" employeeId="employee" permissions={{ manage: false, payroll: false, self: true }} mutate={vi.fn()} busy={false} accounts={[]} />)); }
 
 describe('native employee electronic contract safety', () => {
+  it('refreshes the employee reminder after returning to the app', async () => {
+    const { overview } = fixture();
+    api.get.mockResolvedValueOnce({ ...overview, contracts: [] }).mockResolvedValueOnce(overview);
+    await act(async () => root.render(<EsignPendingCard storeId="store-a" actorId="staff" onOpen={vi.fn()} />));
+    expect(container.querySelector('.esign-employee-card')).toBeNull();
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.textContent).toContain('서명할 근로계약 1건');
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+  it('separates request expiry from employment end dates at the Korean midnight boundary', () => {
+    const { contract } = fixture();
+    const before = Date.parse('2026-09-16T14:59:59Z'), after = Date.parse('2026-09-16T15:00:00Z');
+    contract.expiresAt = new Date(after).toISOString();
+    expect(matchesEsignTask(contract, 'mine', 'staff', before)).toBe(true);
+    expect(matchesEsignTask(contract, 'mine', 'unrelated', before)).toBe(false);
+    expect(matchesEsignTask(contract, 'mine', 'staff', after)).toBe(false);
+    expect(matchesEsignTask(contract, 'expired', 'staff', after)).toBe(true);
+    contract.status = 'completed'; contract.terms.endDate = '2026-09-16';
+    expect(matchesEsignTask(contract, 'expired', 'staff', after)).toBe(false);
+    expect(esignTiming(contract, before).daysLeft).toBe(0);
+    expect(matchesEsignTask(contract, 'ending', 'staff', before)).toBe(true);
+    expect(matchesEsignTask(contract, 'ended', 'staff', after)).toBe(true);
+    contract.terms.endDate = '2026-10-17';
+    expect(matchesEsignTask(contract, 'ending', 'staff', after)).toBe(true);
+    contract.terms.endDate = '2026-10-18';
+    expect(matchesEsignTask(contract, 'ending', 'staff', after)).toBe(false);
+    contract.terms.endDate = '';
+    expect(matchesEsignTask(contract, 'ended', 'staff', after)).toBe(false);
+  });
+  it('filters expired requests and keeps expired employee reminders visible without offering a signature', async () => {
+    const { contract, overview } = fixture(); contract.expiresAt = new Date(Date.now() - 1000).toISOString();
+    api.get.mockResolvedValue(overview); api.detail.mockResolvedValue({ contract });
+    await render(); await click('내 서명 대기');
+    expect(button('김직원 근로계약서')).toBeUndefined();
+    await click('서명 기한 경과'); await click('김직원 근로계약서');
+    expect(button('본인 확인 후 서명')).toBeUndefined();
+    expect(container.textContent).toContain('서명 기한이 지나 서명할 수 없습니다.');
+    await act(async () => root.render(<EsignPendingCard storeId="store-a" actorId="staff" onOpen={vi.fn()} />));
+    expect(container.textContent).toContain('서명 기한 경과 1건');
+  });
+  it('copies only editable conditions into a fresh unsigned draft and requires new dates', async () => {
+    const { contract, overview } = fixture(); contract.status = 'completed';
+    contract.terms.employmentType = 'contract'; contract.terms.endDate = '2026-09-30';
+    overview.permissions.manage = true;
+    api.get.mockResolvedValue(overview); api.detail.mockResolvedValue({ contract });
+    api.mutate.mockResolvedValue({ ...overview, contract: { ...contract, id: 'new-draft', version: 1, status: 'draft', signatures: [], documentHash: '', expiresAt: '', terms: { ...contract.terms, effectiveDate: '2026-10-01', endDate: '2027-09-30' } } });
+    const workspace = createHrWorkspace('store-a', '매장', new Date().toISOString());
+    workspace.employees.push({ id: 'employee', name: '김직원', employeeNumber: '001', actorId: 'staff', departmentId: '', jobTitle: '매장 업무', employmentType: 'contract', status: 'active', hireDate: '2026-09-16', payType: 'hourly', basePay: 12000, history: [] });
+    await act(async () => root.render(<HrEsign workspace={workspace} actorId="owner" permissions={{ manage: true, payroll: false, self: false }} mutate={vi.fn()} busy={false} accounts={[]} />));
+    await click('김직원 근로계약서'); await click('기존 조건으로 새 계약 작성');
+    expect(container.querySelector<HTMLInputElement>('[name="effectiveDate"]')!.value).toBe('');
+    expect(container.querySelector<HTMLInputElement>('[name="endDate"]')!.value).toBe('');
+    expect(container.querySelector<HTMLInputElement>('[name="basePay"]')!.value).toBe('12000');
+    expect(container.querySelector('canvas')).toBeNull(); expect(api.mutate).not.toHaveBeenCalled();
+    await input('effectiveDate', '2026-10-01'); await input('endDate', '2027-09-30');
+    await click('초안 저장 후 미리보기');
+    expect(api.mutate).toHaveBeenCalledWith('store-a', '/contracts', expect.objectContaining({ expectedVersion: 0, terms: expect.objectContaining({ effectiveDate: '2026-10-01', endDate: '2027-09-30' }) }), expect.any(String));
+    const sent = api.mutate.mock.calls[0][2];
+    for (const key of ['id', 'signatures', 'audit', 'artifacts', 'documentHash', 'appliedAt']) expect(sent).not.toHaveProperty(key);
+    await click('초안 수정');
+    expect(container.querySelector<HTMLInputElement>('[name="effectiveDate"]')!.value).toBe('2026-10-01');
+  });
   it('requires a real signature, explicit consent and password before submitting the exact frozen document and consent snapshot', async () => {
     const { contract, overview } = fixture();
     contract.consentVersion = 'stored-consent-v1'; contract.intentText = '이 계약에 보관된 동의 문구';

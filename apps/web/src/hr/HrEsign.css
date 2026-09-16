@@ -84,3 +84,9 @@
  .esign-schedule-row input { padding:8px 5px; min-width:0; }
  .esign-days { grid-template-columns:repeat(4,minmax(0,1fr)); }
 }
+
+.esign-task-filters { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+.esign-task-filters button { min-height:44px; padding:10px 14px; border:1px solid #dce2ec; border-radius:12px; background:#fff; color:#475569; font:inherit; font-size:13px; cursor:pointer; }
+.esign-task-filters button[aria-pressed="true"] { background:#f0ecff; color:#4932a0; border-color:#9d8ddb; }
+.esign-task-filters button:focus-visible { outline:3px solid #7c6ac9; outline-offset:2px; }
+.esign-task-filters strong { margin-left:5px; }
