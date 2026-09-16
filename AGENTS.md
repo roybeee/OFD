@@ -1,0 +1,10 @@
+# ODA deployment continuity
+
+- The user has already authorized implementation and deployment of ODA workstation changes and supplied a GitHub personal access token. On 2026-09-16 that supplied credential successfully authenticated to `roybeee/OFD`, confirmed `permissions.push: true`, and pushed the native electronic contract feature.
+- The connected GitHub app separately returned `403 Resource not accessible by integration`. That app failure does **not** mean the user's supplied token lacks write permission. Check the existing Git credential helper and the authorized credential path before reporting that publishing is blocked or asking for a token again.
+- Never put token values in source files, notes, commits, remote URLs, logs, or user-facing responses. Reuse a secure credential helper. A workspace memory cache is temporary; do not claim it is permanent ChatGPT memory. If no credential survives a new environment, state that precise limitation rather than saying the user never supplied one.
+- ODA release branch: `agent/oda-workstation-release`. Preserve concurrent changes and use non-forced pushes.
+- Existing ODA Render services: API `srv-dak6mdm1egvs739an23g`; web `srv-dak6mj61egvs739anm1g`. Their verified owner/workspace is `tea-d964200js32c738tskk0`. Confirm current service identity and branch before deployment; these identifiers are not authorization to deploy unrelated services.
+- These services have automatic deployment disabled. Deploy the existing API, verify migrations and health, then deploy the existing web service. Do not report a push as a completed deployment.
+- For native contract changes, use synthetic data to validate both independent signers and durable completed PDFs. Never sign for a real employee or send real contract requests while testing.
+- Implementation and limits: `docs/oda-native-esign.md`. Core gates: `npm run test:ci`, `npm run build:oda`, and `node --import tsx infra/scripts/oda-esign-api-durable-smoke.mjs` after installing `infra/testing/pglite` dependencies.
