@@ -179,7 +179,9 @@ describe('employee workday home', () => {
     expect(container.querySelector('[aria-label="인사관리 메뉴"]')?.textContent).not.toContain('설정');
     expect(container.textContent).toContain('출퇴근은 직원 홈에서 위치를 확인');
     expect([...container.querySelectorAll('button')].some(row => ['출근', '퇴근'].includes(row.textContent || ''))).toBe(false);
-    await click('직원 홈으로 돌아가기'); expect(findButton('출근하기')).toBeTruthy();
+    await click('직원 홈으로 돌아가기');
+    expect(container.querySelector('nav[aria-label="직원 앱 메뉴"] [aria-current="page"]')?.textContent).toBe('더 보기');
+    await navigate('오늘'); expect(findButton('출근하기')).toBeTruthy();
     expect(container.querySelector('nav[aria-label="직원 앱 메뉴"] [aria-current="page"]')?.textContent).toBe('오늘');
   });
 });

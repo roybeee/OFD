@@ -65,7 +65,8 @@ describe('ODA HR workspace integration', () => {
     expect(container.textContent).not.toContain('직원 화면 준비 현황');
     await click('내 근무 기록 열기');
     expect(container.querySelector('.hr-content')?.getAttribute('aria-label')).toBe('근무 기록');
-    await click('인사 도움말', container.querySelector('nav[aria-label="인사관리 메뉴"]')!);
+    const menu = container.querySelector<HTMLSelectElement>('[aria-label="내 인사 메뉴"]')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(menu, 'help'); menu.dispatchEvent(new Event('change', { bubbles: true })); });
     await click('직원 홈에서 일정·공지 확인');
     expect(container.querySelector('.oda-staff-page')).toBeTruthy();
     expect(new URLSearchParams(window.location.search).get('store')).toBe('store-2');
@@ -161,5 +162,91 @@ describe('ODA HR workspace integration', () => {
     expect(container.querySelector('[role="dialog"]')?.textContent).not.toContain('기본 월급');
     expect(container.querySelector('[role="dialog"]')?.textContent).not.toContain('0원');
     expect(container.querySelector('[role="dialog"]')?.textContent).not.toContain('정보 수정');
+  });
+});
+
+
+function linkedStaffData() {
+  return normalizeBootstrap({ currentActor: { id: 'staff-1', name: '직원', role: 'store_staff' },
+    stores: [{ id: 'store-1', name: '첫 매장', business: {} }, { id: 'store-2', name: '둘째 매장', business: {} }],
+    capabilities: ['oda.hr.read'], meta: { appMode: 'production', odaSettlementOnly: true } });
+}
+function linkedStaffResponse(storeId: string): HrResponse {
+  const value=response(storeId); value.permissions={ manage:false,payroll:false,self:true }; value.employeeId=`employee-${storeId}`; delete value.accounts;
+  value.workspace.employees=[{ id:value.employeeId,actorId:'staff-1',name:`${storeId} 직원`,employeeNumber:'E1',departmentId:'',jobTitle:'크루',employmentType:'regular',status:'active',hireDate:'2026-01-01',payType:'monthly',basePay:0,history:[] }];
+  value.workspace.attendance.leaveTypes=[{ id:'annual',name:'연차',paid:true,deductBalance:false,unitMinutes:30,requireApproval:true }];
+  return value;
+}
+async function selectByLabel(label: string,value: string) {
+  const select=container.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+  expect(select).toBeTruthy();
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')!.set!.call(select,value);select.dispatchEvent(new Event('change',{bubbles:true}));});
+}
+
+describe('staff intent and browser navigation integration',()=>{
+  it('opens leave creation directly from the home quick action without creating a request',async()=>{
+    api.get.mockImplementation(async(storeId:string)=>linkedStaffResponse(storeId));
+    window.history.replaceState({},'','/store/oda-hr?store=store-1&view=today');
+    await act(async()=>root.render(<OdaHrPage data={linkedStaffData()} notify={vi.fn()}/>));
+    await click('휴가 등록');
+    const dialog=container.querySelector('[role="dialog"]')!;
+    expect(dialog?.getAttribute('aria-label')).toBe('휴가 신청');
+    expect(dialog.querySelector('[name="startDate"]')).toBeTruthy();
+    expect(new URLSearchParams(window.location.search).get('action')).toBe('create');
+    expect(api.command).not.toHaveBeenCalled();
+    await click('닫기',dialog);
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    const refresh=container.querySelector<HTMLButtonElement>('[aria-label="인사 정보 새로고침"]')!;
+    await act(async()=>refresh.click());
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('clears the record destination when changing stores rather than opening a same-ID record in the new store',async()=>{
+    api.get.mockImplementation(async(storeId:string)=>{
+      const value=linkedStaffResponse(storeId);
+      value.workspace.attendance.leaveRequests=[{id:'shared-id',employeeId:value.employeeId!,typeId:'annual',startDate:'2026-09-16',endDate:'2026-09-16',slots:[{date:'2026-09-16',startTime:'09:00',endTime:'18:00',minutes:480}],minutes:480,paid:true,note:`${storeId} 신청 사유`,status:'pending',revision:1,createdAt:'2026-09-15T00:00:00Z',createdBy:'staff-1',reviewedAt:'',reviewedBy:''}];
+      return value;
+    });
+    window.history.replaceState({},'','/store/oda-hr?store=store-1&view=tasks&tab=leave&record=shared-id');
+    await act(async()=>root.render(<OdaHrPage data={linkedStaffData()} notify={vi.fn()}/>));
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('store-1 신청 사유');
+    await click('닫기',container.querySelector('[role="dialog"]')!);
+    await selectByLabel('인사관리 매장','store-2');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).not.toContain('store-1 신청 사유');
+    expect(new URLSearchParams(window.location.search).get('store')).toBe('store-2');
+    expect(new URLSearchParams(window.location.search).has('record')).toBe(false);
+    expect(api.command).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current store URL and interface when Back is pressed during a notice write after switching stores',async()=>{
+    const values=new Map(['store-1','store-2'].map(storeId=>{
+      const value=linkedStaffResponse(storeId);
+      value.workspace.notices=[{id:`notice-${storeId}`,title:`${storeId} 운영 공지`,body:'확인이 필요한 운영 안내',pinned:false,status:'published',createdBy:'manager',createdAt:'2026-09-15T00:00:00Z',updatedAt:'2026-09-15T00:00:00Z'}];
+      return [storeId,value] as const;
+    }));
+    api.get.mockImplementation(async(storeId:string)=>values.get(storeId)!);
+    let finish!:(value:HrResponse)=>void;
+    api.command.mockImplementation(()=>new Promise<HrResponse>(resolve=>{finish=resolve;}));
+    window.history.replaceState({},'','/store/oda-hr?store=store-1&view=today');
+    await act(async()=>root.render(<OdaHrPage data={linkedStaffData()} notify={vi.fn()}/>));
+    await click('더 보기',container.querySelector('nav[aria-label="직원 앱 메뉴"]')!);
+    await selectByLabel('직원 홈 매장','store-2');
+    await click('공지');
+    const dialog=container.querySelector('[role="dialog"]')!;
+    const titleButton=[...dialog.querySelectorAll('button')].find(row=>row.textContent?.includes('store-2 운영 공지'))!;
+    await act(async()=>titleButton.click());
+    await click('확인했어요',dialog);
+    expect(api.command).toHaveBeenCalledExactlyOnceWith('store-2',0,'notice.acknowledge',{id:'notice-store-2',updatedAt:'2026-09-15T00:00:00Z'});
+    await act(async()=>{
+      const popped=new Promise<void>(resolve=>window.addEventListener('popstate',()=>resolve(),{once:true}));
+      window.history.back(); await popped;
+    });
+    expect(new URLSearchParams(window.location.search).get('store')).toBe('store-2');
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="직원 홈 매장"]')?.value).toBe('store-2');
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('store-2 운영 공지');
+    await act(async()=>finish({...values.get('store-2')!,workspace:{...values.get('store-2')!.workspace,version:1}}));
+    expect(new URLSearchParams(window.location.search).get('store')).toBe('store-2');
+    expect(api.command).toHaveBeenCalledTimes(1);
   });
 });

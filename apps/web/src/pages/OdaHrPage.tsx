@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/client';
 import { commandOdaHr, getOdaHr, type HrResponse } from '../api/oda-hr-client';
-import { RefreshCcw, UserRound } from '../components/icons';
+import { ChevronLeft, RefreshCcw, UserRound } from '../components/icons';
 import { Button } from '../components/ui';
 import { HrAttendance } from '../hr/HrAttendance';
 import { HrPayroll } from '../hr/HrPayroll';
@@ -14,6 +14,8 @@ import type { BootstrapData } from '../types';
 import './OdaHrPage.css';
 import { OdaStaffPage, staffPersonalTabs, type StaffPersonalTab } from './OdaStaffPage';
 import { StaffBottomNav, staffHomeTabs, type StaffHomeTab } from '../hr/StaffNavigation';
+import type { StaffDestination, StaffEntryIntent } from '../hr/StaffDestination';
+import { useStaffTextPreference } from '../hr/HrStaffMore';
 
 export const hrTabs = [
   ['overview', '홈·인사이트'], ['people', '직원·조직'], ['attendance', '근무 기록'], ['shifts', '근무 일정'],
@@ -36,31 +38,65 @@ export function odaHrLocation(search: string, stores: ReadonlyArray<{ id: string
 type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void };
 
 export function OdaHrPage({ data, notify }: Props) {
-  const [personalTab, setPersonalTab] = useState<StaffPersonalTab | null>(() => { const tab = new URLSearchParams(window.location.search).get('tab'); return staffPersonalTabs.some(([id]) => id === tab) ? tab as StaffPersonalTab : null; });
-  const [staffTab, setStaffTab] = useState<StaffHomeTab>(() => { const tab = new URLSearchParams(window.location.search).get('view'); return staffHomeTabs.includes(tab as StaffHomeTab) ? tab as StaffHomeTab : 'today'; });
-  function staffNavigate(tab: StaffHomeTab) {
-    const query = new URLSearchParams(window.location.search); query.set('view', tab); query.delete('tab');
-    window.history.replaceState({}, '', `${window.location.pathname}?${query}`);
-    setStaffTab(tab); setPersonalTab(null);
+  const sequence = useRef(0);
+  const staffBusy = useRef(false);
+  const currentUrl = useRef(window.location.href);
+  function readRoute() {
+    const query = new URLSearchParams(window.location.search), tab = query.get('tab'), view = query.get('view');
+    const personalTab = staffPersonalTabs.some(([id]) => id === tab) ? tab as StaffPersonalTab : null;
+    const homeTab = staffHomeTabs.includes(view as StaffHomeTab) ? view as StaffHomeTab : 'today';
+    const recordId = query.get('record')?.slice(0, 120) || undefined;
+    const childId = query.get('child')?.slice(0, 120) || undefined;
+    const action = query.get('action') === 'create' ? 'create' as const : undefined;
+    return { personalTab, homeTab, entryIntent: personalTab && (recordId || action) ? { recordId, childId, action, nonce: ++sequence.current } : undefined };
   }
-  function openStaffPersonal(tab: StaffPersonalTab) {
+  const [route, setRoute] = useState(readRoute);
+  useEffect(() => {
+    function pop() {
+      if (staffBusy.current) { window.history.pushState({}, '', currentUrl.current); return; }
+      currentUrl.current = window.location.href; setRoute(readRoute());
+    }
+    if (data.actor.role === 'store_staff') window.addEventListener('popstate', pop);
+    return () => window.removeEventListener('popstate', pop);
+  }, [data.actor.id, data.actor.role]);
+  function writeRoute(query: URLSearchParams) {
+    const next = `${window.location.pathname}?${query}`;
+    if (`${window.location.pathname}${window.location.search}` !== next) window.history.pushState({}, '', next);
+    currentUrl.current = window.location.href;
+    setRoute(readRoute());
+    document.scrollingElement?.scrollTo?.({ top: 0 });
+  }
+  function staffNavigate(tab: StaffHomeTab) {
+    if (staffBusy.current) return;
+    const query = new URLSearchParams(window.location.search); query.set('view', tab);
+    for (const name of ['tab', 'record', 'child', 'action']) query.delete(name);
+    writeRoute(query);
+  }
+  function openStaffPersonal(tab: StaffPersonalTab, destination?: StaffDestination) {
+    if (staffBusy.current) return;
     const query = new URLSearchParams(window.location.search); query.set('tab', tab);
-    window.history.replaceState({}, '', `${window.location.pathname}?${query}`); setPersonalTab(tab);
+    for (const name of ['record', 'child', 'action']) query.delete(name);
+    if (destination?.recordId) query.set('record', destination.recordId);
+    if (destination?.childId) query.set('child', destination.childId);
+    if (destination?.action) query.set('action', destination.action);
+    writeRoute(query);
   }
   if (data.actor.role === 'store_staff') {
-    if (!personalTab) return <OdaStaffPage data={data} notify={notify} onOpenPersonal={openStaffPersonal} initialTab={staffTab} onHomeTabChange={setStaffTab} />;
-    return <OdaHrWorkspacePage data={data} notify={notify} personalTab={personalTab} onHome={() => staffNavigate('today')} onStaffNavigate={staffNavigate} />;
+    if (!route.personalTab) return <OdaStaffPage data={data} notify={notify} onOpenPersonal={openStaffPersonal} initialTab={route.homeTab} onHomeTabChange={staffNavigate} onBusyChange={value => { if (value) currentUrl.current = window.location.href; staffBusy.current = value; }} />;
+    return <OdaHrWorkspacePage key={`${route.personalTab}:${route.entryIntent?.nonce || ''}`} data={data} notify={notify} personalTab={route.personalTab} entryIntent={route.entryIntent} onHome={() => staffNavigate(route.homeTab)} onStaffNavigate={staffNavigate} onPersonalNavigate={openStaffPersonal} onBusyChange={value => { if (value) currentUrl.current = window.location.href; staffBusy.current = value; }} />;
   }
   return <OdaHrWorkspacePage data={data} notify={notify} />;
 }
 
-function OdaHrWorkspacePage({ data, notify, personalTab, onHome, onStaffNavigate }: Props & { personalTab?: StaffPersonalTab; onHome?: () => void; onStaffNavigate?: (tab: StaffHomeTab) => void }) {
+function OdaHrWorkspacePage({ data, notify, personalTab, entryIntent, onHome, onStaffNavigate, onPersonalNavigate, onBusyChange }: Props & { personalTab?: StaffPersonalTab; entryIntent?: StaffEntryIntent; onHome?: () => void; onStaffNavigate?: (tab: StaffHomeTab) => void; onPersonalNavigate?: (tab: StaffPersonalTab) => void; onBusyChange?: (busy: boolean) => void }) {
   const personal = data.actor.role === 'store_staff';
   const visibleTabs = personal ? hrTabs.filter(([id]) => staffPersonalTabs.some(([allowed]) => allowed === id)) : hrTabs;
   const stores = data.stores.filter(store => store.active !== false);
   const initial = odaHrLocation(window.location.search, stores, data.store.id);
   const [storeId, setStoreId] = useState(initial.storeId);
   const [tab, setTab] = useState<HrTab>(personalTab || initial.tab);
+  const [activeIntent, setActiveIntent] = useState(entryIntent);
+  const staffText = useStaffTextPreference(data.actor.id, storeId);
   const [response, setResponse] = useState<HrResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -78,6 +114,7 @@ function OdaHrWorkspacePage({ data, notify, personalTab, onHome, onStaffNavigate
     function onPopState() {
       if (lock.current) return;
       const location = odaHrLocation(window.location.search, stores, data.store.id);
+      if (location.storeId !== activeStore.current) setActiveIntent(undefined);
       setStoreId(location.storeId); setTab(personal && !visibleTabs.some(([id]) => id === location.tab) ? personalTab || 'leave' : location.tab);
     }
     window.addEventListener('popstate', onPopState);
@@ -103,15 +140,17 @@ function OdaHrWorkspacePage({ data, notify, personalTab, onHome, onStaffNavigate
     if (lock.current || !visibleTabs.some(([id]) => id === nextTab)) return;
     const query = new URLSearchParams(window.location.search);
     query.set('store', nextStore); query.set('tab', nextTab);
+    for (const name of ['record', 'child', 'action']) query.delete(name);
+    if (personal && nextTab !== tab && nextStore === storeId) { onPersonalNavigate?.(nextTab as StaffPersonalTab); return; }
     window.history.replaceState({}, '', `${window.location.pathname}?${query}`);
-    setStoreId(nextStore); setTab(nextTab);
+    setActiveIntent(undefined); setStoreId(nextStore); setTab(nextTab);
     setCommandError('');
   }
 
   async function mutate(type: string, input: Record<string, unknown>) {
     if (!response || loading || loadError || lock.current) throw new Error('인사 정보를 불러온 뒤 다시 시도해 주세요.');
     const mutationStore = storeId;
-    lock.current = true; setBusy(true); setCommandError('');
+    lock.current = true; onBusyChange?.(true); setBusy(true); setCommandError('');
     try {
       const result = await commandOdaHr(mutationStore, response.workspace.version, type, input);
       if (alive.current && activeStore.current === mutationStore) { setResponse(result); notify('변경 사항을 저장했습니다.', 'success'); }
@@ -130,7 +169,7 @@ function OdaHrWorkspacePage({ data, notify, personalTab, onHome, onStaffNavigate
       if (alive.current) setCommandError(message);
       throw new Error(message);
     } finally {
-      lock.current = false;
+      lock.current = false; onBusyChange?.(false);
       if (alive.current) setBusy(false);
     }
   }
@@ -155,22 +194,22 @@ function OdaHrWorkspacePage({ data, notify, personalTab, onHome, onStaffNavigate
   } : null;
   const title = hrTabs.find(([id]) => id === tab)?.[1] || '인사관리';
 
-  return <main id="main-content" className={`page oda-hr-page${personal ? ' oda-hr-personal' : ''}`} tabIndex={-1}>
-    <header className="hr-page-heading"><div><p className="hr-kicker">ODA · PEOPLE</p><h1><UserRound size={28} aria-hidden="true" /> {personal ? '내 인사 메뉴' : '인사관리'}</h1><p>{personal ? '나의 신청과 기록을 확인하세요. 출퇴근은 직원 홈에서 기록합니다.' : '직원과 조직, 매일의 근무부터 성장까지 한곳에서 관리합니다.'}</p>{onHome && <Button variant="secondary" onClick={onHome} disabled={busy} style={{ marginTop: 12 }}>직원 홈으로 돌아가기</Button>}</div>
+  return <main id="main-content" className={`page oda-hr-page${personal ? ' oda-hr-personal' : ''}`} data-staff-text={personal ? staffText : undefined} tabIndex={-1}>
+    {personal ? <header className="staff-personal-heading"><div><button className="staff-icon-button" type="button" aria-label="직원 홈으로 돌아가기" onClick={onHome} disabled={busy}><ChevronLeft size={22} /></button><h1>{staffPersonalTabs.find(([id]) => id === tab)?.[1] || title}</h1><button className="staff-icon-button" type="button" aria-label="인사 정보 새로고침" disabled={busy || loading} onClick={() => setRetry(value => value + 1)}><RefreshCcw size={19} /></button></div><label className="staff-personal-context"><span>근무 매장</span><select aria-label="인사관리 매장" value={storeId} disabled={busy || !stores.length} onChange={event => select(event.target.value, tab)}>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label></header> : <header className="hr-page-heading"><div><p className="hr-kicker">ODA · PEOPLE</p><h1><UserRound size={28} aria-hidden="true" /> {personal ? '내 인사 메뉴' : '인사관리'}</h1><p>{personal ? '나의 신청과 기록을 확인하세요. 출퇴근은 직원 홈에서 기록합니다.' : '직원과 조직, 매일의 근무부터 성장까지 한곳에서 관리합니다.'}</p>{onHome && <Button variant="secondary" onClick={onHome} disabled={busy} style={{ marginTop: 12 }}>직원 홈으로 돌아가기</Button>}</div>
       <div className="hr-header-actions"><label className="hr-field"><span>작업할 매장</span><select aria-label="인사관리 매장" value={storeId} disabled={busy || !stores.length} onChange={event => select(event.target.value, tab)}>{stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label>
         <Button variant="secondary" onClick={() => setRetry(value => value + 1)} disabled={busy || loading || !storeId}><RefreshCcw size={16} /> {loading ? '불러오는 중' : '새로고침'}</Button></div>
-    </header>
+    </header>}
     {!stores.length ? <HrEmpty title="배정된 매장이 없습니다">계정 관리자에게 매장 배정을 요청해 주세요.</HrEmpty> : <>
-      <nav className="hr-tabs" aria-label="인사관리 메뉴">{visibleTabs.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} disabled={busy} onClick={() => select(storeId, id)}>{personal ? staffPersonalTabs.find(([key]) => key === id)?.[1] || label : label}</button>)}</nav>
+      <nav className={personal ? "staff-personal-menu" : "hr-tabs"} aria-label="인사관리 메뉴">{personal ? <label><span>내 인사 메뉴</span><select aria-label="내 인사 메뉴" value={tab} disabled={busy} onChange={event => select(storeId, event.target.value as HrTab)}>{staffPersonalTabs.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label> : <>{visibleTabs.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} disabled={busy} onClick={() => select(storeId, id)}>{personal ? staffPersonalTabs.find(([key]) => key === id)?.[1] || label : label}</button>)}</>}</nav>
       {loadError && <div className="hr-error" role="alert"><strong>인사 정보를 불러오지 못했습니다.</strong><p>{loadError}</p><Button variant="secondary" disabled={loading || busy} onClick={() => setRetry(value => value + 1)}>다시 불러오기</Button></div>}
       {commandError && <div className="hr-error" role="alert">{commandError}</div>}
       {loading && <p className="hr-loading" role="status">선택한 매장의 인사 정보를 불러오고 있습니다.</p>}
       {panel && <HrRecoveryContext.Provider value={{ error: loadError, pending: busy || loading, retry: () => setRetry(value => value + 1) }}><section className="hr-content" aria-label={title} aria-busy={busy || loading} key={storeId}>
-        {(['overview', 'people', 'documents', 'settings', 'help'] as string[]).includes(tab) && <HrPersonnel {...panel} accounts={response?.accounts || []} tab={tab as 'overview' | 'people' | 'documents' | 'settings' | 'help'} onTabChange={next => select(storeId, next)} onStaffHome={onHome} />}
-        {(tab === 'attendance' || tab === 'leave' || tab === 'shifts') && <HrAttendance {...panel} tab={tab} hideClock={personal} />}
-        {(tab === 'approvals' || tab === 'expenses') && <HrWorkflow {...panel} tab={tab} />}
+        {(['overview', 'people', 'documents', 'settings', 'help'] as string[]).includes(tab) && <HrPersonnel {...panel} accounts={response?.accounts || []} tab={tab as 'overview' | 'people' | 'documents' | 'settings' | 'help'} onTabChange={next => select(storeId, next)} onStaffHome={personal ? () => onStaffNavigate?.('today') : onHome} />}
+        {(tab === 'attendance' || tab === 'leave' || tab === 'shifts') && <HrAttendance {...panel} tab={tab} hideClock={personal} entryIntent={personalTab === tab ? activeIntent : undefined} />}
+        {(tab === 'approvals' || tab === 'expenses') && <HrWorkflow {...panel} tab={tab} entryIntent={personalTab === tab ? activeIntent : undefined} />}
         {tab === 'payroll' && <HrPayroll {...panel} />}
-        {(tab === 'goals' || tab === 'reviews' || tab === 'meetings' || tab === 'recruitment') && <HrTalent {...panel} tab={tab} />}
+        {(tab === 'goals' || tab === 'reviews' || tab === 'meetings' || tab === 'recruitment') && <HrTalent {...panel} tab={tab} entryIntent={personalTab === tab ? activeIntent : undefined} />}
         {tab === 'contracts' && <HrEsign {...panel} accounts={response?.accounts || []} />}
       </section></HrRecoveryContext.Provider>}
     </>}

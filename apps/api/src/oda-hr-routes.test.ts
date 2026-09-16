@@ -150,6 +150,45 @@ describe('ODA HR API persistence, isolation and commands', () => {
     expect((await read(app, DEMO_IDS.auditor)).json().workspace.employees[0].basePay).toBe(0);
   });
 
+  it('persists a staff notice receipt from server identity, isolates it, and rejects stale revisions', async () => {
+    const { app, repository } = await setup();
+    const own = await employee(app, 0, 'SELF', DEMO_IDS.staff);
+    const published = await command(app, 'notice.create', { title: '운영 안내', body: '이번 주 운영 안내', status: 'published' }, 1);
+    expect(published.statusCode, published.body).toBe(200);
+    const notice = published.json<HrResponse>().workspace.notices[0]!;
+    const input = { id: notice.id, updatedAt: notice.updatedAt };
+    const forged = await command(app, 'notice.acknowledge', { ...input, actorId: DEMO_IDS.owner }, 2, DEMO_IDS.staff);
+    expect(forged.statusCode).toBe(422);
+    const key = randomUUID();
+    const acknowledged = await command(app, 'notice.acknowledge', input, 2, DEMO_IDS.staff, key);
+    expect(acknowledged.statusCode, acknowledged.body).toBe(200);
+    const receipt = acknowledged.json<HrResponse>().workspace.notices[0]!.receipts![0]!;
+    expect(receipt).toMatchObject({ actorId: DEMO_IDS.staff, employeeId: own.workspace.employees[0]!.id, noticeUpdatedAt: notice.updatedAt });
+    expect((await repository.get<HrWorkspace>('oda_hr', `hr:${storeId}`))!.notices[0]!.receipts).toEqual([receipt]);
+    const replay = await command(app, 'notice.acknowledge', input, 2, DEMO_IDS.staff, key);
+    expect(replay.headers['idempotency-replayed']).toBe('true');
+    expect(replay.json<HrResponse>().workspace.version).toBe(3);
+    const managerConfirmed = await command(app, 'notice.acknowledge', input, 3);
+    expect(managerConfirmed.statusCode, managerConfirmed.body).toBe(200);
+    expect(managerConfirmed.json<HrResponse>().workspace.notices[0]!.receipts).toHaveLength(2);
+    expect((await read(app, DEMO_IDS.staff)).json<HrResponse>().workspace.notices[0]!.receipts).toEqual([receipt]);
+    expect((await read(app, DEMO_IDS.finance)).json<HrResponse>().workspace.notices[0]!.receipts).toEqual([]);
+    const updated = await command(app, 'notice.update', { id: notice.id, title: notice.title, body: '변경된 운영 안내', status: 'published' }, 4);
+    expect(updated.statusCode, updated.body).toBe(200);
+    const changed = updated.json<HrResponse>().workspace.notices[0]!;
+    expect(changed.updatedAt).not.toBe(notice.updatedAt);
+    const stale = await command(app, 'notice.acknowledge', input, 5, DEMO_IDS.staff);
+    expect(stale.statusCode).toBe(409); expect(stale.json().error.code).toBe('HR_NOTICE_CHANGED');
+    expect((await read(app)).json<HrResponse>().workspace.version).toBe(5);
+    const reconfirmed = await command(app, 'notice.acknowledge', { id: notice.id, updatedAt: changed.updatedAt }, 5, DEMO_IDS.staff);
+    expect(reconfirmed.statusCode, reconfirmed.body).toBe(200);
+    expect(reconfirmed.json<HrResponse>().workspace.notices[0]!.receipts).toHaveLength(1);
+    const archived = await command(app, 'notice.archive', { id: notice.id }, 6);
+    expect(archived.statusCode, archived.body).toBe(200);
+    const unavailable = await command(app, 'notice.acknowledge', { id: notice.id, updatedAt: changed.updatedAt }, 7, DEMO_IDS.staff);
+    expect(unavailable.statusCode).toBe(404); expect(unavailable.json().error.code).toBe('HR_NOTICE_NOT_FOUND');
+  });
+
   it('publishes notices explicitly and limits personal documents to their employee', async () => {
     const { app } = await setup(); await employee(app, 0, 'SELF', DEMO_IDS.staff);
     const all = await employee(app, 1, 'OTHER'); const otherId = all.workspace.employees[1]!.id;

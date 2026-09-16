@@ -148,7 +148,7 @@ describe('OdaStaffPage through the real in-process HR API', () => {
       expect(container.textContent).toContain('오늘 매장 운영 안내');
       expect(container.textContent).toContain('09:00');
     });
-    const notice = container.querySelector<HTMLButtonElement>('.staff-notices button');
+    const notice = container.querySelector<HTMLButtonElement>('.staff-notices li > button[aria-expanded]');
     expect(notice?.getAttribute('aria-expanded')).toBe('false');
     await act(async () => notice!.click());
     expect(container.querySelector('.staff-notice-body')?.textContent).toBe('마감 전에 정리 상태를 함께 확인해 주세요.');
@@ -161,6 +161,60 @@ describe('OdaStaffPage through the real in-process HR API', () => {
     expect(saved.version).toBe(initialVersion);
     expect(saved.attendance.clockEvents).toEqual([]);
     expect((await readAs()).storeSchedule).toMatchObject([{ employeeId, employeeName, date: hrToday(), startTime: '09:00', endTime: '18:00' }]);
+  });
+
+  it('persists explicit notice confirmation through the API and remount, then requires confirmation of an edited revision', async () => {
+    await eventually(() => expect(container.querySelector('.staff-notice-count')?.textContent).toBe('미확인 1개'));
+    const noticeBefore = (await stored()).notices[0]!;
+    await act(async () => container.querySelector<HTMLButtonElement>('.staff-notices li > button[aria-expanded]')!.click());
+    expect(container.querySelector('.staff-notice-body')?.textContent).toBe(noticeBefore.body);
+    expect(requests.filter(row => row.method === 'POST')).toHaveLength(0);
+    expect((await stored()).notices[0]!.receipts).toBeUndefined();
+
+    await click('확인했어요');
+    await eventually(() => {
+      expect(container.querySelector('.staff-notice-count')?.textContent).toBe('미확인 0개');
+      expect(container.querySelector('.staff-notice-confirmed')?.textContent).toContain('확인했어요');
+    });
+    const firstSaved = await stored();
+    const firstReceipt = firstSaved.notices[0]!.receipts![0]!;
+    expect(firstSaved.version).toBe(initialVersion + 1);
+    expect(firstSaved.notices[0]!.updatedAt).toBe(noticeBefore.updatedAt);
+    expect(firstReceipt).toMatchObject({ actorId: DEMO_IDS.staff, employeeId, noticeUpdatedAt: noticeBefore.updatedAt });
+    expect(requests.filter(row => row.method === 'POST')).toMatchObject([{ status: 200, body: {
+      type: 'notice.acknowledge', expectedVersion: initialVersion, input: { id: noticeBefore.id, updatedAt: noticeBefore.updatedAt },
+    } }]);
+
+    await act(async () => root.unmount()); await mount();
+    await eventually(() => expect(container.querySelector('.staff-notice-count')?.textContent).toBe('미확인 0개'));
+    await act(async () => container.querySelector<HTMLButtonElement>('.staff-notices li > button[aria-expanded]')!.click());
+    expect(container.querySelector('.staff-notice-confirmed')?.textContent).toContain('확인했어요');
+    expect(button('확인했어요')).toBeUndefined();
+    expect((await readAs()).workspace.notices[0]!.receipts).toEqual([firstReceipt]);
+    expect(requests.filter(row => row.method === 'POST')).toHaveLength(1);
+
+    const changed = await adminCommand('notice.update', { id: noticeBefore.id, title: noticeBefore.title, body: '변경된 마감 절차를 다시 확인해 주세요.', status: 'published', pinned: true });
+    const edited = changed.workspace.notices[0]!;
+    expect(edited.updatedAt).not.toBe(noticeBefore.updatedAt);
+    await click('직원 홈 새로고침');
+    await eventually(() => {
+      expect(container.querySelector('.staff-notice-count')?.textContent).toBe('미확인 1개');
+      expect(container.querySelector('.staff-notice-body')?.textContent).toBe(edited.body);
+      expect(button('확인했어요')?.disabled).toBe(false);
+    });
+    expect(container.querySelector('.staff-notice-confirmed')).toBeNull();
+    expect(requests.filter(row => row.method === 'POST')).toHaveLength(1);
+    await click('확인했어요');
+    await eventually(() => expect(container.querySelector('.staff-notice-count')?.textContent).toBe('미확인 0개'));
+    const latest = await stored();
+    expect(latest.notices[0]!.receipts).toHaveLength(1);
+    expect(latest.notices[0]!.receipts![0]).toMatchObject({ actorId: DEMO_IDS.staff, employeeId, noticeUpdatedAt: edited.updatedAt });
+    expect(latest.version).toBe(changed.workspace.version + 1);
+    expect(requests.filter(row => row.method === 'POST')).toHaveLength(2);
+    expect(requests.filter(row => row.method === 'POST').at(-1)).toMatchObject({ status: 200, body: {
+      type: 'notice.acknowledge', expectedVersion: changed.workspace.version, input: { id: edited.id, updatedAt: edited.updatedAt },
+    } });
+    expect(latest.attendance.clockEvents).toEqual([]);
   });
 
   it('checks fresh native GPS on click, persists sanitized clock events and restores clocked-in state after remount', async () => {

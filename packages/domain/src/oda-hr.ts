@@ -13,7 +13,8 @@ export interface HrEmployee {
 }
 export interface HrDepartment { id: string; name: string; parentId?: string; leaderId?: string; archived: boolean }
 export interface HrSettings { companyName: string; workdayHours: number; weeklyDays: number; annualLeaveDays: number; timezone: 'Asia/Seoul'; approvalEmployeeId?: string; clockLocation?: HrClockLocation }
-export interface HrNotice { id: string; title: string; body: string; pinned: boolean; status: 'draft' | 'published' | 'archived'; createdBy: string; createdAt: string; updatedAt: string }
+export interface HrNoticeReceipt { actorId: string; employeeId?: string; noticeUpdatedAt: string; acknowledgedAt: string }
+export interface HrNotice { id: string; title: string; body: string; pinned: boolean; status: 'draft' | 'published' | 'archived'; createdBy: string; createdAt: string; updatedAt: string; receipts?: HrNoticeReceipt[] }
 export interface HrDocument { id: string; title: string; category: 'contract' | 'certificate' | 'policy' | 'other'; employeeId?: string; body: string; status: 'active' | 'archived'; createdBy: string; createdAt: string; updatedAt: string }
 export interface HrHistory { id: string; type: string; actorId: string; at: string; summary: string }
 export interface HrWorkspace {
@@ -36,7 +37,7 @@ export const HR_COMMAND_ACCESS: Readonly<Record<string, 'manager' | 'member' | '
     'review.create', 'review.update', 'review.delete', 'review.open', 'review.close', 'review.publish', 'review.revoke',
     'recruitment.createJob', 'recruitment.updateJob', 'recruitment.deleteJob', 'recruitment.addCandidate', 'recruitment.moveCandidate', 'recruitment.reopenCandidate',
     'contract.create', 'contract.update', 'contract.complete', 'contract.cancel', 'contract.applyPersonnel', 'workflow.template.save', 'workflow.template.archive'].map(type => [type, 'manager']),
-  ...['work.create', 'work.update', 'work.cancel', 'clock.in', 'clock.out', 'leave.request', 'leave.cancel',
+  ...['notice.acknowledge', 'work.create', 'work.update', 'work.cancel', 'clock.in', 'clock.out', 'leave.request', 'leave.cancel',
     'goal.create', 'goal.update', 'goal.complete', 'goal.reopen', 'goal.delete', 'meeting.create', 'meeting.update', 'meeting.privateNote', 'meeting.addTask', 'meeting.toggleTask', 'meeting.delete',
     'workflow.create', 'workflow.update', 'workflow.submit', 'workflow.approve', 'workflow.reject', 'workflow.withdraw', 'workflow.delegation.save', 'workflow.delegation.revoke',
     'expense.create', 'expense.update', 'expense.submit', 'expense.withdraw', 'expense.reopen'].map(type => [type, 'member']),
@@ -99,6 +100,20 @@ function employeeChanges(employee: HrEmployee, input: Record<string, unknown>): 
 }
 function coreCommand(workspace: HrWorkspace, command: HrCommand, ctx: HrContext): boolean {
   const input = command.input;
+  if (command.type === 'notice.acknowledge') {
+    keys(input, ['id', 'updatedAt']);
+    const row = workspace.notices.find(notice => notice.id === hrText(input, 'id', 120) && notice.status === 'published');
+    if (!row) hrFail('게시된 공지를 찾을 수 없습니다.', 'HR_NOTICE_NOT_FOUND', 404);
+    if (hrText(input, 'updatedAt', 40) !== row.updatedAt) hrFail('공지 내용이 변경되었습니다. 새 내용을 읽은 뒤 확인해 주세요.', 'HR_NOTICE_CHANGED', 409);
+    if (ctx.employeeId && hrEmployee(workspace, ctx.employeeId).status === 'retired') hrFail('해당 매장의 재직 구성원을 찾을 수 없습니다.', 'HR_EMPLOYEE_NOT_FOUND', 404);
+    const receipts = row.receipts ?? [];
+    if (!receipts.some(receipt => receipt.actorId === ctx.actorId && receipt.noticeUpdatedAt === row.updatedAt)) {
+      row.receipts = [...receipts.filter(receipt => receipt.actorId !== ctx.actorId), {
+        actorId: ctx.actorId, ...(ctx.employeeId ? { employeeId: ctx.employeeId } : {}), noticeUpdatedAt: row.updatedAt, acknowledgedAt: ctx.now,
+      }];
+    }
+    return true;
+  }
   if (!['workspace.initialize', 'employee.create', 'employee.update', 'employee.retire', 'department.upsert', 'department.archive', 'settings.update', 'attendance.location.set', 'notice.create', 'notice.update', 'notice.archive', 'document.create', 'document.update', 'document.archive'].includes(command.type)) return false;
   hrManager(ctx);
   switch (command.type) {
@@ -167,7 +182,9 @@ function coreCommand(workspace: HrWorkspace, command: HrCommand, ctx: HrContext)
       const existing = command.type === 'notice.update' ? workspace.notices.find(row => row.id === hrText(input, 'id', 120)) : undefined;
       if (command.type === 'notice.update' && !existing) hrFail('공지를 찾을 수 없습니다.', 'HR_NOTICE_NOT_FOUND', 404);
       if (existing?.status === 'archived') hrFail('보관한 공지는 수정할 수 없습니다.', 'HR_ARCHIVED', 409);
-      const fields = { title: hrText(input, 'title', 200), body: hrText(input, 'body', 20000), pinned: bool(input, 'pinned'), status: hrEnum(input, 'status', ['draft', 'published'], 'draft'), updatedAt: ctx.now };
+      // Every edit has a distinct revision, including commands received in the same millisecond.
+      const updatedAt = existing && Date.parse(existing.updatedAt) >= Date.parse(ctx.now) ? new Date(Date.parse(existing.updatedAt) + 1).toISOString() : ctx.now;
+      const fields = { title: hrText(input, 'title', 200), body: hrText(input, 'body', 20000), pinned: bool(input, 'pinned'), status: hrEnum(input, 'status', ['draft', 'published'], 'draft'), updatedAt };
       if (existing) Object.assign(existing, fields); else { if (workspace.notices.length >= 1000) hrFail('공지는 최대 1,000개입니다.'); workspace.notices.push({ id: ctx.id(), ...fields, createdBy: ctx.actorId, createdAt: ctx.now }); } return true;
     }
     case 'notice.archive': {
@@ -216,7 +233,10 @@ export function projectHrWorkspace(workspace: HrWorkspace, ctx: HrContext): HrRe
     if (ctx.payroll) { directory.payType = row.payType; directory.basePay = row.basePay; directory.hireDate = row.hireDate; if (row.endDate) directory.endDate = row.endDate; }
     return directory;
   });
-  result.notices = result.notices.filter(row => ctx.manager || row.status === 'published');
+  result.notices = result.notices.filter(row => ctx.manager || row.status === 'published').map(row => {
+    if (!ctx.manager && row.receipts) row.receipts = row.receipts.filter(receipt => receipt.actorId === ctx.actorId);
+    return row;
+  });
   result.documents = result.documents.filter(row => ctx.manager || (row.status === 'active' && (row.employeeId === ctx.employeeId || (row.category === 'policy' && !row.employeeId))));
   result.history = result.history.filter(row => row.actorId === ctx.actorId || (ctx.manager && !/note/i.test(row.type)));
   result.attendance = projectHrAttendanceState(workspace.attendance, ctx);

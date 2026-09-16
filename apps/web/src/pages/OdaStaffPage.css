@@ -37,3 +37,53 @@
 @media(prefers-reduced-motion:reduce){.oda-staff-page *{scroll-behavior:auto}}
 
 .staff-more-menu ul,.staff-more-favorites ul,.staff-more-directory ul{list-style:none;padding:0;margin:0}.staff-more-heading h3,.staff-more-favorites h3{font-size:13px;color:#8a96a3}.staff-more-utility{display:block!important}.staff-more-search{display:flex;align-items:center;gap:8px}.staff-more-setting small{display:block;color:#8893a0;font-size:13px;margin-top:5px}.staff-more-directory .staff-more-avatar{width:38px;height:38px;border-radius:12px;font-size:14px}.staff-task-meta{display:flex;align-items:center;gap:8px}.staff-quick-actions .staff-leave-symbol svg{color:#b489d5}.staff-view-today .staff-clock-dock{color:#292c31}
+
+/* Touch targets remain usable in compact headers and on narrow phones. */
+.staff-store select,.staff-store .staff-icon-button,.staff-calendar-filter select,
+.staff-segment button,.staff-month-nav>button{min-height:44px}
+.staff-store .staff-icon-button,.staff-month-nav>button{min-width:44px}
+.staff-store label{flex:1;min-width:0}.staff-store select{min-width:0;text-overflow:ellipsis}
+.staff-calendar-filter{flex-wrap:wrap}.staff-calendar-filter>label{min-width:0}
+.staff-calendar-filter select{min-width:0;max-width:min(160px,42vw)}
+.staff-task-meta{flex-wrap:wrap}.staff-task-detail,.staff-more-profile p,.staff-more-setting span{overflow-wrap:anywhere}
+.staff-more-profile>div{min-width:0}.staff-more-profile h2{overflow-wrap:anywhere}
+.staff-more-menu>ul.staff-more-utility{margin:18px -24px 0;padding:14px 24px 0}
+.staff-more-setting{cursor:pointer}.staff-more-setting input[type=checkbox]{flex:none}
+.staff-clock-button{background:#18843e}.staff-clock-button:hover:not(:disabled){background:#116b31}
+.staff-shift-bands>button{color:#063c42}.staff-shift-bands>button>small{color:#073b40}
+.staff-location-link,.staff-calendar-export,.staff-overview-links>button>span,
+.staff-task-meta,.staff-task-detail,.staff-more-profile p,.staff-more-hint,.staff-hint{color:#687483}
+.oda-staff-page :is(input,select,textarea,button){scroll-margin-block:80px}
+
+/* Notice search and acknowledgement use the same compact card controls. */
+.staff-notice-toolbar{display:grid;gap:12px;margin:12px 0}
+.staff-notice-filter{display:flex;gap:8px;flex-wrap:wrap}
+.staff-notice-filter button{min-height:44px;padding:10px 13px;background:#f2f4f7;border:1px solid transparent;border-radius:9px;font:inherit;font-size:13px;color:#626e7d}
+.staff-notice-filter button[aria-pressed=true]{background:#e9f6f7;border-color:#b7dfe2;color:#08727b;font-weight:650}
+.staff-notice-search{display:flex;align-items:center;gap:8px;border:1px solid #e0e5eb;border-radius:10px;padding:0 12px;color:#7b8795;min-width:0}
+.staff-notice-search input{flex:1;width:100%;min-width:0;border:0;background:transparent;padding:10px 0;font-size:16px}
+.staff-notice-state{font-size:11px;padding:3px 6px;background:#eaf7f8;color:#08747c;border-radius:5px;white-space:nowrap}
+.staff-notice-state.acknowledged{background:#f0f2f5;color:#626e7a}
+.staff-notice-actions{padding:0 0 16px;display:flex;justify-content:flex-end;align-items:center}
+.staff-notice-actions>button{min-height:44px;padding:10px 16px;border:0;border-radius:10px;background:#292c31;color:#fff;font:inherit;font-size:14px;font-weight:650}
+.staff-notice-confirmed{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:#25734a;margin:0}
+.staff-notice-error{border:1px solid #ecc8c2;background:#fff1ef;color:#9d372a;border-radius:9px;font-size:13px;padding:12px;line-height:1.6;overflow-wrap:anywhere}
+.staff-notices li>button[aria-expanded=true]>svg{transform:rotate(90deg)}
+.oda-staff-page[data-staff-text=comfortable] :is(.staff-quick-actions button,.staff-target-label,.staff-location-link,.staff-calendar-export,.staff-calendar-filter select,.staff-day-section strong,.staff-notice-body,.staff-notice-filter button,.staff-notice-actions>button,.staff-task-empty p,.staff-more-info dd){font-size:17px}
+.oda-staff-page[data-staff-text=comfortable] :is(.staff-task-meta,.staff-task-detail,.staff-more-profile p,.staff-more-hint,.staff-more-settings-note,.staff-day-section small,.staff-notice-confirmed,.staff-notices time){font-size:14px}
+
+@media(max-width:760px){
+  .oda-staff-page{padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}
+  .oda-staff-page :is(input,select,textarea){font-size:16px}
+  .staff-store select{font-size:16px;max-width:calc(100vw - 132px)}
+  .staff-more-menu>ul.staff-more-utility{margin-inline:-20px;padding-inline:20px}
+  .staff-clock-dock{padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}
+  .staff-bottom-nav{padding-left:max(6px,env(safe-area-inset-left));padding-right:max(6px,env(safe-area-inset-right))}
+  .oda-staff-page[data-staff-text=comfortable] .staff-quick-actions button{white-space:normal;line-height:1.35;font-size:15px}
+}
+@media(max-width:360px){
+  .oda-staff-page{padding-inline:16px}.staff-store select{max-width:calc(100vw - 92px)}
+  .staff-more-menu>ul.staff-more-utility{margin-inline:-16px;padding-inline:16px}
+  .staff-calendar-filter{gap:8px}.staff-segment button{padding-inline:12px}
+  .staff-clock-dock>div>span{overflow-wrap:anywhere}.staff-clock-button{min-width:100px;padding-inline:14px}
+}

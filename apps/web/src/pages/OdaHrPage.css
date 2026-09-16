@@ -253,3 +253,87 @@
 }
 
 @media (prefers-reduced-motion: reduce) { .oda-hr-page *, .hr-dialog * { scroll-behavior: auto; } }
+
+/* Personal pages keep a single task heading instead of dashboard chrome. */
+.oda-hr-personal{max-width:1040px;background:#f6f7f9;min-height:calc(100dvh - 64px)}
+.staff-personal-heading{display:grid;gap:12px;margin-bottom:16px;min-width:0}
+.staff-personal-heading>div{display:flex;align-items:center;gap:10px;min-width:0}
+.staff-personal-heading h1{font-size:25px;line-height:1.35;letter-spacing:-.035em;overflow-wrap:anywhere;margin:0}
+.staff-personal-heading h1{flex:1}.staff-personal-heading button{flex:none;min-width:44px;min-height:44px}
+.staff-personal-context{display:flex;align-items:center;gap:10px;min-width:0;margin:0 0 4px;font-size:12px;color:#727b88}
+.staff-personal-context>span{flex:none}.staff-personal-context>select{min-width:0;flex:1;max-width:340px}
+.staff-personal-menu{display:grid;gap:6px;margin-bottom:18px;font-size:12px;color:#727b88}
+.staff-personal-menu label{display:grid;gap:6px}
+.staff-personal-menu select{width:100%;min-height:46px}
+.hr-dialog{scroll-padding-block:76px;overflow-wrap:anywhere}
+.hr-dialog-backdrop{overscroll-behavior:contain}
+.hr-dialog :is(input,select,textarea,button){scroll-margin-block:76px}
+.oda-hr-page summary,.hr-dialog summary{min-height:44px;padding-block:12px;cursor:pointer;line-height:1.5}
+.oda-hr-page summary:focus-visible,.hr-dialog summary:focus-visible{outline:2px solid #168b93;outline-offset:3px}
+.oda-hr-page label:has(>input[type=checkbox]),.hr-dialog label:has(>input[type=checkbox]),
+.oda-hr-page label:has(>input[type=radio]),.hr-dialog label:has(>input[type=radio]){display:flex;align-items:center;gap:10px;min-height:44px;line-height:1.5;cursor:pointer}
+.oda-hr-page label>input[type=checkbox],.hr-dialog label>input[type=checkbox],
+.oda-hr-page label>input[type=radio],.hr-dialog label>input[type=radio]{flex:none;width:20px;height:20px;min-height:20px;margin:0}
+.hr-metric{min-width:0}.hr-metric strong{overflow-wrap:anywhere}
+.oda-hr-personal[data-staff-text=comfortable]{font-size:17px}
+.oda-hr-personal[data-staff-text=comfortable] :is(.hr-list p,.hr-prose,.hr-prewrap,.hr-table,.hr-muted,.hr-note,.hr-card-head p,.hr-section-heading p,.hr-help-step p,.hr-staff-help p){font-size:16px}
+.oda-hr-personal[data-staff-text=comfortable] :is(input,select,textarea,.button,.hr-list h3,.hr-field,.hr-form label){font-size:17px}
+.oda-hr-personal[data-staff-text=comfortable] :is(.hr-badge,.hr-metric span,.hr-list small){font-size:13px}
+
+/* The employee sees one statement at a time, with amounts visible without swiping a table. */
+.staff-payroll-statements{display:grid;gap:16px;list-style:none;padding:0;margin:0}
+.staff-payroll-card{border:1px solid #e5e9ee;border-radius:16px;padding:22px;background:#fff;min-width:0}
+.staff-payroll-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.staff-payroll-card-header h2,.staff-payroll-card-header h3{margin:0;line-height:1.4;font-size:19px}
+.staff-payroll-card-header p{margin:5px 0 0;font-size:13px;color:#727b88}
+.staff-payroll-amount{display:grid;gap:8px;padding:24px 0;color:#697585;font-size:13px}
+.staff-payroll-amount strong{color:#292c32;font-size:32px;line-height:1.3;letter-spacing:-.04em;overflow-wrap:anywhere}
+.staff-payroll-summary{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0;padding:16px 0;border-block:1px solid #edf0f3}
+.staff-payroll-summary>div{min-width:0}.staff-payroll-summary dt{font-size:13px;color:#727b88;margin-bottom:6px}
+.staff-payroll-summary dd{font-size:17px;font-weight:650;line-height:1.4;margin:0;overflow-wrap:anywhere}
+.staff-payroll-dates{font-size:13px;color:#727b88;line-height:1.7;margin:16px 0;overflow-wrap:anywhere}
+.staff-payroll-card-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.staff-payroll-card-actions .button{flex:1;min-height:46px}
+.staff-payroll-detail{margin:16px 0;display:grid;gap:0}
+.staff-payroll-detail>dl{margin:10px 0 22px}
+.staff-payroll-detail>dl>div{display:flex;align-items:start;justify-content:space-between;gap:16px;border-bottom:1px solid #edf0f3;padding:14px 0}
+.staff-payroll-detail dt{font-size:14px;color:#687483;flex:1;min-width:0}
+.staff-payroll-detail dd{font-size:15px;margin:0;text-align:right;overflow-wrap:anywhere;max-width:65%}
+.oda-hr-personal[data-staff-text=comfortable] :is(.staff-payroll-summary dt,.staff-payroll-dates,.staff-payroll-detail dt){font-size:16px}
+
+.staff-record-list{display:grid;gap:12px;padding:0;margin:0;list-style:none}
+.staff-record-card{min-width:0;border:1px solid #e5e9ee;border-radius:13px;background:#fff;overflow:hidden}
+.staff-record-list>li{min-width:0}
+button.staff-record-card{display:block;width:100%;min-height:64px;padding:16px;text-align:left;color:#292c32;font:inherit;cursor:pointer}
+button.staff-record-card:hover:not(:disabled){background:#f7f9fb}
+button.staff-record-card:disabled{opacity:.55;cursor:not-allowed}
+.staff-record-card>button{width:100%;min-height:64px;border:0;background:transparent;padding:16px;text-align:left;color:#292c32;font:inherit;cursor:pointer}
+.staff-record-card>button:hover{background:#f7f9fb}
+.staff-record-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:15px;font-weight:650}
+.staff-record-head>span{min-width:0;overflow-wrap:anywhere}
+.staff-record-meta{display:block;color:#687483;font-size:13px;line-height:1.7;overflow-wrap:anywhere;margin:8px 0 0}
+.staff-record-hours{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:10px 0 0;font-size:17px;font-weight:650;color:#292c32}
+.staff-record-hours small{font-size:12px;font-weight:400;color:#687483}
+.staff-leave-balances{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;margin:16px 0}
+.staff-leave-balance{display:grid;gap:8px;min-width:0;border:1px solid #e2eaed;background:#f6fafb;padding:18px 16px;border-radius:13px}
+.staff-leave-balance h3{margin:0;font-size:15px}.staff-leave-balance strong{font-size:24px;color:#087780;overflow-wrap:anywhere}
+.staff-leave-balance p,.staff-leave-balance small{font-size:13px;color:#687483;margin:0;line-height:1.6}
+.staff-leave-ledger{list-style:none;padding:0;margin:0;display:grid;gap:0}
+.staff-leave-ledger>li{padding:16px 0;border-bottom:1px solid #edf0f3;font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+.staff-leave-ledger>li:last-child{border-bottom:0}.staff-leave-ledger small,.staff-leave-ledger p{color:#687483;font-size:13px;margin:6px 0 0}
+.oda-hr-personal[data-staff-text=comfortable] :is(.staff-record-head,.staff-record-meta,.staff-leave-balance p,.staff-leave-balance small,.staff-leave-ledger){font-size:16px}
+.staff-panel-action{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.staff-panel-action>p{flex:1;min-width:180px;color:#687483;font-size:13px;line-height:1.7}
+.staff-panel-action>.button{flex:none;min-height:46px}
+
+@media(max-width:700px){
+  .oda-hr-personal{padding:18px max(16px,env(safe-area-inset-right)) calc(104px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));min-height:calc(100dvh - 52px)}
+  .staff-personal-heading{gap:8px;margin-bottom:14px}.staff-personal-heading h1{font-size:23px}
+  .staff-personal-context{gap:8px}
+  .hr-dialog{max-height:calc(100dvh - 12px);padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}
+  .hr-dialog .hr-table .button{min-height:44px}
+  .hr-dialog .hr-form>.button{min-height:48px;width:100%}
+  .hr-dialog .hr-form :is(input,select,textarea){max-width:100%}
+  .staff-payroll-card{padding:20px 16px}.staff-payroll-amount strong{font-size:29px}
+  .staff-payroll-card-actions .button{min-width:120px}
+}

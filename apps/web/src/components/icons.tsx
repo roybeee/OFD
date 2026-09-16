@@ -6,6 +6,7 @@ function IconBase({ name, size = 24, ...props }: SVGProps<SVGSVGElement> & { nam
   let body: ReactElement;
   switch (name) {
     case 'check': body = <path d="m5 12 4 4L19 6" />; break;
+    case 'chevron-left': body = <path d="m15 18-6-6 6-6" />; break;
     case 'chevron-right': body = <path d="m9 18 6-6-6-6" />; break;
     case 'chevron-down': body = <path d="m6 9 6 6 6-6" />; break;
     case 'plus': body = <><path d="M12 5v14" /><path d="M5 12h14" /></>; break;
@@ -59,6 +60,7 @@ const icon = (name: string): IconComponent => (props) => <IconBase name={name} {
 export const Check = icon('check');
 export const CheckCircle2 = icon('check');
 export const CircleCheckBig = icon('check');
+export const ChevronLeft = icon('chevron-left');
 export const ChevronRight = icon('chevron-right');
 export const ChevronDown = icon('chevron-down');
 export const Plus = icon('plus');

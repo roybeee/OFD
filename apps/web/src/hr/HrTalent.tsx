@@ -1,10 +1,12 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import type { HrCandidateStage, HrContract, HrGoal, HrMeeting, HrReviewAssignment, HrReviewCycle } from '../../../../packages/domain/src/oda-hr-talent';
+import { useState, type FormEvent } from 'react';
+import { projectHrTalentState, type HrCandidateStage, type HrContract, type HrGoal, type HrMeeting, type HrReviewAssignment, type HrReviewCycle } from '../../../../packages/domain/src/oda-hr-talent';
 import { Button } from '../components/ui';
 import { HrDialog, HrEmpty, hrDate, hrError, hrToday, type HrPanelProps } from './shared';
 
+import { unavailableStaffRecord, useStaffEntryIntent, type StaffEntryIntent } from './StaffDestination';
+
 type Tab = 'goals' | 'reviews' | 'meetings' | 'recruitment' | 'contracts';
-type Props = HrPanelProps & { tab: Tab };
+type Props = HrPanelProps & { tab: Tab; entryIntent?: StaffEntryIntent };
 const labels: Record<Tab, string> = { goals: '목표', reviews: '평가', meetings: '미팅', recruitment: '채용', contracts: '계약' };
 const stageNames: Record<HrCandidateStage, string> = { applied: '지원', screening: '서류 검토', interview: '인터뷰', offer: '처우 협의', hired: '합격', rejected: '불합격', withdrawn: '지원 철회' };
 const stageOptions = Object.entries(stageNames) as [HrCandidateStage, string][];
@@ -21,12 +23,14 @@ function FormActions({ busy, label = '저장', onClose }: { busy: boolean; label
   return <div className="hr-actions"><Button type="button" variant="secondary" disabled={busy} onClick={onClose}>취소</Button><Button type="submit" disabled={busy}>{busy ? '저장 중…' : label}</Button></div>;
 }
 
-export function HrTalent(props: Props) {
+export function HrTalent(inputProps: Props) {
+  const props = { ...inputProps, workspace: { ...inputProps.workspace, talent: projectHrTalentState(inputProps.workspace.talent, { actorId: inputProps.actorId, employeeId: inputProps.employeeId, manager: inputProps.permissions.manage, payroll: inputProps.permissions.payroll }) } };
   const { tab, workspace, permissions, busy, mutate } = props;
   const [dialog, setDialog] = useState(false), [error, setError] = useState(''), [selected, setSelected] = useState('');
   const [editingGoal, setEditingGoal] = useState<HrGoal | null>(null), [editingContract, setEditingContract] = useState<HrContract | null>(null);
   const [editingReview, setEditingReview] = useState<HrReviewCycle | null>(null);
-  useEffect(() => { setDialog(false); setSelected(''); setError(''); setEditingGoal(null); setEditingContract(null); setEditingReview(null); }, [tab]);
+  const [selectedChild, setSelectedChild] = useState('');
+
   async function run(type: string, input: Record<string, unknown>, close = false): Promise<boolean> {
     setError('');
     try { await mutate(type, input); if (close) { setDialog(false); setEditingGoal(null); setEditingContract(null); setEditingReview(null); } return true; }
@@ -34,6 +38,15 @@ export function HrTalent(props: Props) {
   }
   const canCreate = tab === 'goals' ? permissions.manage || Boolean(props.employeeId) : tab === 'meetings' ? Boolean(props.employeeId) : permissions.manage;
   function create() { setEditingGoal(null); setEditingContract(null); setEditingReview(null); setError(''); setDialog(true); }
+  useStaffEntryIntent(JSON.stringify([workspace.storeId,props.actorId,props.employeeId,tab]),props.entryIntent,intent=>{
+    setDialog(false);setSelected('');setSelectedChild('');setError('');setEditingGoal(null);setEditingContract(null);setEditingReview(null);
+    if(intent?.action==='create'){if(canCreate)create();return;}
+    if(!intent?.recordId)return;
+    const target = tab==='meetings' ? workspace.talent.meetings.find(row=>row.id===intent.recordId) : tab==='reviews' ? workspace.talent.reviews.find(row=>row.id===intent.recordId) : undefined;
+    const validChild = !intent.childId || (tab==='meetings' ? workspace.talent.meetings.find(row=>row.id===target?.id)?.tasks.some(row=>row.id===intent.childId) : workspace.talent.reviews.find(row=>row.id===target?.id)?.assignments.some(row=>row.id===intent.childId));
+    if(!target || !validChild){setError(unavailableStaffRecord);return;}
+    setSelected(target.id);setSelectedChild(intent.childId??'');
+  });
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const f = new FormData(event.currentTarget);
     if (tab === 'goals') {
@@ -80,16 +93,16 @@ export function HrTalent(props: Props) {
     </>}
     {tab === 'reviews' && <>
       {!workspace.talent.reviews.length && <HrEmpty title="진행 중인 평가가 없습니다.">관리자가 평가 대상과 문항을 준비하면 작성할 수 있습니다.</HrEmpty>}
-      <div className="hr-list">{workspace.talent.reviews.map(cycle => <article key={cycle.id} className="hr-card"><div className="hr-section-heading"><div><h3>{cycle.title}</h3><p>{hrDate(cycle.startDate)} ~ {hrDate(cycle.dueDate)} · {cycle.status === 'draft' ? '준비 중' : cycle.status === 'open' ? '진행 중' : '마감'}</p></div><Button variant="secondary" onClick={() => setSelected(selected === cycle.id ? '' : cycle.id)}>평가 보기</Button></div>
+      <div className="hr-list">{workspace.talent.reviews.map(cycle => <article key={cycle.id} className="hr-card"><div className="hr-section-heading"><div><h3>{cycle.title}</h3><p>{hrDate(cycle.startDate)} ~ {hrDate(cycle.dueDate)} · {cycle.status === 'draft' ? '준비 중' : cycle.status === 'open' ? '진행 중' : '마감'}</p></div><Button variant="secondary" onClick={() => { setSelectedChild('');setSelected(selected === cycle.id ? '' : cycle.id); }}>평가 보기</Button></div>
         <p className="hr-muted">제출 {cycle.assignments.filter(row => row.status === 'submitted').length} / {cycle.assignments.length}</p>
         {permissions.manage && <div className="hr-actions">{cycle.status === 'draft' && <><Button disabled={busy} onClick={() => void run('review.open', { id: cycle.id })}>평가 시작</Button><Button variant="secondary" disabled={busy} onClick={() => { setEditingReview(cycle); setDialog(true); }}>평가 준비 수정</Button><Button variant="ghost" disabled={busy} onClick={() => { if (window.confirm('준비 중인 평가를 삭제할까요?')) void run('review.delete', { id: cycle.id }); }}>준비 평가 삭제</Button></>}{cycle.status === 'open' && <Button disabled={busy || !cycle.assignments.every(row => row.status === 'submitted')} onClick={() => void run('review.close', { id: cycle.id })}>전체 제출 확인 · 마감</Button>}</div>}
       </article>)}</div>
-      {selectedReview && <ReviewDetail key={selectedReview.id} props={props} cycle={selectedReview} run={run} />}
+      {selectedReview && <HrDialog title={`${selectedReview.title} 평가`} busy={busy} onClose={()=>setSelected('')}>{error&&<p className="hr-error" role="alert">{error}</p>}<ReviewDetail key={selectedReview.id} props={props} cycle={selectedReview} run={run} assignmentId={selectedChild} /></HrDialog>}
     </>}
     {tab === 'meetings' && <>
       {!workspace.talent.meetings.length && <HrEmpty title="참여 중인 미팅이 없습니다.">미팅을 만든 후 공동 노트와 개인 메모를 작성하세요.</HrEmpty>}
-      <div className="hr-list">{workspace.talent.meetings.map(meeting => <article key={meeting.id} className="hr-card"><div className="hr-section-heading"><div><h3>{meeting.title}</h3><p>{meeting.scheduledDate ? hrDate(meeting.scheduledDate) : '일정 없음'} · {meeting.participantEmployeeIds.map(id => memberName(props, id)).join(', ')}</p></div><Button variant="secondary" onClick={() => setSelected(selected === meeting.id ? '' : meeting.id)}>노트 열기</Button></div></article>)}</div>
-      {selectedMeeting && <MeetingDetail key={selectedMeeting.id} props={props} meeting={selectedMeeting} run={run} onDeleted={() => setSelected('')} />}
+      <div className="hr-list">{workspace.talent.meetings.map(meeting => <article key={meeting.id} className="hr-card"><div className="hr-section-heading"><div><h3>{meeting.title}</h3><p>{meeting.scheduledDate ? hrDate(meeting.scheduledDate) : '일정 없음'} · {meeting.participantEmployeeIds.map(id => memberName(props, id)).join(', ')}</p></div><Button variant="secondary" onClick={() => { setSelectedChild('');setSelected(selected === meeting.id ? '' : meeting.id); }}>노트 열기</Button></div></article>)}</div>
+      {selectedMeeting && <HrDialog title={`${selectedMeeting.title} 미팅`} busy={busy} onClose={()=>setSelected('')}>{error&&<p className="hr-error" role="alert">{error}</p>}<MeetingDetail key={selectedMeeting.id} props={props} meeting={selectedMeeting} run={run} onDeleted={() => setSelected('')} /></HrDialog>}
     </>}
     {tab === 'recruitment' && (permissions.manage ? <Recruitment props={props} run={run} /> : <HrEmpty title="채용 관리 권한이 필요합니다." />)}
     {tab === 'contracts' && <>
@@ -137,9 +150,9 @@ export function HrTalent(props: Props) {
 }
 
 type Run = (type: string, input: Record<string, unknown>, close?: boolean) => Promise<boolean>;
-function ReviewDetail({ props, cycle, run }: { props: Props; cycle: HrReviewCycle; run: Run }) {
+function ReviewDetail({ props, cycle, run, assignmentId }: { props: Props; cycle: HrReviewCycle; run: Run; assignmentId?: string }) {
   return <section className="hr-card" aria-label={`${cycle.title} 상세`}><h3>{cycle.title} · 평가와 결과</h3>
-    {cycle.assignments.map(assignment => <ReviewAssignment key={assignment.id} props={props} cycle={cycle} assignment={assignment} run={run} />)}
+    {cycle.assignments.filter(assignment => !assignmentId || assignment.id === assignmentId).map(assignment => <ReviewAssignment key={assignment.id} props={props} cycle={cycle} assignment={assignment} run={run} />)}
     {cycle.reports.map(report => <article key={report.employeeId} className="hr-card"><h4>{memberName(props, report.employeeId)} 평가 결과</h4><p>평균 {report.averageScore} / 5 · 평가 {report.responseCount}건 · {report.sharedAt ? '구성원 공개 중' : '비공개'}</p><p style={{ whiteSpace: 'pre-wrap' }}>{report.summary}</p>
       {props.permissions.manage && <Button variant="secondary" disabled={props.busy} onClick={() => void run(report.sharedAt ? 'review.revoke' : 'review.publish', { id: cycle.id, employeeId: report.employeeId })}>{report.sharedAt ? '공개 회수' : '대상자에게 공개'}</Button>}</article>)}
   </section>;

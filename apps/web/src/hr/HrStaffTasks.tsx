@@ -4,6 +4,7 @@ import { canHrApprove } from '../../../../packages/domain/src/oda-hr-workflow';
 import { Check, ChevronRight, Search, X } from '../components/icons';
 import type { StaffPersonalTab } from '../pages/OdaStaffPage';
 import { hrToday } from './shared';
+import type { StaffDestination } from './StaffDestination';
 
 export type StaffTaskItem = {
   id: string;
@@ -13,6 +14,7 @@ export type StaffTaskItem = {
   date: string;
   detail: string;
   tab: StaffPersonalTab;
+  destination: StaffDestination;
 };
 export type StaffTaskGroups = { todo: StaffTaskItem[]; requested: StaffTaskItem[]; reference: StaffTaskItem[] };
 
@@ -32,7 +34,7 @@ export function deriveStaffTasks(response: HrResponse | null, actorId: string, t
     const item: StaffTaskItem = {
       id: `workflow:${request.id}`, title: request.title, category: '결재',
       status: statusNames[request.status] ?? request.status, date: request.submittedAt || request.createdAt,
-      detail: request.status === 'pending' ? `${request.currentStep + 1}단계 결재 진행 중` : request.category, tab: 'approvals',
+      detail: request.status === 'pending' ? `${request.currentStep + 1}단계 결재 진행 중` : request.category, tab: 'approvals', destination: { recordId: request.id },
     };
     const actionable = mayAct && canHrApprove(request, workspace.workflow, context);
     if (actionable) groups.todo.push({ ...item, status: '내 승인 필요' });
@@ -47,7 +49,7 @@ export function deriveStaffTasks(response: HrResponse | null, actorId: string, t
     if (expense.authorId !== actorId) continue;
     groups.requested.push({ id: `expense:${expense.id}`, title: expense.title, category: '비용',
       status: statusNames[expense.status] ?? expense.status, date: expense.date,
-      detail: `${expense.amount.toLocaleString('ko-KR')}원 · ${expense.category}`, tab: 'expenses' });
+      detail: `${expense.amount.toLocaleString('ko-KR')}원 · ${expense.category}`, tab: 'expenses', destination: { recordId: expense.id } });
   }
   if (employeeId) {
     for (const leave of workspace.attendance.leaveRequests) {
@@ -55,13 +57,13 @@ export function deriveStaffTasks(response: HrResponse | null, actorId: string, t
       const leaveType = workspace.attendance.leaveTypes.find(type => type.id === leave.typeId)?.name || '휴가';
       groups.requested.push({ id: `leave:${leave.id}`, title: `${leaveType} 신청`, category: '휴가',
         status: statusNames[leave.status] ?? leave.status, date: leave.createdAt,
-        detail: leave.startDate === leave.endDate ? leave.startDate : `${leave.startDate} ~ ${leave.endDate}`, tab: 'leave' });
+        detail: leave.startDate === leave.endDate ? leave.startDate : `${leave.startDate} ~ ${leave.endDate}`, tab: 'leave', destination: { recordId: leave.id } });
     }
     for (const work of workspace.attendance.workEntries) {
       if (work.employeeId !== employeeId || work.source !== 'manual') continue;
       groups.requested.push({ id: `work:${work.id}`, title: '근무 등록·정정 신청', category: '근무',
         status: statusNames[work.status] ?? work.status, date: work.createdAt,
-        detail: `${work.date} · ${work.startTime} ~ ${work.endDate !== work.date ? `${work.endDate} ` : ''}${work.endTime}`, tab: 'attendance' });
+        detail: `${work.date} · ${work.startTime} ~ ${work.endDate !== work.date ? `${work.endDate} ` : ''}${work.endTime}`, tab: 'attendance', destination: { recordId: work.id } });
     }
     if (mayAct) {
       for (const meeting of workspace.talent.meetings) {
@@ -69,7 +71,7 @@ export function deriveStaffTasks(response: HrResponse | null, actorId: string, t
         for (const task of meeting.tasks) {
           if (task.completed || task.assigneeEmployeeId !== employeeId) continue;
           groups.todo.push({ id: `meeting:${meeting.id}:${task.id}`, title: task.title, category: '미팅',
-            status: '진행 중', date: meeting.scheduledDate, detail: meeting.title, tab: 'meetings' });
+            status: '진행 중', date: meeting.scheduledDate, detail: meeting.title, tab: 'meetings', destination: { recordId: meeting.id, childId: task.id } });
         }
       }
       for (const cycle of workspace.talent.reviews) {
@@ -78,7 +80,7 @@ export function deriveStaffTasks(response: HrResponse | null, actorId: string, t
           if (assignment.reviewerEmployeeId !== employeeId || assignment.status !== 'draft') continue;
           const employee = workspace.employees.find(row => row.id === assignment.employeeId);
           groups.todo.push({ id: `review:${cycle.id}:${assignment.id}`, title: cycle.title, category: '평가',
-            status: '작성 필요', date: cycle.dueDate, detail: `${employee?.name || '평가 대상자'} · ${cycle.dueDate}까지`, tab: 'reviews' });
+            status: '작성 필요', date: cycle.dueDate, detail: `${employee?.name || '평가 대상자'} · ${cycle.dueDate}까지`, tab: 'reviews', destination: { recordId: cycle.id, childId: assignment.id } });
         }
       }
     }
@@ -92,7 +94,7 @@ type Props = {
   response: HrResponse | null;
   actorId: string;
   busy: boolean;
-  onOpenPersonal: (tab: StaffPersonalTab) => void;
+  onOpenPersonal: (tab: StaffPersonalTab, destination?: StaffDestination) => void;
 };
 const taskTabs = [['todo', '해야할 일'], ['requested', '요청한 일'], ['reference', '참조']] as const;
 const emptyText = {
@@ -117,7 +119,7 @@ export function HrStaffTasks({ response, actorId, busy, onOpenPersonal }: Props)
         <button className="staff-icon-button" type="button" aria-label={searchOpen ? '할 일 검색 닫기' : '할 일 검색'} aria-expanded={searchOpen} aria-controls={`${id}-search`} onClick={() => { setSearchOpen(value => !value); setQuery(''); }}>
           {searchOpen ? <X size={23} aria-hidden="true" /> : <Search size={23} aria-hidden="true" />}
         </button>
-        <button className="staff-icon-button" type="button" aria-label="새 결재 요청" disabled={busy || !mayWrite} onClick={() => onOpenPersonal('approvals')}>
+        <button className="staff-icon-button" type="button" aria-label="새 결재 요청" disabled={busy || !mayWrite} onClick={() => onOpenPersonal('approvals', { action: 'create' })}>
           <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6ZM3 23h18" /></svg>
         </button>
       </div>
@@ -137,7 +139,7 @@ export function HrStaffTasks({ response, actorId, busy, onOpenPersonal }: Props)
       {!response ? <div className="staff-task-empty" role="status"><p>{busy ? '할 일을 불러오고 있어요.' : '매장 정보를 불러온 뒤 할 일을 확인할 수 있어요.'}</p></div>
         : rows.length ? <>
           {tab === 'reference' && <p className="staff-task-context">결재선에 포함된 문서의 진행 상태를 확인하세요.</p>}
-          <ul className="staff-task-list">{rows.map(row => <li key={row.id}><button type="button" className="staff-task-row" disabled={busy} onClick={() => onOpenPersonal(row.tab)}>
+          <ul className="staff-task-list">{rows.map(row => <li key={row.id}><button type="button" className="staff-task-row" disabled={busy} onClick={() => onOpenPersonal(row.tab, row.destination)}>
             <span className="staff-task-row-body"><span className="staff-task-meta"><span>{row.category}</span><span>{row.status}</span></span><strong>{row.title}</strong><span className="staff-task-detail">{row.detail}</span></span>
             <ChevronRight size={18} aria-hidden="true" />
           </button></li>)}</ul>

@@ -58,6 +58,7 @@ describe('staff task groups follow assignments, ownership and visibility', () =>
     response.workspace.attendance.leaveRequests = [leave('mine', 'me'), leave('other', 'coworker')];
     const groups = deriveStaffTasks(response, 'self', today);
     expect(groups.requested.map(row => row.id).sort()).toEqual(['expense:mine', 'leave:mine', 'work:mine', 'workflow:mine']);
+    expect(groups.requested.every(row => row.destination.recordId === 'mine')).toBe(true);
     expect(JSON.stringify(groups)).not.toContain('민감한'); expect(JSON.stringify(groups)).not.toContain('private receipt');
     expect(groups.reference.some(row => row.id === 'workflow:mine')).toBe(false);
     delete response.employeeId;
@@ -74,6 +75,7 @@ describe('staff task groups follow assignments, ownership and visibility', () =>
       assignments: [{ id: 'mine', employeeId: 'me', reviewerEmployeeId: 'me', status: 'draft', answers: [], submittedAt: null },
         { id: 'other', employeeId: 'me', reviewerEmployeeId: 'coworker', status: 'draft', answers: [], submittedAt: null }] }];
     expect(deriveStaffTasks(response, 'self', today).todo.map(row => row.id)).toEqual(['meeting:meeting:mine', 'review:review:mine']);
+    expect(deriveStaffTasks(response, 'self', today).todo.map(row => row.destination)).toEqual([{ recordId: 'meeting', childId: 'mine' }, { recordId: 'review', childId: 'mine' }]);
     expect(deriveStaffTasks(response, 'self', '2026-10-01').todo.map(row => row.id)).toEqual(['meeting:meeting:mine']);
     response.workspace.talent.meetings[0]!.participantEmployeeIds = ['coworker'];
     response.workspace.talent.reviews[0]!.assignments[0]!.status = 'submitted';
@@ -95,7 +97,7 @@ describe('staff task mobile interface', () => {
     expect(container.textContent).toContain('아직 요청받은 할 일이 없어요.');
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(3);
     expect(container.querySelector('.staff-task-count')).toBeNull();
-    await click('새 결재 요청'); expect(onOpenPersonal).toHaveBeenCalledWith('approvals');
+    await click('새 결재 요청'); expect(onOpenPersonal).toHaveBeenCalledWith('approvals', { action: 'create' });
     await click('참조'); expect(container.textContent).toContain('참고할 결재 문서가 없어요.');
   });
 
@@ -112,7 +114,7 @@ describe('staff task mobile interface', () => {
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, '장갑'); search.dispatchEvent(new Event('input', { bubbles: true })); });
     expect(container.querySelectorAll('.staff-task-row')).toHaveLength(1);
     await act(async () => (container.querySelector('.staff-task-row') as HTMLButtonElement).click());
-    expect(onOpenPersonal).toHaveBeenLastCalledWith('expenses');
+    expect(onOpenPersonal).toHaveBeenLastCalledWith('expenses', { recordId: 'e' });
     await click('할 일 검색 닫기'); expect(container.querySelectorAll('.staff-task-row')).toHaveLength(2);
     await act(async () => { requestedTab.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowRight' })); });
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('참조');

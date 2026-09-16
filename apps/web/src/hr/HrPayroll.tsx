@@ -43,6 +43,7 @@ export function HrPayroll(props: HrPanelProps) {
   const [reason, setReason] = useState('');
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishTime, setPublishTime] = useState('');
+  useEffect(() => { setSelectedId('');setEditingEmployee('');setError(''); }, [workspace.storeId,actorId,employeeId]);
 
   async function send(type: string, input: Record<string, unknown>, success?: () => void) {
     setError('');
@@ -88,6 +89,40 @@ export function HrPayroll(props: HrPanelProps) {
   const editable = permissions.payroll && run?.status === 'draft';
   const candidates = workspace.employees.filter(employee => !run?.rows.some(row => row.employeeId === employee.id) && employee.hireDate <= `${run?.month ?? month}-31` && (!employee.endDate || employee.endDate >= `${run?.month ?? month}-01`));
   const scheduled = run?.status === 'published' && Boolean(run.publishedAt && run.publishedAt > now);
+
+  if (!permissions.payroll) {
+    const selectedRun = runs.find(item => item.id === selectedId);
+    const statement = selectedRun?.rows.find(row => row.employeeId === editingEmployee);
+    const statementTotals = statement ? calculateHrPayrollRow(statement) : undefined;
+    return <section className="staff-payroll" aria-label="내 급여명세서">
+      <header className="hr-section-heading"><div><h2>내 급여명세서</h2><p className="hr-muted">공개된 급여명세서를 월별로 확인하세요.</p></div></header>
+      {error&&<p className="hr-error" role="alert">{error}</p>}
+      {!runs.length&&<HrEmpty title="공개된 급여명세서가 없습니다">급여 담당자가 공개하면 이곳에서 확인할 수 있습니다.</HrEmpty>}
+      <div className="staff-payroll-statements">{runs.map(item=>item.rows.map(row=>{
+        const amounts=calculateHrPayrollRow(row);
+        const periodLabel=`${Number(item.month.slice(0,4))}년 ${Number(item.month.slice(5,7))}월`;
+        return <article className="staff-payroll-card" key={`${item.id}:${row.employeeId}`} aria-label={`${periodLabel} ${item.title}`}>
+          <header className="staff-payroll-card-header"><div><h3>{periodLabel}</h3><p>{item.title}</p></div><span className="hr-badge">공개</span></header>
+          <p className="staff-payroll-amount"><span>실지급액</span><strong>{krw(amounts.net)}</strong></p>
+          <dl className="staff-payroll-summary"><div><dt>총 지급액</dt><dd>{krw(amounts.gross)}</dd></div><div><dt>공제 합계</dt><dd>{krw(amounts.deductions)}</dd></div></dl>
+          <div className="staff-payroll-dates"><p>{row.name} · {row.employeeNumber}</p><p>산정 기간 {row.periodStart} ~ {row.periodEnd}</p><p>지급일 <time dateTime={item.payDate}>{item.payDate}</time></p></div>
+          <div className="staff-payroll-card-actions"><Button type="button" disabled={busy} onClick={()=>{setSelectedId(item.id);openRow(row);}} aria-label={`${periodLabel} ${item.title} 상세 보기`}>상세 보기</Button><Button type="button" variant="secondary" disabled={busy} onClick={()=>download(item)} aria-label={`${periodLabel} ${item.title} CSV 내려받기`}>CSV 내려받기</Button></div>
+        </article>;
+      }))}</div>
+      {selectedRun&&statement&&statementTotals&&<HrDialog title={`${selectedRun.month} 급여명세서`} busy={busy} onClose={()=>setEditingEmployee('')}>
+        {error&&<p className="hr-error" role="alert">{error}</p>}
+        <div className="staff-payroll-detail"><p>{statement.name} · {statement.employeeNumber}</p><p>{selectedRun.title}</p><p className="hr-muted">산정 기간 {statement.periodStart} ~ {statement.periodEnd}<br/>지급일 {selectedRun.payDate}</p>
+          <p className="staff-payroll-amount"><span>실지급액</span><strong>{krw(statementTotals.net)}</strong></p>
+          <h3>지급 내역</h3><dl><div><dt>기본급</dt><dd>{krw(statement.baseAmount)}</dd></div>{statement.adjustments.filter(item=>item.kind==='allowance').map(item=><div key={item.id}><dt>{item.label}</dt><dd>{krw(item.amount)}</dd></div>)}<div><dt>총 지급액</dt><dd>{krw(statementTotals.gross)}</dd></div></dl>
+          <h3>공제 내역</h3><dl>{(['incomeTax','localTax','employeeInsurance'] as const).map(key=><div key={key}><dt>{manualLabels[key]}</dt><dd>{krw(statement[key])}</dd></div>)}{statement.adjustments.filter(item=>item.kind==='deduction').map(item=><div key={item.id}><dt>{item.label}</dt><dd>{krw(item.amount)}</dd></div>)}<div><dt>공제 합계</dt><dd>{krw(statementTotals.deductions)}</dd></div></dl>
+          <details><summary>급여 산정 기준</summary><p>{statement.payType==='hourly'?'시급':'월급'} {krw(statement.basePay)}</p><p>인정근무 {duration(statement.recognizedMinutes)} · 유급휴가 {duration(statement.paidLeaveMinutes)} · 무급휴가 {duration(statement.unpaidLeaveMinutes)}</p>
+            {statement.segments.length>0&&<ul className="hr-list">{statement.segments.map(segment=><li key={segment.startDate}>{segment.startDate} ~ {segment.endDate} · {segment.payType==='hourly'?'시급':'월급'} {krw(segment.basePay)} · 기본급 {krw(segment.baseAmount)}</li>)}</ul>}
+          </details>
+          <Button type="button" variant="secondary" disabled={busy} onClick={()=>download(selectedRun)}>급여 CSV 내려받기</Button>
+        </div>
+      </HrDialog>}
+    </section>;
+  }
 
   return <div className="hr-grid">
     <section className="hr-card">

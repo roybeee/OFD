@@ -10,6 +10,8 @@ import { HrDialog } from '../hr/shared';
 import { EsignPendingCard } from '../hr/HrEsign';
 import { StaffBottomNav, staffHomeTabs, type StaffHomeTab } from '../hr/StaffNavigation';
 import { HrStaffTasks, deriveStaffTasks } from '../hr/HrStaffTasks';
+import { HrStaffNotices, countStaffUnreadNotices } from '../hr/HrStaffNotices';
+import type { StaffDestination } from '../hr/StaffDestination';
 import { HrStaffMore, useStaffTextPreference } from '../hr/HrStaffMore';
 import { addStaffDays, shiftMinutes, staffDuration, staffScheduleIcs, staffWeekSummary } from '../lib/hr-staff-summary';
 import './OdaStaffPage.css';
@@ -20,7 +22,7 @@ export const staffPersonalTabs = [
   ['contracts', '내 계약'], ['documents', '내 문서'], ['help', '인사 도움말'],
 ] as const;
 export type StaffPersonalTab = typeof staffPersonalTabs[number][0];
-type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void; onOpenPersonal?: (tab: StaffPersonalTab) => void; initialTab?: StaffHomeTab; onHomeTabChange?: (tab: StaffHomeTab) => void };
+type Props = { data: BootstrapData; notify: (message: string, tone?: 'success' | 'info' | 'warning') => void; onOpenPersonal?: (tab: StaffPersonalTab, destination?: StaffDestination) => void; initialTab?: StaffHomeTab; onHomeTabChange?: (tab: StaffHomeTab) => void; onBusyChange?: (busy: boolean) => void };
 type GeoState = { phase: 'idle' | 'checking' | 'ready' | 'error'; position?: HrPosition; message?: string };
 type ClockLocation = NonNullable<HrResponse['workspace']['settings']['clockLocation']>;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '요청을 처리하지 못했습니다. 다시 시도해 주세요.';
@@ -37,7 +39,7 @@ export function clockLocationCheck(position: HrPosition, location: ClockLocation
   return { valid: true, distance, message: '매장 반경 안에서 위치를 확인했습니다.' };
 }
 
-export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeTabChange }: Props) {
+export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeTabChange, onBusyChange }: Props) {
   const stores = data.stores.filter(store => store.active !== false);
   const initialStore = stores.find(store => store.id === new URLSearchParams(window.location.search).get('store'))?.id || stores.find(store => store.id === data.store.id)?.id || stores[0]?.id || '';
   const [storeId, setStoreId] = useState(initialStore);
@@ -83,6 +85,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
   const configuredAddress = location?.address || view?.storeAddress;
   const locationResult = geo.position && location ? clockLocationCheck(geo.position, location, now) : null;
 
+  useEffect(() => { if (initialTab) setHomeTab(initialTab); }, [initialTab]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; operation.current++; geoRequest.current++; }; }, []);
   useEffect(() => {
     const controller = new AbortController();
@@ -119,7 +122,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
 
   function selectStore(next: string) {
     if (saving.current || next === activeStore.current || !stores.some(store => store.id === next)) return;
-    operation.current++; geoRequest.current++; locked.current = false;
+    operation.current++; geoRequest.current++; locked.current = false; onBusyChange?.(false);
     activeStore.current = next; setStoreId(next); setPhase(null); setGeo({ phase: 'idle' }); setResponse(null);
     setClockError(''); setSuccess(''); setScheduleMode('mine'); setOpenNotice(''); setCoworker('all'); setClockSheet(false); setNoticeSheet(false);
     const params = new URLSearchParams(window.location.search); params.set('store', next); params.delete('tab');
@@ -131,7 +134,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
       const next = stores.find(store => store.id === requested)?.id || stores[0]?.id;
       if (next && next !== activeStore.current) selectStore(next);
       const requestedTab = new URLSearchParams(window.location.search).get('view');
-      if (!locked.current && staffHomeTabs.includes(requestedTab as StaffHomeTab)) setHomeTab(requestedTab as StaffHomeTab);
+      if (!locked.current) setHomeTab(staffHomeTabs.includes(requestedTab as StaffHomeTab) ? requestedTab as StaffHomeTab : 'today');
     }
     window.addEventListener('popstate', popstate); return () => window.removeEventListener('popstate', popstate);
   }, [data]);
@@ -153,7 +156,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
     const target = storeId; const employeeId = view.employeeId;
     const expectedKind = lastClock(view)?.kind === 'in' ? 'out' : 'in';
     const token = ++operation.current; geoRequest.current++;
-    locked.current = true; setPhase('locating'); setGeo({ phase: 'checking' }); setClockError(''); setSuccess('');
+    locked.current = true; onBusyChange?.(true); setPhase('locating'); setGeo({ phase: 'checking' }); setClockError(''); setSuccess('');
     try {
       // Refresh the work state and take a new measurement for this exact click.
       const [fresh, position] = await Promise.all([getOdaHr(target), getCurrentHrPosition()]);
@@ -181,7 +184,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
         catch (refreshError) { if (mounted.current && token === operation.current) setLoadError(errorMessage(refreshError)); }
       }
     } finally {
-      if (token === operation.current) { locked.current = false; saving.current = false; if (mounted.current) setPhase(null); }
+      if (token === operation.current) { locked.current = false; saving.current = false; onBusyChange?.(false); if (mounted.current) setPhase(null); }
     }
   }
 
@@ -202,7 +205,7 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
   const todayCount = todayShifts.length + todayMeetings.length + todayLeave.length;
   const dayTeam = team.filter(row => row.date === selectedDate && row.employeeId !== view?.employeeId && (coworker === 'all' || row.employeeId === coworker));
   const coworkers = [...new Map(team.filter(row => row.employeeId !== view?.employeeId).map(row => [row.employeeId, row.employeeName])).entries()];
-  const openPersonal = (tab: StaffPersonalTab) => { if (!locked.current) onOpenPersonal?.(tab); };
+  const openPersonal = (tab: StaffPersonalTab, destination?: StaffDestination) => { if (!locked.current) { if (destination) onOpenPersonal?.(tab, destination); else onOpenPersonal?.(tab); } };
   function navigate(tab: StaffHomeTab) {
     if (locked.current) return;
     setHomeTab(tab); setSearch(''); onHomeTabChange?.(tab);
@@ -217,9 +220,24 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     notify('내 공개 근무표를 내보냈습니다. 일정 변경 시 다시 내려받아 주세요.', 'info');
   }
-  const noticeList = <section className="staff-notices" aria-label="매장 공지"><div className="staff-section-heading"><h2>매장 공지</h2><span className="staff-notice-count">{notices.length}</span></div>
-    {!notices.length ? <p className="staff-empty">게시된 매장 공지가 없습니다.</p> : <ul>{notices.map(notice => <li key={notice.id}><button type="button" aria-expanded={openNotice === notice.id} onClick={() => setOpenNotice(openNotice === notice.id ? '' : notice.id)}><span>{notice.pinned && <small className="staff-pinned">중요</small>}<strong>{notice.title}</strong><time>{staffDate(Date.parse(notice.updatedAt)).replaceAll('-', '.')}</time></span><ChevronRight size={18} aria-hidden="true" /></button>{openNotice === notice.id && <p className="staff-notice-body">{notice.body}</p>}</li>)}</ul>}
-  </section>;
+  async function acknowledgeNotice(id: string, updatedAt: string) {
+    if (locked.current || !view || loading || loadError) throw new Error('매장 정보를 불러온 뒤 다시 확인해 주세요.');
+    const target = storeId, token = ++operation.current;
+    locked.current = true; onBusyChange?.(true); saving.current = true; setPhase('saving');
+    try {
+      const saved = await commandOdaHr(target, view.workspace.version, 'notice.acknowledge', { id, updatedAt });
+      if (mounted.current && token === operation.current && activeStore.current === target) setResponse(saved);
+    } catch (error) {
+      // A timeout may follow a committed receipt; read the authoritative result, never repeat the write.
+      try { const fresh = await getOdaHr(target); if (mounted.current && token === operation.current && activeStore.current === target) setResponse(fresh); }
+      catch (refreshError) { if (mounted.current && token === operation.current) setLoadError(errorMessage(refreshError)); }
+      throw error;
+    } finally {
+      if (token === operation.current) { locked.current = false; saving.current = false; onBusyChange?.(false); if (mounted.current) setPhase(null); }
+    }
+  }
+  const noticeList = <HrStaffNotices response={view} actorId={data.actor.id} busy={Boolean(phase) || loading || Boolean(loadError)} onAcknowledge={acknowledgeNotice} initialNoticeId={openNotice} />;
+  const unreadNotices = countStaffUnreadNotices(view, data.actor.id);
   const clockAction = <button className="staff-clock-button" type="button" aria-label={clockedIn ? '퇴근하기' : '출근하기'} disabled={clockDisabled} onClick={() => void recordClock()}>{phase === 'locating' ? '위치 확인 중…' : phase === 'saving' ? '기록 중…' : clockedIn ? '지금 퇴근' : '지금 출근'}</button>;
   const locationPanel = <section className="staff-location-card" aria-label="출퇴근 위치 확인">
     <div className="staff-section-heading"><h2><MapPin size={19} /> 출퇴근 위치</h2><span className={`staff-location-badge ${locationResult?.valid ? 'verified' : ''}`}>{!location ? '미설정' : geo.phase === 'checking' ? '확인 중' : locationResult?.valid ? '위치 확인' : '확인 필요'}</span></div>
@@ -247,31 +265,32 @@ export function OdaStaffPage({ data, notify, onOpenPersonal, initialTab, onHomeT
       {homeTab === 'today' && <>
         <label className="staff-search"><Search size={20} /><input type="search" aria-label="메뉴·공지 검색" placeholder="찾는 게 있으신가요?" value={search} onChange={event => setSearch(event.target.value)} /></label>
         {search.trim() ? <section className="staff-search-results" aria-label="검색 결과">{staffPersonalTabs.filter(([, label]) => label.includes(search.trim())).map(([id, label]) => <button type="button" key={id} onClick={() => openPersonal(id)}>{label}<ChevronRight size={18} /></button>)}{notices.filter(row => `${row.title} ${row.body}`.includes(search.trim())).map(row => <button type="button" key={row.id} onClick={() => { setNoticeSheet(true); setOpenNotice(row.id); }}>공지 · {row.title}<ChevronRight size={18} /></button>)}{!staffPersonalTabs.some(([, label]) => label.includes(search.trim())) && !notices.some(row => `${row.title} ${row.body}`.includes(search.trim())) && <p className="staff-empty">검색 결과가 없습니다.</p>}</section> : <>
-          <div className="staff-quick-actions"><button type="button" disabled={Boolean(phase)} onClick={() => setClockSheet(true)}><Clock3 size={19} /><span>근무 등록</span></button><button type="button" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('leave')}><span className="staff-leave-symbol" aria-hidden="true"><Umbrella size={20} /></span><span>휴가 등록</span></button><button type="button" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('meetings')}><CalendarDays size={19} /><span>미팅 추가</span></button></div>
+          <div className="staff-quick-actions"><button type="button" disabled={Boolean(phase)} onClick={() => setClockSheet(true)}><Clock3 size={19} /><span>근무 등록</span></button><button type="button" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('leave', { action: 'create' })}><span className="staff-leave-symbol" aria-hidden="true"><Umbrella size={20} /></span><span>휴가 등록</span></button><button type="button" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('meetings', { action: 'create' })}><CalendarDays size={19} /><span>미팅 추가</span></button></div>
           <EsignPendingCard storeId={storeId} actorId={data.actor.id} onOpen={() => openPersonal('contracts')} disabled={!onOpenPersonal || Boolean(phase)} />
           <div className="staff-overview-links"><button type="button" onClick={openSchedule}><strong>일정<ChevronRight size={16} /></strong><span>{todayCount ? `오늘 ${todayCount}개의 일정` : '오늘은 일정이 없어요.'}</span></button><button type="button" onClick={() => navigate('tasks')}><strong>해야할 일<ChevronRight size={16} /></strong><span>{taskCount ? `${taskCount}건을 확인해 주세요.` : '모두 완료했어요.'}</span></button></div>
           <section className="staff-my-work" aria-label="내 근무"><h2 className="staff-group-title">내 근무</h2><button type="button" className="staff-week-card" disabled={!onOpenPersonal} onClick={() => openPersonal('attendance')}><div><span>승인된 근무</span><span>{week.start.slice(5).replace('-', '.')} – {week.end.slice(5).replace('-', '.')}</span></div><div><span className="staff-target-label"><Clock3 size={22} />채운 시간</span><p><strong>{staffDuration(week.recognizedMinutes)}</strong><span> / {week.target === null ? '기준 미설정' : staffDuration(week.target)}</span></p></div>{week.target !== null && week.target > 0 && <progress value={week.recognizedMinutes} max={week.target} aria-label="주간 근무 달성률" />}<small>{week.pendingCount ? `승인 대기 ${week.pendingCount}건 · ` : ''}{week.paidLeaveMinutes ? `유급휴가 ${staffDuration(week.paidLeaveMinutes)} · ` : ''}승인된 기록을 기준으로 표시합니다.</small></button>
             <button type="button" className="staff-location-link" onClick={() => setClockSheet(true)}><MapPin size={18} /><span>{location ? '출퇴근 위치 확인' : '출퇴근 위치 설정이 필요해요'}</span><ChevronRight size={18} /></button>
           </section>
           <section className="staff-team-today"><h2 className="staff-group-title">구성원 근무</h2><button type="button" className="staff-team-card" onClick={() => { setScheduleMode('store'); openSchedule(); }}><span><UserRound size={22} />오늘의 매장 근무표</span><strong>{new Set(team.filter(row => row.date === today && row.kind === 'work').map(row => row.employeeId)).size}명<ChevronRight size={18} /></strong></button><p className="staff-hint">공개된 근무 일정만 표시합니다.</p></section>
-          {noticeList}
+          {unreadNotices > 0 && <button type="button" className="staff-location-link" onClick={() => { setOpenNotice(''); setNoticeSheet(true); }}><Bell size={18} /><span>아직 확인하지 않은 공지 {unreadNotices}개</span><ChevronRight size={18} /></button>}
+          {!noticeSheet && noticeList}
         </>}
       </>}
       {homeTab === 'schedule' && <section className="staff-schedule-screen" aria-label="내 근무 일정">
-        <header className="staff-screen-heading"><h1>{Number(month.slice(0, 4))}년 {Number(month.slice(5))}월</h1><div><button className="staff-icon-button" type="button" aria-label="일정 필터" aria-expanded={filterOpen} onClick={() => setFilterOpen(!filterOpen)}><span className="staff-filter-icon" aria-hidden="true">≡</span></button><button className="staff-icon-button" type="button" aria-label="일정 추가" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('meetings')}><Plus size={23} /></button></div></header>
+        <header className="staff-screen-heading"><h1>{Number(month.slice(0, 4))}년 {Number(month.slice(5))}월</h1><div><button className="staff-icon-button" type="button" aria-label="일정 필터" aria-expanded={filterOpen} onClick={() => setFilterOpen(!filterOpen)}><span className="staff-filter-icon" aria-hidden="true">≡</span></button><button className="staff-icon-button" type="button" aria-label="일정 추가" disabled={!onOpenPersonal || Boolean(phase)} onClick={() => openPersonal('meetings', { action: 'create' })}><Plus size={23} /></button></div></header>
         {filterOpen && <div className="staff-calendar-filter"><div className="staff-segment" aria-label="근무표 범위"><button type="button" aria-pressed={scheduleMode === 'mine'} onClick={() => setScheduleMode('mine')}>나</button><button type="button" aria-pressed={scheduleMode === 'store'} disabled={!view?.employeeId} onClick={() => setScheduleMode('store')}>매장</button></div><label>동료<select value={coworker} onChange={event => setCoworker(event.target.value)}><option value="all">모든 동료</option>{coworkers.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label></div>}
         <div className="staff-month-nav"><button type="button" aria-label={calendarExpanded ? '이전 달' : '이전 주'} onClick={() => calendarExpanded ? changeMonth(-1) : changeWeek(-7)}>‹</button><button type="button" className="staff-today" onClick={() => { setMonth(today.slice(0, 7)); setSelectedDate(today); }}>오늘</button><button type="button" aria-label={calendarExpanded ? '다음 달' : '다음 주'} onClick={() => calendarExpanded ? changeMonth(1) : changeWeek(7)}>›</button><button type="button" className="staff-calendar-toggle" aria-expanded={calendarExpanded} onClick={() => setCalendarExpanded(!calendarExpanded)}>{calendarExpanded ? '주간 보기' : '월 전체 보기'}</button></div>
         <ScheduleCalendar month={month} today={today} selected={selectedDate} mode={scheduleMode} rows={schedules} onSelect={date => { setSelectedDate(date); setMonth(date.slice(0, 7)); }} compact={!calendarExpanded} />
         <div className="staff-calendar-handle" aria-hidden="true" />
         <div className="staff-schedule-day"><div className="staff-shift-bands">{mine.filter(row => row.date === selectedDate).map(row => <button type="button" key={row.id} onClick={() => openPersonal('attendance')}><span><Clock3 size={19} />{row.kind === 'off' ? '휴무' : `근무 ${staffDuration(shiftMinutes(row))}`}</span><small>{row.kind === 'work' ? `${row.startTime} – ${row.endTime}${row.endTime <= row.startTime ? ' 다음 날' : ''}` : ''}</small><ChevronRight size={18} /></button>)}</div>
-          <section className="staff-day-section"><h2>내 일정 <em>{dayLeaves.length + dayMeetings.length}</em></h2>{!dayLeaves.length && !dayMeetings.length ? <p className="staff-empty">일정이 없는 날이에요.</p> : <ul>{dayLeaves.map(row => <li key={row.id}><button type="button" onClick={() => openPersonal('leave')}><span className="staff-event-mark leave"><Umbrella size={20} /></span><span><strong>{view?.workspace.attendance.leaveTypes.find(type => type.id === row.typeId)?.name || '휴가'}</strong><small>{row.slots.filter(slot => slot.date === selectedDate).map(slot => `${slot.startTime} – ${slot.endTime}`).join(', ')} · {row.status === 'pending' ? '승인 대기' : '승인 완료'}</small></span><ChevronRight size={18} /></button></li>)}{dayMeetings.map(row => <li key={row.id}><button type="button" onClick={() => openPersonal('meetings')}><span className="staff-event-mark"><CalendarDays size={20} /></span><span><strong>{row.title}</strong><small>미팅 · 시간 미지정</small></span><ChevronRight size={18} /></button></li>)}</ul>}</section>
+          <section className="staff-day-section"><h2>내 일정 <em>{dayLeaves.length + dayMeetings.length}</em></h2>{!dayLeaves.length && !dayMeetings.length ? <p className="staff-empty">일정이 없는 날이에요.</p> : <ul>{dayLeaves.map(row => <li key={row.id}><button type="button" onClick={() => openPersonal('leave', { recordId: row.id })}><span className="staff-event-mark leave"><Umbrella size={20} /></span><span><strong>{view?.workspace.attendance.leaveTypes.find(type => type.id === row.typeId)?.name || '휴가'}</strong><small>{row.slots.filter(slot => slot.date === selectedDate).map(slot => `${slot.startTime} – ${slot.endTime}`).join(', ')} · {row.status === 'pending' ? '승인 대기' : '승인 완료'}</small></span><ChevronRight size={18} /></button></li>)}{dayMeetings.map(row => <li key={row.id}><button type="button" onClick={() => openPersonal('meetings', { recordId: row.id })}><span className="staff-event-mark"><CalendarDays size={20} /></span><span><strong>{row.title}</strong><small>미팅 · 시간 미지정</small></span><ChevronRight size={18} /></button></li>)}</ul>}</section>
           <section className="staff-day-section"><h2>동료 일정 <em>{dayTeam.length}</em></h2>{!dayTeam.length ? <p className="staff-empty">선택한 동료의 일정이 없어요.</p> : <ul>{dayTeam.map(row => <li className="staff-coworker-shift" key={row.id}><span className="staff-schedule-avatar">{row.employeeName.slice(0, 1)}</span><div><strong>{row.employeeName}</strong><p>{row.kind === 'off' ? '휴무' : `${row.startTime} – ${row.endTime}${row.endTime <= row.startTime ? ' (다음 날)' : ''}`}</p><small>{row.kind === 'work' ? `휴게 ${row.breakMinutes}분` : '게시된 일정'}</small></div></li>)}</ul>}</section>
         </div><button type="button" className="staff-calendar-export" disabled={!mine.some(row => row.date.startsWith(`${month}-`) && row.kind === 'work')} onClick={exportCalendar}><CalendarDays size={18} />내 근무표 캘린더로 내보내기</button><p className="staff-hint">선택한 월의 공개 근무표를 .ics 파일로 저장합니다.</p>
       </section>}
       {homeTab === 'tasks' && <HrStaffTasks response={view} actorId={data.actor.id} busy={Boolean(phase) || loading || Boolean(loadError)} onOpenPersonal={openPersonal} />}
       {homeTab === 'more' && <HrStaffMore response={view} data={data} busy={Boolean(phase) || loading || Boolean(loadError)} onOpenPersonal={openPersonal} onOpenSchedule={() => { setScheduleMode('store'); openSchedule(); }} onOpenNotices={() => setNoticeSheet(true)} />}
       {clockSheet && <HrDialog title="근무 등록" busy={Boolean(phase)} onClose={() => setClockSheet(false)}>{locationPanel}</HrDialog>}
-      {noticeSheet && <HrDialog title="매장 공지" onClose={() => setNoticeSheet(false)}>{noticeList}</HrDialog>}
+      {noticeSheet && <HrDialog title="매장 공지" busy={Boolean(phase)} onClose={() => setNoticeSheet(false)}>{noticeList}</HrDialog>}
       {homeTab === 'today' && !clockSheet && <section className="staff-clock-dock" aria-label="내 출퇴근"><div><strong>{clockedIn ? '근무 중' : sameDayOut ? '퇴근 완료' : '시작 전'}</strong><span>{clockedIn ? `${clockDate(latest!.at)} 출근` : todayShifts.find(row => row.kind === 'work') ? `${todayShifts.find(row => row.kind === 'work')!.startTime} 근무 예정` : '근무 예정'}</span></div>{clockAction}</section>}
     </>}
     <StaffBottomNav active={homeTab} onSelect={navigate} disabled={Boolean(phase)} />

@@ -61,3 +61,43 @@ describe('HR workflow controls follow server state and authority', () => {
     await act(async () => root.render(<HrWorkflow {...props} tab="approvals" />)); await click('열기'); expect(button('처리하기')).toBeUndefined();
   });
 });
+
+
+describe('staff workflow destination intents', () => {
+  it('opens the exact visible request once, keeps a closed dialog closed on refresh, and accepts a new intent', async () => {
+    const props = fixture();
+    props.workspace.workflow.requests = [request('pending'), { ...request('approved'), id: 'other', title: '다른 요청', body: '다른 본문' }];
+    const intent = { nonce: 1, recordId: 'r' };
+    await act(async () => root.render(<HrWorkflow {...props} tab="approvals" entryIntent={intent} />));
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('기존 본문');
+    expect(container.querySelector('[role="dialog"]')?.textContent).not.toContain('다른 본문');
+    expect(props.mutate).not.toHaveBeenCalled();
+    await click('닫기');
+    await act(async () => root.render(<HrWorkflow {...props} workspace={{ ...props.workspace, version: 1 }} tab="approvals" entryIntent={{ ...intent }} />));
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => root.render(<HrWorkflow {...props} tab="approvals" entryIntent={{ nonce: 2, recordId: 'other' }} />));
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('다른 본문');
+  });
+  it('opens compose without a write and never discloses another author private draft through an ID', async () => {
+    const props = fixture();
+    props.workspace.workflow.requests = [{ ...request('draft'), authorId: 'stranger', title: '타인 비공개 초안', body: '비밀 본문' }];
+    await act(async () => root.render(<HrWorkflow {...props} tab="approvals" entryIntent={{ nonce: 1, recordId: 'r' }} />));
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).toContain('조회 권한이 없습니다');
+    expect(container.textContent).not.toContain('비밀 본문');
+    expect(container.textContent).not.toContain('타인 비공개 초안');
+    await act(async () => root.render(<HrWorkflow {...props} tab="approvals" entryIntent={{ nonce: 2, action: 'create' }} />));
+    expect(container.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('결재 요청 작성');
+    expect(props.mutate).not.toHaveBeenCalled();
+  });
+  it('opens exact expense evidence and drops stale detail when the store changes', async () => {
+    const props = fixture();
+    props.workspace.workflow.expenses = [{ id: 'x', authorId: 'self', date: '2026-09-15', title: '의자', category: '비품', amount: 30000, evidenceNote: 'R-1', status: 'draft' }];
+    await act(async () => root.render(<HrWorkflow {...props} tab="expenses" entryIntent={{ nonce: 1, recordId: 'x' }} />));
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('R-1');
+    await act(async () => root.render(<HrWorkflow {...props} workspace={createHrWorkspace('other-store', '다른 매장', '2026-09-15T00:00:00Z')} tab="expenses" entryIntent={{ nonce: 1, recordId: 'x' }} />));
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).not.toContain('R-1');
+    expect(props.mutate).not.toHaveBeenCalled();
+  });
+});
