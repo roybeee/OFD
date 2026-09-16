@@ -103,6 +103,9 @@ export class PostgresRepository implements StateRepository {
   }
 
   private async writeAggregate(client: pg.PoolClient, change: AggregateChange): Promise<void> {
+    if (change.type === "oda_contract_artifact" && change.expectedVersion !== null) {
+      throw new DomainError("CONTRACT_ARTIFACT_IMMUTABLE", "체결된 계약 원본은 변경할 수 없습니다.", 409);
+    }
     const valueVersion = typeof change.value === "object" && change.value !== null && "version" in change.value
       ? Number((change.value as { version: unknown }).version)
       : (change.expectedVersion ?? 0) + 1;

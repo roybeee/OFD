@@ -6,6 +6,7 @@ coverage/
 playwright-report/
 test-results/
 *.tsbuildinfo
+apps/api/assets/fonts/NanumGothic-Regular.ttf
 
 # Secrets and local environment
 .env

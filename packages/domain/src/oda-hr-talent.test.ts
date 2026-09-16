@@ -217,3 +217,17 @@ test('non-salary contract preserves pay and unknown external integration command
   assert.equal(f.workspace.employees[0]!.basePay, 3_000_000);
   for (const type of ['contract.send', 'contract.sign', 'recruitment.sendEmail', 'meeting.transcribe', 'meeting.summarize']) assert.equal(f.command(type, {}), false);
 });
+
+test('an older external contract cannot overwrite personnel terms already updated by a native electronic contract', () => {
+  const f = fixture();
+  f.command('contract.create', contractInput());
+  const contract = f.workspace.talent.contracts[0]!;
+  f.command('contract.complete', { id: contract.id, completionReference: '기존 서명본' });
+  const employee = f.workspace.employees[0]!;
+  employee.basePay = 3_800_000;
+  employee.history.push({ at: '2026-09-15T11:00:00Z', effectiveDate: '2026-09-15',
+    reason: '전자계약 조건 반영', changes: { nativeContractId: 'native-newer', basePay: 3_800_000 } });
+  rejected(() => f.command('contract.applyPersonnel', { id: contract.id }), 'HR_CONTRACT_STALE');
+  assert.equal(employee.basePay, 3_800_000);
+  assert.equal(contract.appliedAt, null);
+});

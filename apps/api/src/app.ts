@@ -26,6 +26,7 @@ import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipme
 import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
 import { registerOdaRoutes } from "./oda-routes.ts";
 import { registerOdaHrRoutes } from "./oda-hr-routes.ts";
+import { registerOdaEsignRoutes } from "./oda-esign-routes.ts";
 import { registerOdaHrPayrollCostRoutes } from "./oda-hr-payroll-cost.ts";
 import { isOdaSetupEnabled, registerOdaSetup } from "./oda-setup.ts";
 import { registerOdaOverview } from './oda-overview.ts';
@@ -1113,6 +1114,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   registerOdaRoutes(app, repository);
   registerOdaHrRoutes(app, repository);
+  registerOdaEsignRoutes(app, repository, authService);
   registerOdaHrPayrollCostRoutes(app, repository);
   if (odaWorkspace) { registerOdaAdminRoutes(app, repository); registerOdaOverview(app, repository); }
   registerOdaSetup(app, repository, env);

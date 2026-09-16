@@ -20,6 +20,9 @@ export type AggregateType =
   | "access_policy"
   | "oda_month"
   | "oda_hr"
+  | "oda_employer"
+  | "oda_contract"
+  | "oda_contract_artifact"
   | "oda_import_profile"
   | "oda_expense_rules";
 

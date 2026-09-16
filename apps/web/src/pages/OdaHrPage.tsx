@@ -7,6 +7,7 @@ import { HrAttendance } from '../hr/HrAttendance';
 import { HrPayroll } from '../hr/HrPayroll';
 import { HrPersonnel } from '../hr/HrPersonnel';
 import { HrTalent } from '../hr/HrTalent';
+import { HrEsign } from '../hr/HrEsign';
 import { HrWorkflow } from '../hr/HrWorkflow';
 import { HrEmpty, HrRecoveryContext, hrError, type HrPanelProps } from '../hr/shared';
 import type { BootstrapData } from '../types';
@@ -169,7 +170,8 @@ function OdaHrWorkspacePage({ data, notify, personalTab, onHome, onStaffNavigate
         {(tab === 'attendance' || tab === 'leave' || tab === 'shifts') && <HrAttendance {...panel} tab={tab} hideClock={personal} />}
         {(tab === 'approvals' || tab === 'expenses') && <HrWorkflow {...panel} tab={tab} />}
         {tab === 'payroll' && <HrPayroll {...panel} />}
-        {(tab === 'goals' || tab === 'reviews' || tab === 'meetings' || tab === 'recruitment' || tab === 'contracts') && <HrTalent {...panel} tab={tab} />}
+        {(tab === 'goals' || tab === 'reviews' || tab === 'meetings' || tab === 'recruitment') && <HrTalent {...panel} tab={tab} />}
+        {tab === 'contracts' && <HrEsign {...panel} accounts={response?.accounts || []} />}
       </section></HrRecoveryContext.Provider>}
     </>}
     {personal && onStaffNavigate && <StaffBottomNav active="more" onSelect={onStaffNavigate} disabled={busy} />}

@@ -347,6 +347,10 @@ export function applyHrTalentCommand(workspace: HrWorkspace, command: HrCommand,
       invariant(contract.terms.effectiveDate <= ctx.today, 'HR_LOCKED', '미래 적용일의 계약은 해당 날짜 이후에 반영해 주세요.', 409);
       const member = employee(workspace, contract.employeeId);
       invariant(contract.terms.effectiveDate >= member.hireDate, 'HR_INVALID', '변경된 입사일과 계약 적용일을 확인해 주세요.');
+      const contractFields = new Set(['employmentType', 'jobTitle', 'endDate', 'payType', 'basePay', 'hireDate', 'contractId', 'nativeContractId']);
+      const newerPersonnel = member.history.some(row => Object.keys(row.changes).some(key => contractFields.has(key))
+        && (row.effectiveDate > contract.terms.effectiveDate || Date.parse(row.at) > Date.parse(contract.createdAt)));
+      invariant(!newerPersonnel, 'HR_CONTRACT_STALE', '계약 작성 이후 반영된 근로조건이 있습니다. 최신 조건을 확인하고 정정 계약을 작성해 주세요.', 409);
       invariant(contract.terms.basePay === null || ctx.payroll, 'HR_FORBIDDEN', '급여 변경 권한이 필요합니다.', 403);
       contract.personnelBefore = { employmentType: member.employmentType, jobTitle: member.jobTitle, endDate: member.endDate ?? '', payType: member.payType, basePay: member.basePay };
       member.employmentType = contract.terms.employmentType; member.jobTitle = contract.terms.jobTitle;

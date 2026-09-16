@@ -100,6 +100,9 @@ export class MemoryRepository implements StateRepository {
   }
 
   private applyChange(target: Map<string, Entry>, change: AggregateChange): void {
+    if (change.type === "oda_contract_artifact" && change.expectedVersion !== null) {
+      throw new DomainError("CONTRACT_ARTIFACT_IMMUTABLE", "체결된 계약 원본은 변경할 수 없습니다.", 409);
+    }
     const key = keyOf(change.type, change.id);
     const existing = target.get(key);
     if (change.expectedVersion === null) {
