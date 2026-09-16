@@ -25,6 +25,8 @@ import { randomUUID as posRandomUUID } from "node:crypto";
 import type { Actor as PosActor, GoodsReceipt, PurchaseOrder, Settlement, Shipment, Store as PosStoreRecord, TaxInvoice, UserCredential } from "@ofd/domain";
 import { buildMonthlySettlementSummary } from "./monthly-settlement.ts";
 import { registerOdaRoutes } from "./oda-routes.ts";
+import { registerOdaAutomation } from './oda-automation.ts';
+import { registerOdaRoutineRoutes } from './oda-routine-routes.ts';
 import { registerOdaHrRoutes } from "./oda-hr-routes.ts";
 import { registerOdaEsignRoutes } from "./oda-esign-routes.ts";
 import { registerOdaHrPayrollCostRoutes } from "./oda-hr-payroll-cost.ts";
@@ -82,8 +84,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         || path.startsWith("/api/v2/oda/");
       if (!allowed) throw new DomainError("ODA_ROUTE_UNAVAILABLE", "ODA 월정산과 계정 관리에서 지원하지 않는 기능입니다.", 404);
       const origin = request.headers.origin;
-      if ((origin && origin !== env.WEB_ORIGIN) || request.headers["sec-fetch-site"] === "cross-site"
-        || (!["GET", "HEAD", "OPTIONS"].includes(request.method) && origin !== env.WEB_ORIGIN)) {
+      const machineIntegration = path.startsWith('/api/v2/oda/integration/') && !origin && request.headers.authorization?.startsWith('Bearer oda_int_');
+      if (!machineIntegration && ((origin && origin !== env.WEB_ORIGIN) || request.headers["sec-fetch-site"] === "cross-site"
+        || (!["GET", "HEAD", "OPTIONS"].includes(request.method) && origin !== env.WEB_ORIGIN))) {
         throw new DomainError("ODA_ORIGIN_REJECTED", "ODA 운영 화면에서 요청해 주세요.", 403);
       }
     });
@@ -134,6 +137,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (isOdaSetupEnabled(env) && path === "/api/v2/oda-setup") return;
     if (path === "/api/v2/health" || path === "/api/v2/ready" || path === "/api/v2/auth/login"
       || path === "/api/v2/webhooks/popbill" || path === "/api/v2/webhooks/tossplace" || path === "/api/v2/mock-uploads" || path === "/api/v2/mock-files") return;
+    if (path?.startsWith('/api/v2/oda/integration/')) return; // Every machine route independently verifies its restricted integration token.
     request.actor = await resolveActor(request, repository, config.appMode, sessionSecret, env.TEST_AUTH_REQUIRED === "true");
 
     /* 최초 비밀번호(관리자 발급·재설정)는 본인이 바꾸기 전까지 업무 API를 막는다.
@@ -1113,6 +1117,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   registerOdaRoutes(app, repository);
+  registerOdaAutomation(app, repository);
+  registerOdaRoutineRoutes(app, repository, env);
   registerOdaHrRoutes(app, repository);
   registerOdaEsignRoutes(app, repository, authService);
   registerOdaHrPayrollCostRoutes(app, repository);

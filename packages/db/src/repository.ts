@@ -25,6 +25,9 @@ export type AggregateType =
   | "oda_contract_artifact"
   | "oda_contract_template"
   | "oda_import_profile"
+  | "oda_automation_token"
+  | "oda_automation_batch"
+  | "oda_automation_ref"
   | "oda_expense_rules";
 
 export interface AggregateChange<T = unknown> {

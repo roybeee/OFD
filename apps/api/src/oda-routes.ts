@@ -122,6 +122,8 @@ async function loadMonth(repository: StateRepository, storeId: string, month: st
   }
   return fresh;
 }
+// Automated posting must preserve the same opening-month and inherited policy rules as manual entry.
+export { loadMonth as loadOdaMonthForAutomation };
 function dateInMonth(date: string, month?: string): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(new Date(`${date}T00:00:00Z`).valueOf())
     || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date || (month && !date.startsWith(`${month}-`))) {
