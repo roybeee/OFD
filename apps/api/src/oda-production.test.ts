@@ -48,6 +48,31 @@ describe("ODA settlement-only production", () => {
     expect(boot.json().capabilities).not.toContain("hq.orders.read");
   });
 
+  it("keeps integration-name store routes behind session authentication and origin checks", async () => {
+    const { app } = await open();
+    const sessionHeaders = await login(app);
+    const issued = await app.inject({ method: 'POST', url: '/api/v2/oda/automation/tokens', headers: sessionHeaders,
+      payload: { name: 'Synthetic route isolation', storeIds: [DEMO_IDS.storeDoksan], kinds: ['revenue'], routines: true } });
+    expect(issued.statusCode, issued.body).toBe(200);
+    const machineHeaders = { authorization: `Bearer ${issued.json().token}` };
+    const capabilities = await app.inject({ url: '/api/v2/oda/integration/capabilities', headers: machineHeaders });
+    expect(capabilities.statusCode, capabilities.body).toBe(200);
+    // This marked POST passes the machine origin exemption and reaches its own validation.
+    const preview = await app.inject({ method: 'POST', url: '/api/v2/oda/integration/batches/preview', headers: machineHeaders, payload: {} });
+    expect(preview.statusCode, preview.body).toBe(422);
+    for (const storeId of ['integration', DEMO_IDS.storeDoksan]) {
+      const path = `/api/v2/oda/${storeId}/esign`;
+      const anonymous = await app.inject({ url: path });
+      expect(anonymous.statusCode, anonymous.body).toBe(401);
+      const machine = await app.inject({ url: path, headers: machineHeaders });
+      expect(machine.statusCode, machine.body).toBe(401);
+      const originlessMutation = await app.inject({ method: 'POST', url: `${path}/employers`, headers: machineHeaders, payload: {} });
+      expect(originlessMutation.statusCode, originlessMutation.body).toBe(403);
+      const browserMutation = await app.inject({ method: 'POST', url: `${path}/employers`, headers: { ...machineHeaders, origin }, payload: {} });
+      expect(browserMutation.statusCode, browserMutation.body).toBe(401);
+    }
+  });
+
   it("blocks all unrelated business and mock endpoints even for a logged-in master", async () => {
     const { app, repository } = await open();
     const headers = await login(app);

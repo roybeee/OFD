@@ -6,6 +6,13 @@ import { z } from 'zod';
 import { audit } from './events.ts';
 import { loadOdaMonthForAutomation } from './oda-routes.ts';
 
+declare module 'fastify' {
+  interface FastifyContextConfig { odaMachineIntegration?: boolean }
+}
+// Only explicitly registered machine endpoints may skip browser-session checks.
+// Each handler still verifies its restricted integration token independently.
+export const odaIntegrationRouteOptions = { config: { odaMachineIntegration: true } } as const;
+
 export interface IntegrationToken {
   id: string; version: number; secretHash: string; issuerId: string; issuerAuthVersion: number;
   name: string; storeIds: string[]; kinds: Array<'revenue' | 'expense'>; routines: boolean;
@@ -211,27 +218,27 @@ export function registerOdaAutomation(app: FastifyInstance, repository: StateRep
       return { revoked: true };
     });
   });
-  app.get(`${machine}/capabilities`, async request => {
+  app.get(`${machine}/capabilities`, odaIntegrationRouteOptions, async request => {
     const { token } = await requireOdaIntegration(request, repository);
     const stores = await Promise.all(token.storeIds.map(async id => { const store = await repository.get<Store>('store', id); return store?.active ? { id, name: store.name } : null; }));
     return { version: 1, storeIds: token.storeIds, stores: stores.filter(Boolean), kinds: token.kinds, routines: token.routines, batchPreview: true, approvedCommit: true, currency: 'KRW', maxLines: 200, expiresAt: token.expiresAt };
   });
-  app.get(`${machine}/batches`, async request => {
+  app.get(`${machine}/batches`, odaIntegrationRouteOptions, async request => {
     const { token } = await requireOdaIntegration(request, repository);
     const { storeId, month } = z.object({ storeId: safeId, month: z.string().regex(/^\d{4}-\d{2}$/) }).parse(request.query);
     if (!token.storeIds.includes(storeId)) throw new DomainError('ODA_TOKEN_SCOPE', '이 매장의 권한이 없습니다.', 403);
     return { batches: (await repository.list<AutomationBatch>('oda_automation_batch', [storeId])).filter(batch => batch.tokenId === token.id && batch.input.month === month).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100) };
   });
-  app.post(`${machine}/batches/preview`, async request => {
+  app.post(`${machine}/batches/preview`, odaIntegrationRouteOptions, async request => {
     const { token } = await requireOdaIntegration(request, repository);
     return previewOdaBatch(repository, token, request.body);
   });
-  app.get(`${machine}/batches/:id`, async request => {
+  app.get(`${machine}/batches/:id`, odaIntegrationRouteOptions, async request => {
     const { token } = await requireOdaIntegration(request, repository); const batch = await loadBatch(repository, z.object({ id: z.uuid() }).parse(request.params).id);
     if (batch.tokenId !== token.id) throw new DomainError('ODA_BATCH_NOT_FOUND', '수집 결과를 찾을 수 없습니다.', 404);
     requireBatchScope(token, batch.input); return batchDto(repository, batch);
   });
-  app.post(`${machine}/batches/:id/commit`, async request => {
+  app.post(`${machine}/batches/:id/commit`, odaIntegrationRouteOptions, async request => {
     const { token } = await requireOdaIntegration(request, repository); const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { digest } = z.object({ digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(request.body);
     return commitBatch(repository, id, digest, token.id);

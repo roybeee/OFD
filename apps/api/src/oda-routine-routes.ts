@@ -3,7 +3,7 @@ import { DomainError } from '@ofd/domain';
 import { decryptPosSecret, encryptPosSecret } from '@ofd/integrations';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { previewOdaBatch, requireOdaAutomationStore, requireOdaIntegration, validateOdaIntegrationToken, type IntegrationToken } from './oda-automation.ts';
+import { odaIntegrationRouteOptions, previewOdaBatch, requireOdaAutomationStore, requireOdaIntegration, validateOdaIntegrationToken, type IntegrationToken } from './oda-automation.ts';
 import { OdaRoutineScheduler, makeRoutineRunState, publicRoutine, publicRoutineRun, routineEndpoint, runnerRequest, verifyProtectedRoutineRunner } from './oda-routine-runner.ts';
 
 const base = '/api/v2/oda/integration';
@@ -58,15 +58,15 @@ export function registerOdaRoutineRoutes(app: FastifyInstance, repository: State
     scope(token, value.storeId); await requireOdaAutomationStore(repository, actor, value.storeId, true);
     return { token, value };
   };
-  app.get(`${base}/routines`, async request => {
+  app.get(`${base}/routines`, odaIntegrationRouteOptions, async request => {
     const { token } = await auth(request);
     if (!store) return { routines: [], runs: [], runner: { available: false, kind: 'hermes-server', pcRequired: false } };
     return boundedListing({ routines: (await store.list(token.id)).filter(value => token.storeIds.includes(value.storeId)).map(value => ({ ...publicRoutine(value), prompt: value.definition.prompt.slice(0, 1000), promptTruncated: value.definition.prompt.length > 1000 })),
       runs: (await store.runs(token.id)).filter(value => token.storeIds.includes(value.storeId)).slice(0, 20).map(value => publicRoutineRun(value, true)),
       runner: { available: true, kind: 'hermes-server', pcRequired: false } });
   });
-  app.get(`${base}/routines/:id`, async request => ({ routine: publicRoutine((await getRoutine(request)).value) }));
-  app.post(`${base}/routines`, async request => {
+  app.get(`${base}/routines/:id`, odaIntegrationRouteOptions, async request => ({ routine: publicRoutine((await getRoutine(request)).value) }));
+  app.post(`${base}/routines`, odaIntegrationRouteOptions, async request => {
     const { token, actor } = await auth(request), body = definition.parse(request.body), { store } = ready();
     scope(token, body.storeId); await requireOdaAutomationStore(repository, actor, body.storeId, true);
     const existing = await store.get(token.id, body.id);
@@ -93,7 +93,7 @@ export function registerOdaRoutineRoutes(app: FastifyInstance, repository: State
     return { routine: publicRoutine(saved) };
   });
   for (const action of ['pause', 'resume'] as const) {
-    app.post(`${base}/routines/:id/${action}`, async request => {
+    app.post(`${base}/routines/:id/${action}`, odaIntegrationRouteOptions, async request => {
       const { value } = await getRoutine(request), body = versionBody.parse(request.body);
       if (body.expectedVersion !== value.version) throw new DomainError('ODA_ROUTINE_CHANGED', '예약이 변경되었습니다.', 409);
       const enabled = action === 'resume', now = new Date();
@@ -102,24 +102,24 @@ export function registerOdaRoutineRoutes(app: FastifyInstance, repository: State
       return { routine: publicRoutine(saved) };
     });
   }
-  app.post(`${base}/routines/:id/run`, async request => {
+  app.post(`${base}/routines/:id/run`, odaIntegrationRouteOptions, async request => {
     const { token, value } = await getRoutine(request), body = z.object({ id: uuid }).strict().parse(request.body);
     const run = await ready().store.enqueueNow(token.id, value.id, body.id, new Date(), makeRoutineRunState);
     if (!run) throw new DomainError('ODA_ROUTINE_ACTIVE', '이 예약의 실행 또는 확인이 필요한 이전 실행이 남아 있습니다.', 409);
     return { run: publicRoutineRun(run) };
   });
-  app.get(`${base}/runs`, async request => {
+  app.get(`${base}/runs`, odaIntegrationRouteOptions, async request => {
     const { token } = await auth(request);
     return boundedListing({ runs: (await ready().store.runs(token.id)).filter(value => token.storeIds.includes(value.storeId)).slice(0, 20).map(value => publicRoutineRun(value, true)) });
   });
-  app.get(`${base}/runs/:id`, async request => {
+  app.get(`${base}/runs/:id`, odaIntegrationRouteOptions, async request => {
     const { token, actor } = await auth(request), id = uuid.parse((request.params as { id: string }).id);
     const value = await ready().store.getRun(token.id, id);
     if (!value) throw new DomainError('ODA_ROUTINE_NOT_FOUND', '실행을 찾을 수 없습니다.', 404);
     scope(token, value.storeId); await requireOdaAutomationStore(repository, actor, value.storeId, true);
     return { run: publicRoutineRun(value) };
   });
-  app.post(`${base}/runs/:id/resolve`, async request => {
+  app.post(`${base}/runs/:id/resolve`, odaIntegrationRouteOptions, async request => {
     const { token, actor } = await auth(request), id = uuid.parse((request.params as { id: string }).id);
     const body = z.object({ confirmedStopped: z.literal(true), note: z.string().trim().min(10).max(2000) }).strict().parse(request.body);
     const { store } = ready(), initial = await store.getRun(token.id, id);
@@ -140,7 +140,7 @@ export function registerOdaRoutineRoutes(app: FastifyInstance, repository: State
     } catch (error) { await store.updateRun(value, new Date()); throw error; }
   });
   for (const action of ['stop', 'approval'] as const) {
-    app.post(`${base}/runs/:id/${action}`, async request => {
+    app.post(`${base}/runs/:id/${action}`, odaIntegrationRouteOptions, async request => {
       const { token, actor } = await auth(request), id = uuid.parse((request.params as { id: string }).id);
       const { store, scheduler } = ready(), value = await store.getRun(token.id, id);
       if (!value) throw new DomainError('ODA_ROUTINE_NOT_FOUND', '실행을 찾을 수 없습니다.', 404);
