@@ -15,3 +15,5 @@ export * from "./oda-hr-payroll.ts";
 export * from "./oda-hr-talent.ts";
 export * from "./oda-hr-workflow.ts";
 export * from "./oda-esign.ts";
+
+export { canUseHrOperations } from "./oda-hr-operations.ts";

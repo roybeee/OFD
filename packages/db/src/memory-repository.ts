@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
 import { outboxRetryDelayMs,
-  type OdaOverviewMonth, type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type HrPhoto, type OdaOverviewMonth, type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
   type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
@@ -23,6 +23,7 @@ const entryOf = (version: number, value: unknown, storeId?: string): Entry => ({
 });
 
 export class MemoryRepository implements StateRepository {
+  private hrPhotos = new Map<string, HrPhoto>();
   private records = new Map<string, Entry>();
   private audits: AuditEvent[] = [];
   private outbox = new Map<string, OutboxEvent>();
@@ -46,6 +47,15 @@ export class MemoryRepository implements StateRepository {
       this.records.set(keyOf(item.type, item.id), entryOf(valueVersion, item.value, item.storeId));
       for (const claim of deriveClaims(item)) this.claims.set(`${claim.type}:${claim.key}`, `${claim.aggregateType}:${claim.aggregateId}`);
     }
+  }
+
+  async putHrPhoto(photo: HrPhoto): Promise<void> {
+    const key = `${photo.storeId}:${photo.handoverId}`;
+    if (this.hrPhotos.has(key)) throw new DomainError('HR_PHOTO_EXISTS', '사진 원본을 덮어쓸 수 없습니다.', 409);
+    this.hrPhotos.set(key, clone(photo));
+  }
+  async getHrPhoto(storeId: string, handoverId: string): Promise<HrPhoto | undefined> {
+    const photo = this.hrPhotos.get(`${storeId}:${handoverId}`); return photo ? clone(photo) : undefined;
   }
 
   async get<T>(type: AggregateType, id: string): Promise<T | undefined> {
@@ -180,6 +190,7 @@ export class MemoryRepository implements StateRepository {
     try {
     const scoped = new MemoryRepository([], this.runtime);
     scoped.records = structuredClone(this.records);
+    scoped.hrPhotos = structuredClone(this.hrPhotos);
     scoped.audits = structuredClone(this.audits);
     scoped.outbox = structuredClone(this.outbox);
     scoped.idempotency = structuredClone(this.idempotency);
@@ -191,6 +202,7 @@ export class MemoryRepository implements StateRepository {
     scoped.transactionScoped = true;
     const result = await run(scoped);
     this.records = scoped.records;
+    this.hrPhotos = scoped.hrPhotos;
     this.audits = scoped.audits;
     this.outbox = scoped.outbox;
     this.idempotency = scoped.idempotency;

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { DomainError, type AuditEvent, type OutboxEvent } from "@ofd/domain";
 import pg from "pg";
 import { deterministicOutboxJitter, outboxRetryDelayMs,
-  type OdaOverviewMonth, type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
+  type HrPhoto, type OdaOverviewMonth, type AggregateChange, type AggregateType, type AuditSearchInput, type CommitRequest, type IdempotencyRecord, type StateRepository,
   type RepositoryReadiness, type RequiredMigration, type WebhookRecord, type WorkerHeartbeat } from "./repository.ts";
 import { deriveClaims } from "./claims.ts";
 
@@ -19,6 +19,16 @@ export class PostgresRepository implements StateRepository {
       connectionTimeoutMillis: Number(env.DB_CONNECT_TIMEOUT_MS ?? 5_000),
       query_timeout: Number(env.DB_QUERY_TIMEOUT_MS ?? 15_000),
     }));
+  }
+
+  async putHrPhoto(photo: HrPhoto): Promise<void> {
+    await this.query(`INSERT INTO oda_hr_photos (store_id, handover_id, mime_type, bytes, sha256) VALUES ($1,$2,$3,$4,$5)`,
+      [photo.storeId, photo.handoverId, photo.mimeType, Buffer.from(photo.bytes), photo.sha256]);
+  }
+  async getHrPhoto(storeId: string, handoverId: string): Promise<HrPhoto | undefined> {
+    const result = await this.query<{ store_id: string; handover_id: string; mime_type: string; bytes: Buffer; sha256: string }>(
+      'SELECT store_id, handover_id, mime_type, bytes, sha256 FROM oda_hr_photos WHERE store_id=$1 AND handover_id=$2', [storeId, handoverId]);
+    const row = result.rows[0]; return row ? { storeId: row.store_id, handoverId: row.handover_id, mimeType: row.mime_type, bytes: row.bytes, sha256: row.sha256 } : undefined;
   }
 
   async get<T>(type: AggregateType, id: string): Promise<T | undefined> {

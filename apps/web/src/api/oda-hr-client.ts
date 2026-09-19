@@ -16,8 +16,8 @@ export async function getOdaHr(storeId: string, signal?: AbortSignal): Promise<H
   return response.json();
 }
 
-export function commandOdaHr(storeId: string, expectedVersion: number, type: string, input: Record<string, unknown>): Promise<HrResponse> {
-  return mutateV2<HrResponse>(`${base(storeId)}/commands`, { expectedVersion, type, input }, { idempotencyKey: newIdempotencyKey() });
+export function commandOdaHr(storeId: string, expectedVersion: number, type: string, input: Record<string, unknown>, idempotencyKey = newIdempotencyKey()): Promise<HrResponse> {
+  return mutateV2<HrResponse>(`${base(storeId)}/commands`, { expectedVersion, type, input }, { idempotencyKey });
 }
 
 /** Deliberately contains aggregate amounts only; no employee names or individual payroll rows. */

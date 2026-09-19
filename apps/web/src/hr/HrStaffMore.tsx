@@ -13,10 +13,10 @@ type Props = {
   onOpenSchedule: () => void;
   onOpenNotices: () => void;
 };
-type MenuId = 'notices' | 'attendance' | 'leave' | 'schedule' | 'people' | 'meetings' | 'approvals' | 'expenses' | 'payroll' | 'contracts' | 'documents' | 'goals' | 'reviews' | 'company' | 'settings' | 'help';
+type MenuId = 'operations' | 'notices' | 'attendance' | 'leave' | 'schedule' | 'people' | 'meetings' | 'approvals' | 'expenses' | 'payroll' | 'contracts' | 'documents' | 'goals' | 'reviews' | 'company' | 'settings' | 'help';
 type Menu = { id: MenuId; label: string; icon: ReactNode; personal?: StaffPersonalTab };
 type StaffPreferences = { version: 1; text: 'standard' | 'comfortable'; favorites: MenuId[] };
-const menuIds: MenuId[] = ['notices', 'attendance', 'leave', 'schedule', 'people', 'meetings', 'approvals', 'expenses', 'payroll', 'contracts', 'documents', 'goals', 'reviews', 'company', 'settings', 'help'];
+const menuIds: MenuId[] = ['operations', 'notices', 'attendance', 'leave', 'schedule', 'people', 'meetings', 'approvals', 'expenses', 'payroll', 'contracts', 'documents', 'goals', 'reviews', 'company', 'settings', 'help'];
 const preferenceEvent = 'oda:staff-preferences';
 // Keep display preferences usable for this session even when device storage is disabled.
 const sessionPreferences = new Map<string, StaffPreferences>();
@@ -109,6 +109,7 @@ export function HrStaffMore({ response, data, busy, onOpenPersonal, onOpenSchedu
   const disabled = busy || !response;
   const currentDialog = dialog?.scope === scope ? dialog.name : null;
   const menus: Menu[] = [
+    { id: 'operations', label: '매장 업무·인수인계', icon: <ClipboardCheck size={23} aria-hidden="true" />, personal: 'operations' },
     { id: 'notices', label: '공지', icon: <MenuSymbol kind="notice" /> },
     { id: 'attendance', label: '근무', icon: <Clock3 size={23} aria-hidden="true" />, personal: 'attendance' },
     { id: 'leave', label: '휴가', icon: <MenuSymbol kind="leave" />, personal: 'leave' },

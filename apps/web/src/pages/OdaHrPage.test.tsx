@@ -73,6 +73,33 @@ describe('ODA HR workspace integration', () => {
     expect(api.command).not.toHaveBeenCalled();
   });
 
+  it('opens store operations from the staff home and returns without exposing HR management', async () => {
+    const staffData = normalizeBootstrap({ currentActor: { id: 'staff-1', name: '직원', role: 'store_staff' }, stores: [{ id: 'store-1', name: '첫 매장', business: {} }], capabilities: ['oda.hr.read'], meta: { appMode: 'production', odaSettlementOnly: true } });
+    api.get.mockImplementation(async (storeId: string) => ({ ...response(storeId), permissions: { manage: false, payroll: false, self: true }, employeeId: 'staff-employee' }));
+    window.history.replaceState({}, '', '/store/oda-hr?store=store-1');
+    await act(async () => root.render(<OdaHrPage data={staffData} notify={vi.fn()} />));
+    await click('매장 업무 · 오픈·마감과 인수인계');
+    expect(new URLSearchParams(window.location.search).get('tab')).toBe('operations');
+    expect(container.querySelector('[data-testid="store-operations"]')).toBeTruthy();
+    expect(container.querySelector('nav[aria-label="인사관리 메뉴"]')?.textContent).not.toContain('직원·조직');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="직원 홈으로 돌아가기"]')!.click());
+    expect(container.querySelector('.oda-staff-page')).toBeTruthy(); expect(api.command).not.toHaveBeenCalled();
+  });
+
+  it('retains an operations idempotency key after a lost response and sends the displayed workspace version', async () => {
+    api.command.mockRejectedValueOnce(new TypeError('응답을 받지 못했습니다')).mockResolvedValueOnce(response());
+    window.history.replaceState({}, '', '/hq/oda-hr?store=store-1&tab=operations');
+    await act(async () => root.render(<OdaHrPage data={data()} notify={vi.fn()} />));
+    const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => checkbox.click());
+    expect(container.textContent).toContain('응답을 받지 못했습니다');
+    await act(async () => checkbox.click());
+    expect(api.command).toHaveBeenCalledTimes(2);
+    const first = api.command.mock.calls[0]!, second = api.command.mock.calls[1]!;
+    expect(first[0]).toBe('store-1'); expect(first[1]).toBe(0); expect(first[2]).toBe('operations.check');
+    expect(first[4]).toBeTruthy(); expect(second[4]).toBe(first[4]); expect(second[3]).toEqual(first[3]);
+  });
+
   it('adds HR to ODA navigation for assigned staff and preserves financial home priorities', async () => {
     expect(canAccessPath('/store/oda-hr', ['oda.hr.read'])).toBe(true);
     expect(canAccessPath('/hq/oda-hr', ['oda.hr.read'])).toBe(false);

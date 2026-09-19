@@ -112,7 +112,10 @@ export interface AuditSearchInput {
 
 export type OdaOverviewMonth = Pick<OdaMonth, "id" | "storeId" | "month" | "version" | "status" | "lines" | "sources" | "policy" | "updatedAt"> & { frozenSummary: OdaSummary | null };
 
+export interface HrPhoto { handoverId: string; storeId: string; mimeType: string; bytes: Uint8Array; sha256: string }
 export interface StateRepository {
+  putHrPhoto(photo: HrPhoto): Promise<void>;
+  getHrPhoto(storeId: string, handoverId: string): Promise<HrPhoto | undefined>;
   /** Month-scoped projection: never returns original file bytes or historical transaction copies. */
   listOdaOverviewMonths(month: string, storeIds: string[]): Promise<OdaOverviewMonth[]>;
   get<T>(type: AggregateType, id: string): Promise<T | undefined>;

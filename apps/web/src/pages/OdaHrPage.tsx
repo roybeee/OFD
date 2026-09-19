@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError } from '../api/client';
+import { ApiError, newIdempotencyKey } from '../api/client';
 import { commandOdaHr, getOdaHr, type HrResponse } from '../api/oda-hr-client';
 import { ChevronLeft, RefreshCcw, UserRound } from '../components/icons';
 import { Button } from '../components/ui';
@@ -9,6 +9,7 @@ import { HrPersonnel } from '../hr/HrPersonnel';
 import { HrTalent } from '../hr/HrTalent';
 import { HrEsign } from '../hr/HrEsign';
 import { HrWorkflow } from '../hr/HrWorkflow';
+import { HrStoreOperations } from '../hr/HrStoreOperations';
 import { HrEmpty, HrRecoveryContext, hrError, type HrPanelProps } from '../hr/shared';
 import type { BootstrapData } from '../types';
 import './OdaHrPage.css';
@@ -18,7 +19,7 @@ import type { StaffDestination, StaffEntryIntent } from '../hr/StaffDestination'
 import { useStaffTextPreference } from '../hr/HrStaffMore';
 
 export const hrTabs = [
-  ['overview', '홈·인사이트'], ['people', '직원·조직'], ['attendance', '근무 기록'], ['shifts', '근무 일정'],
+  ['overview', '홈·인사이트'], ['operations', '매장 업무'], ['people', '직원·조직'], ['attendance', '근무 기록'], ['shifts', '근무 일정'],
   ['leave', '휴가'], ['approvals', '전자결재'], ['expenses', '비용 청구'], ['payroll', '급여'],
   ['goals', '목표'], ['reviews', '평가'], ['meetings', '미팅'], ['recruitment', '채용'],
   ['contracts', '계약'], ['documents', '문서함'], ['settings', '설정'], ['help', '도움말'],
@@ -105,6 +106,7 @@ function OdaHrWorkspacePage({ data, notify, personalTab, entryIntent, onHome, on
   const [retry, setRetry] = useState(0);
   const lock = useRef(false);
   const loadedStore = useRef('');
+  const operationRetries = useRef(new Map<string, string>());
   const activeStore = useRef(storeId);
   activeStore.current = storeId;
   const alive = useRef(true);
@@ -151,10 +153,17 @@ function OdaHrWorkspacePage({ data, notify, personalTab, entryIntent, onHome, on
     if (!response || loading || loadError || lock.current) throw new Error('인사 정보를 불러온 뒤 다시 시도해 주세요.');
     const mutationStore = storeId;
     lock.current = true; onBusyChange?.(true); setBusy(true); setCommandError('');
+    const operationSignature = type.startsWith('operations.') ? JSON.stringify([mutationStore, response.workspace.version, type, input]) : '';
     try {
-      const result = await commandOdaHr(mutationStore, response.workspace.version, type, input);
+      const key = operationSignature ? operationRetries.current.get(operationSignature) || newIdempotencyKey() : undefined;
+      if (operationSignature && key) operationRetries.current.set(operationSignature, key);
+      const result = key
+        ? await commandOdaHr(mutationStore, response.workspace.version, type, input, key)
+        : await commandOdaHr(mutationStore, response.workspace.version, type, input);
+      if (operationSignature) operationRetries.current.delete(operationSignature);
       if (alive.current && activeStore.current === mutationStore) { setResponse(result); notify('변경 사항을 저장했습니다.', 'success'); }
     } catch (error) {
+      if (operationSignature && error instanceof ApiError && error.status < 500) operationRetries.current.delete(operationSignature);
       let message = hrError(error);
       if (error instanceof ApiError && error.status === 409 && ['VERSION_CONFLICT', 'HR_CONFLICT', 'hr_conflict'].includes(error.code)) {
         message = `${hrError(error)} 최신 정보를 불러왔습니다. 입력 내용을 확인한 뒤 다시 저장해 주세요.`;
@@ -208,6 +217,7 @@ function OdaHrWorkspacePage({ data, notify, personalTab, entryIntent, onHome, on
         {(['overview', 'people', 'documents', 'settings', 'help'] as string[]).includes(tab) && <HrPersonnel {...panel} accounts={response?.accounts || []} tab={tab as 'overview' | 'people' | 'documents' | 'settings' | 'help'} onTabChange={next => select(storeId, next)} onStaffHome={personal ? () => onStaffNavigate?.('today') : onHome} />}
         {(tab === 'attendance' || tab === 'leave' || tab === 'shifts') && <HrAttendance {...panel} tab={tab} hideClock={personal} entryIntent={personalTab === tab ? activeIntent : undefined} />}
         {(tab === 'approvals' || tab === 'expenses') && <HrWorkflow {...panel} tab={tab} entryIntent={personalTab === tab ? activeIntent : undefined} />}
+        {tab === 'operations' && <HrStoreOperations {...panel} />}
         {tab === 'payroll' && <HrPayroll {...panel} />}
         {(tab === 'goals' || tab === 'reviews' || tab === 'meetings' || tab === 'recruitment') && <HrTalent {...panel} tab={tab} entryIntent={personalTab === tab ? activeIntent : undefined} />}
         {tab === 'contracts' && <HrEsign {...panel} accounts={response?.accounts || []} />}

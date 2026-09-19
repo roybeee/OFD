@@ -1,3 +1,5 @@
+import { applyHrOperationsCommand, canUseHrOperations, createHrStoreOperations, type HrStoreOperations } from './oda-hr-operations.ts';
+export { HR_STORE_CHECKLIST, type HrStoreOperations, type HrStoreCheck, type HrStoreHandover } from './oda-hr-operations.ts';
 import { createHrAttendanceState, applyHrAttendanceCommand, projectHrAttendanceState, type HrAttendanceState } from './oda-hr-attendance.ts';
 import { createHrPayrollState, applyHrPayrollCommand, getHrPayrollStateForContext, type HrPayrollState } from './oda-hr-payroll.ts';
 import { createHrTalentState, applyHrTalentCommand, projectHrTalentState, type HrTalentState } from './oda-hr-talent.ts';
@@ -20,24 +22,25 @@ export interface HrHistory { id: string; type: string; actorId: string; at: stri
 export interface HrWorkspace {
   id: string; storeId: string; version: number; updatedAt: string; employees: HrEmployee[]; departments: HrDepartment[];
   settings: HrSettings; notices: HrNotice[]; documents: HrDocument[]; history: HrHistory[];
+  operations: HrStoreOperations;
   attendance: HrAttendanceState; payroll: HrPayrollState; talent: HrTalentState; workflow: HrWorkflowState;
 }
 export interface HrCommand { type: string; input: Record<string, unknown> }
-export interface HrContext { actorId: string; employeeId?: string; manager: boolean; payroll: boolean; today: string; now: string; id: () => string }
+export interface HrContext { operationsAllowed?: boolean; actorId: string; employeeId?: string; manager: boolean; payroll: boolean; today: string; now: string; id: () => string }
 export interface HrPermissions { manage: boolean; payroll: boolean; self: boolean }
 export interface HrStoreScheduleEntry { id: string; employeeId: string; employeeName: string; date: string; startTime: string; endTime: string; breakMinutes: number; kind: 'work' | 'off' }
 export interface HrResponse { workspace: HrWorkspace; permissions: HrPermissions; employeeId?: string; accounts?: Array<{ id: string; name: string; role: string }>; storeSchedule?: HrStoreScheduleEntry[]; storeAddress?: string }
 
 /** Coarse command gate precedes object lookup; slices enforce ownership, assignment and state. */
 export const HR_COMMAND_ACCESS: Readonly<Record<string, 'manager' | 'member' | 'self' | 'payroll' | 'finance'>> = Object.freeze(Object.fromEntries([
-  ...['workspace.initialize', 'employee.create', 'employee.update', 'employee.retire', 'department.upsert', 'department.archive', 'settings.update',
+  ...['operations.handover.resolve', 'workspace.initialize', 'employee.create', 'employee.update', 'employee.retire', 'department.upsert', 'department.archive', 'settings.update',
     'notice.create', 'notice.update', 'notice.archive', 'document.create', 'document.update', 'document.archive',
     'work.policy.create', 'work.policy.assign', 'work.approve', 'work.reject', 'clock.resolve', 'leave.type.create', 'leave.grant', 'leave.approve', 'leave.reject',
     'shift.template.create', 'shift.save', 'shift.publish', 'shift.cancel', 'attendance.lock', 'attendance.unlock', 'attendance.holidays.set', 'attendance.location.set',
     'review.create', 'review.update', 'review.delete', 'review.open', 'review.close', 'review.publish', 'review.revoke',
     'recruitment.createJob', 'recruitment.updateJob', 'recruitment.deleteJob', 'recruitment.addCandidate', 'recruitment.moveCandidate', 'recruitment.reopenCandidate',
     'contract.create', 'contract.update', 'contract.complete', 'contract.cancel', 'contract.applyPersonnel', 'workflow.template.save', 'workflow.template.archive'].map(type => [type, 'manager']),
-  ...['notice.acknowledge', 'work.create', 'work.update', 'work.cancel', 'clock.in', 'clock.out', 'leave.request', 'leave.cancel',
+  ...['operations.check', 'operations.handover.create', 'notice.acknowledge', 'work.create', 'work.update', 'work.cancel', 'clock.in', 'clock.out', 'leave.request', 'leave.cancel',
     'goal.create', 'goal.update', 'goal.complete', 'goal.reopen', 'goal.delete', 'meeting.create', 'meeting.update', 'meeting.privateNote', 'meeting.addTask', 'meeting.toggleTask', 'meeting.delete',
     'workflow.create', 'workflow.update', 'workflow.submit', 'workflow.approve', 'workflow.reject', 'workflow.withdraw', 'workflow.delegation.save', 'workflow.delegation.revoke',
     'expense.create', 'expense.update', 'expense.submit', 'expense.withdraw', 'expense.reopen'].map(type => [type, 'member']),
@@ -59,7 +62,7 @@ export function assertHrCommandPermission(type: string, ctx: HrContext): void {
 export function createHrWorkspace(storeId: string, companyName: string, now: string): HrWorkspace {
   return { id: `hr:${storeId}`, storeId, version: 0, updatedAt: now, employees: [], departments: [], notices: [], documents: [], history: [],
     settings: { companyName, workdayHours: 8, weeklyDays: 5, annualLeaveDays: 15, timezone: 'Asia/Seoul' },
-    attendance: createHrAttendanceState(), payroll: createHrPayrollState(), talent: createHrTalentState(), workflow: createHrWorkflowState() };
+    operations: createHrStoreOperations(), attendance: createHrAttendanceState(), payroll: createHrPayrollState(), talent: createHrTalentState(), workflow: createHrWorkflowState() };
 }
 function keys(input: Record<string, unknown>, allowed: string[]): void {
   if (Object.keys(input).some(key => !allowed.includes(key))) hrFail('지원하지 않는 입력 항목이 있습니다.');
@@ -218,7 +221,7 @@ function coreCommand(workspace: HrWorkspace, command: HrCommand, ctx: HrContext)
 /** Mutate only a transaction-owned copy. All changes are committed with one CAS token. */
 export function applyHrCommand(workspace: HrWorkspace, command: HrCommand, ctx: HrContext): void {
   assertHrCommandPermission(command.type, ctx);
-  const applied = coreCommand(workspace, command, ctx) || applyHrAttendanceCommand(workspace, command, ctx)
+  const applied = applyHrOperationsCommand(workspace, command, ctx) || coreCommand(workspace, command, ctx) || applyHrAttendanceCommand(workspace, command, ctx)
     || applyHrPayrollCommand(workspace, command, ctx) || applyHrTalentCommand(workspace, command, ctx) || applyHrWorkflowCommand(workspace, command, ctx);
   if (!applied) hrFail('지원하지 않는 인사관리 작업입니다.', 'HR_COMMAND_UNKNOWN', 422);
   // No command inputs or private note content in the shared timeline.
@@ -228,6 +231,7 @@ export function applyHrCommand(workspace: HrWorkspace, command: HrCommand, ctx: 
 
 export function projectHrWorkspace(workspace: HrWorkspace, ctx: HrContext): HrResponse {
   const result = structuredClone(workspace);
+  result.operations = canUseHrOperations(workspace, ctx) ? structuredClone(workspace.operations ?? createHrStoreOperations()) : createHrStoreOperations();
   result.employees = result.employees.filter(row => ctx.manager || ctx.payroll || row.status !== 'retired' || row.id === ctx.employeeId).map(row => {
     if (ctx.manager || row.id === ctx.employeeId) return row;
     const directory: HrEmployee = { id: row.id, employeeNumber: row.employeeNumber, name: row.name, departmentId: row.departmentId, jobTitle: row.jobTitle,

@@ -1,10 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { StateRepository } from '@ofd/db';
 import { applyHrCommand, capabilitiesForPages, createHrWorkspace, DomainError, projectHrWorkspace,
   type Actor, type HrContext, type HrResponse, type HrWorkspace, type Store } from '@ofd/domain';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from './events.ts';
+import { canUseHrOperations } from '@ofd/domain';
 import { idempotentMutation } from './idempotency.ts';
 import { ACCESS_POLICY_ID, resolveVisiblePages, type AccessPolicyDocument } from './service.ts';
 
@@ -30,7 +31,7 @@ function context(actor: Actor, workspace: HrWorkspace): HrContext {
   const employee = actor.role === 'auditor' ? undefined : workspace.employees.find(row => row.actorId === actor.id && row.status !== 'retired');
   const now = new Date().toISOString();
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
-  return { actorId: actor.id, ...(employee ? { employeeId: employee.id } : {}), manager: ['store_owner', 'hq_master'].includes(actor.role),
+  return { operationsAllowed: ['store_owner', 'store_staff', 'hq_master'].includes(actor.role), actorId: actor.id, ...(employee ? { employeeId: employee.id } : {}), manager: ['store_owner', 'hq_master'].includes(actor.role),
     payroll: ['store_owner', 'hq_master', 'hq_finance'].includes(actor.role), today, now, id: randomUUID };
 }
 async function load(repository: StateRepository, store: Store): Promise<HrWorkspace> {
@@ -88,7 +89,17 @@ export function registerOdaHrRoutes(app: FastifyInstance, repository: StateRepos
     const workspace = await load(repository, store);
     return response(repository, workspace, request.actor, store);
   });
-  app.post(`${base}/commands`, async (request, reply) => {
+  app.get(`${base}/handovers/:id/photo`, async (request, reply) => {
+    const { storeId, id } = z.object({ storeId: z.string().min(1).max(120), id: z.string().min(1).max(120) }).parse(request.params);
+    const store = await scope(repository, request.actor, storeId), workspace = await load(repository, store);
+    if (!canUseHrOperations(workspace, context(request.actor, workspace))) throw new DomainError('HR_FORBIDDEN', '매장 업무 접근 권한이 없습니다.', 403);
+    const handover = workspace.operations?.handovers.find(row => row.id === id && row.hasPhoto);
+    const photo = handover ? await repository.getHrPhoto(storeId, id) : undefined;
+    if (!photo) throw new DomainError('HR_PHOTO_NOT_FOUND', '사진을 찾을 수 없습니다.', 404);
+    if (createHash('sha256').update(photo.bytes).digest('hex') !== photo.sha256) throw new DomainError('HR_PHOTO_CORRUPT', '사진 원본 무결성을 확인할 수 없습니다.', 503);
+    return reply.type(photo.mimeType).header('Cache-Control', 'private, no-store').header('Content-Disposition', 'inline').send(Buffer.from(photo.bytes));
+  });
+  app.post(`${base}/commands`, { bodyLimit: 3_000_000 }, async (request, reply) => {
     const { storeId } = paramsSchema.parse(request.params);
     const store = await scope(repository, request.actor, storeId);
     if (request.actor.role === 'auditor') throw new DomainError('HR_READ_ONLY', '감사 계정은 조회만 할 수 있습니다.', 403);
@@ -99,17 +110,40 @@ export function registerOdaHrRoutes(app: FastifyInstance, repository: StateRepos
       if (workspace.version !== command.expectedVersion) throw new DomainError('VERSION_CONFLICT', '다른 사용자가 먼저 변경했습니다. 최신 인사관리를 불러온 뒤 다시 시도해 주세요.', 409);
       const ctx = context(request.actor, workspace);
       if (request.actor.role === 'store_staff' && !ctx.employeeId) throw new DomainError('HR_EMPLOYEE_LINK_REQUIRED', '관리자가 구성원 정보에 계정을 연결한 뒤 사용할 수 있습니다.', 403);
-      applyHrCommand(workspace, { type: command.type, input: command.input }, ctx);
+      // Binary evidence is stored in its own transactional bytea table, never in snapshots or retries.
+      const previousCheck = command.type === 'operations.check' ? workspace.operations?.checks.find(row => row.date === command.input.date && row.phase === command.input.phase && row.taskKey === command.input.taskKey) : undefined;
+      const input = { ...command.input };
+      const photoInput = command.type === 'operations.handover.create' ? input.photo : undefined;
+      if (command.type === 'operations.handover.create') delete input.photo;
+      applyHrCommand(workspace, { type: command.type, input }, ctx);
+      if (photoInput !== undefined) {
+        const photo = parseHrPhoto(photoInput);
+        const handover = workspace.operations.handovers.at(-1)!;
+        await scoped.putHrPhoto({ handoverId: handover.id, storeId, mimeType: photo.mimeType, bytes: photo.bytes,
+          sha256: createHash('sha256').update(photo.bytes).digest('hex') });
+        handover.hasPhoto = true;
+      }
       await validateActorLink(scoped, workspace, command, request.actor);
       await validateWorkflowActors(scoped, workspace, command, request.actor);
       if (Buffer.byteLength(JSON.stringify(workspace), 'utf8') > 30 * 1024 * 1024) throw new DomainError('HR_WORKSPACE_LIMIT', '인사관리 보관 용량 한도에 도달했습니다. 관리자에게 문의해 주세요.', 422);
       await scoped.commit({ changes: [{ type: 'oda_hr', id: workspace.id, storeId, expectedVersion: command.expectedVersion === 0 ? null : command.expectedVersion, value: workspace }],
         audits: [audit(request.actor, 'oda_hr', workspace.id, `hr.${command.type}`, storeId,
-          { version: command.expectedVersion }, { version: workspace.version }, { commandType: command.type })] });
+          { version: command.expectedVersion }, { version: workspace.version }, { commandType: command.type, ...(command.type === 'operations.check' ? { date: input.date, phase: input.phase, taskKey: input.taskKey, done: input.done, previousDone: previousCheck?.done ?? false } : {}) })] });
       return { version: workspace.version };
     }));
     const currentStore = await scope(repository, request.actor, storeId);
     const current = await load(repository, currentStore);
     return response(repository, current, request.actor, currentStore);
   });
+}
+
+function parseHrPhoto(input: unknown): { mimeType: string; bytes: Buffer } {
+  const photo = z.object({ base64: z.string().min(1).max(2_796_204), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']) }).strict().parse(input);
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(photo.base64)) throw new DomainError('HR_PHOTO_INVALID', '사진 인코딩이 올바르지 않습니다.', 422);
+  const bytes = Buffer.from(photo.base64, 'base64');
+  const valid = photo.mimeType === 'image/jpeg' ? bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255])) && bytes.subarray(-2).equals(Buffer.from([255, 217]))
+    : photo.mimeType === 'image/png' ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP' && bytes.readUInt32LE(4) + 8 === bytes.length;
+  if (bytes.length <= 12 || bytes.length > 2 * 1024 * 1024 || !valid) throw new DomainError('HR_PHOTO_INVALID', '2MiB 이하의 JPEG, PNG, WebP 사진을 선택해 주세요.', 422);
+  return { mimeType: photo.mimeType, bytes };
 }

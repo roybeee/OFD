@@ -1,0 +1,67 @@
+import { expect, test } from '@playwright/test';
+
+const storeId = '00000000-0000-4000-8000-000000001001';
+const staffId = '00000000-0000-4000-8000-000000000102';
+const ownerId = '00000000-0000-4000-8000-000000000101';
+const hr = `/api/v2/oda/${storeId}/hr`;
+const route = `/store/oda-hr?store=${storeId}&tab=operations`;
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4UcAAAAASUVORK5CYII=', 'base64');
+
+test('staff checklist and photo handover survive reload; manager resolves and reopens on mobile', async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.setExtraHTTPHeaders({ 'x-demo-actor-id': staffId });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(route);
+  const operations = page.getByTestId('store-operations');
+  await expect(operations.getByRole('heading', { name: '매장 업무', exact: true })).toBeVisible();
+  const check = operations.getByRole('checkbox', { name: /매장 청결·위생 점검/ });
+  await check.click();
+  await expect(check).toBeChecked();
+  await expect(operations.getByRole('status')).toContainText('변경 사항을 저장했습니다.');
+  await page.reload();
+  await expect(check).toBeChecked();
+  await operations.getByRole('button', { name: '인수인계', exact: true }).click();
+  await operations.getByRole('button', { name: '인수인계 작성', exact: true }).click();
+  const form = operations.getByRole('form', { name: '인수인계 작성' });
+  await form.getByRole('combobox', { name: '분류', exact: true }).selectOption('facility');
+  await form.getByRole('textbox', { name: '인수인계 내용', exact: true }).fill('합성 테스트: 냉장고 문 패킹 확인 부탁드립니다.');
+  await form.getByLabel('사진 첨부 (선택)', { exact: false }).setInputFiles({ name: 'synthetic-photo.png', mimeType: 'image/png', buffer: png });
+  await expect(form.getByRole('img', { name: '첨부할 인수인계 사진' })).toBeVisible();
+  await form.getByRole('button', { name: '인수인계 등록', exact: true }).click();
+  const entry = operations.getByRole('article').filter({ hasText: '합성 테스트: 냉장고 문 패킹 확인 부탁드립니다.' });
+  await expect(entry).toBeVisible();
+  await expect(entry.getByRole('button', { name: '해결 완료로 표시' })).toHaveCount(0);
+  const photo = entry.getByRole('img');
+  await expect.poll(() => photo.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await page.screenshot({ path: testInfo.outputPath('staff-desktop.png'), fullPage: true });
+  await page.reload();
+  await operations.getByRole('button', { name: '인수인계', exact: true }).click();
+  await expect(entry).toBeVisible();
+  await expect.poll(() => entry.getByRole('img').evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  const workspace = (await (await page.request.get(hr, { headers: { 'x-demo-actor-id': staffId } })).json()).workspace;
+  expect(workspace.operations.handovers).toHaveLength(1);
+  const denied = await page.request.post(`${hr}/commands`, { headers: { 'x-demo-actor-id': staffId, 'idempotency-key': crypto.randomUUID() },
+    data: { type: 'operations.handover.resolve', expectedVersion: workspace.version, input: { id: workspace.operations.handovers[0].id, resolved: true } } });
+  expect(denied.status()).toBe(403);
+
+  await page.setExtraHTTPHeaders({ 'x-demo-actor-id': ownerId });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.goto(route);
+  await operations.getByRole('button', { name: '인수인계', exact: true }).click();
+  await entry.getByRole('button', { name: '해결 완료로 표시' }).click();
+  await expect(entry.getByText('해결 완료', { exact: true })).toBeVisible();
+  await page.reload();
+  await operations.getByRole('button', { name: '인수인계', exact: true }).click();
+  await expect(entry.getByText('해결 완료', { exact: true })).toBeVisible();
+  await entry.getByRole('button', { name: '다시 열기' }).click();
+  await expect(entry.getByText('확인 필요', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('manager-mobile.png'), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await operations.getByRole('button', { name: '오픈·마감', exact: true }).click();
+  await check.click();
+  await expect(check).not.toBeChecked();
+  await page.reload();
+  await expect(check).not.toBeChecked();
+  expect(errors).toEqual([]);
+});

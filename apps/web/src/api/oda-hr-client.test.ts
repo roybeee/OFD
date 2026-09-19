@@ -12,6 +12,13 @@ describe('ODA HR API client', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v2/oda/store%2Fone/hr', expect.objectContaining({ credentials: 'same-origin', signal: controller.signal }));
   });
 
+  it('reuses a supplied idempotency key for an operations retry', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ workspace: { version: 5 } }), { status: 200 })); vi.stubGlobal('fetch', fetchMock);
+    await commandOdaHr('s1', 4, 'operations.check', { done: true }, 'retry-key');
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['Idempotency-Key']).toBe('retry-key');
+  });
+
   it('preserves the server status and error code', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'HR_ACCESS_DENIED', message: '배정된 매장이 아닙니다.' } }), { status: 403 })));
     await expect(getOdaHr('outside')).rejects.toMatchObject({ status: 403, code: 'HR_ACCESS_DENIED', message: '배정된 매장이 아닙니다.' } satisfies Partial<ApiError>);
