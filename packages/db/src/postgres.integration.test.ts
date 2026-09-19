@@ -14,6 +14,7 @@ test("PostgreSQL repository applies and exercises the complete durable contract"
     "001_v2_core", "002_phase3_finance_documents", "003_outbox_leases", "004_legacy_import_control",
     "005_pos_ingestion", "006_product_aliases", "007_store_openings", "008_field_operations",
     "009_pos_discovery", "010_remove_mfa", "011_pos_alias_backfill",
+    "012_oda_native_contracts", "013_oda_routines", "014_oda_hr_photos",
   ]);
   const migrationPool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
   const migrationClient = await migrationPool.connect();
